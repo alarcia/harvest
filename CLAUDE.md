@@ -109,8 +109,14 @@ proven.
 - **Never use the `AskUserQuestion` tool.** It takes over the whole chat, pops up abruptly
   while he's reading the response, and can't be minimized to keep reading calmly. Ask
   questions in natural language within the response; he'll answer the same way.
-- **Language.** Talk to the user in Spanish. Everything else is written in English: code,
-  comments, commit messages, documentation, and the app's own interface.
+- **Language.** Talk to the user in Spanish. The **app's interface is in Spanish** too
+  (`LANGUAGE_CODE = 'es'`; UI strings hardcoded in Spanish in the templates). Everything
+  else is written in English: code, comments, commit messages, documentation.
+- **Never leave a dev server running in the background** (`runserver`, `run_in_background`,
+  a detached `&`). It squats the port in his own terminal and he has no easy way to find or
+  kill it. Start one in the foreground to check something (screenshot, curl, click through a
+  flow), then kill it yourself before ending the turn — same as you'd do with any other
+  temporary state you create.
 - **Never `git commit` or `git push`.** Not even when a task is clearly finished. Leave
   changes staged/unstaged for the user to commit himself, always — this app deploys via a
   self-hosted GitHub Actions runner, so a push to `main` triggers a real deploy to the

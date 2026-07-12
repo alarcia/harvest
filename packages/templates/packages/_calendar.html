@@ -1,0 +1,39 @@
+{# Swapped whole by HTMX on every navigation, so title, controls and grid never drift apart. #}
+<section id="calendar" class="cal {{ anim }}" hx-target="#calendar" hx-swap="outerHTML">
+  <div class="cal-toolbar">
+    <h1 class="cal-title">
+      {% if view == "month" %}
+        {{ month|date:"F"|capfirst }} <span class="year">{{ month|date:"Y" }}</span>
+      {% else %}
+        {{ range_start|date:"j b" }} – {{ range_end|date:"j b" }} <span class="year">{{ range_end|date:"Y" }}</span>
+      {% endif %}
+    </h1>
+    <nav class="cal-nav">
+      <button class="today-btn" hx-get="{{ nav.today.get }}" hx-push-url="{{ nav.today.push }}">Hoy</button>
+      <button hx-get="{{ nav.prev.get }}" hx-push-url="{{ nav.prev.push }}" aria-label="Anterior">&lsaquo;</button>
+      <button hx-get="{{ nav.next.get }}" hx-push-url="{{ nav.next.push }}" aria-label="Siguiente">&rsaquo;</button>
+    </nav>
+  </div>
+
+  <nav class="cal-views">
+    {% for v, label, link in nav.views %}
+      <button class="{% if v == view %}active{% endif %}" hx-get="{{ link.get }}" hx-push-url="{{ link.push }}">{{ label }}</button>
+    {% endfor %}
+  </nav>
+
+  <div class="cal-head">
+    <span aria-label="Número de semana">Sem</span>
+    <span>Lun</span><span>Mar</span><span>Mié</span><span>Jue</span><span>Vie</span><span>Sáb</span><span>Dom</span>
+  </div>
+
+  <div class="cal-grid">
+    {% for week in weeks %}
+      <div class="wk">{{ week.number }}</div>
+      {% for day in week.days %}
+        <div class="day{% if day.is_today %} today{% endif %}{% if day.is_past %} past{% endif %}{% if not day.in_month %} out{% endif %}{% if forloop.counter > 5 %} weekend{% endif %}">
+          <span class="num">{{ day.date.day }}</span>
+        </div>
+      {% endfor %}
+    {% endfor %}
+  </div>
+</section>

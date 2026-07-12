@@ -1,0 +1,225 @@
+{% extends "packages/base.html" %}
+{% load static %}
+
+{% block title %}Harvest{% endblock %}
+{% block body_class %}cal-page{% endblock %}
+
+{% block head %}
+  <script src="{% static 'packages/htmx.min.js' %}" defer></script>
+  <style>
+    .cal-app {
+      height: 100vh;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ---- top bar (static: brand + add) ---- */
+    .cal-topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: .6rem .9rem .2rem;
+    }
+    .cal-topbar .brand {
+      display: flex;
+      align-items: center;
+      gap: .45rem;
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .cal-topbar .brand img { height: 1.5rem; width: auto; }
+    .cal-topbar .add {
+      display: grid;
+      place-items: center;
+      width: 2rem;
+      height: 2rem;
+      border-radius: 50%;
+      background: var(--accent);
+      color: var(--card);
+      font-size: 1.3rem;
+      line-height: 1;
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .cal-topbar .add:hover { text-decoration: none; }
+
+    /* ---- swapped fragment ---- */
+    .cal {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .cal button {
+      width: auto;
+      margin: 0;
+      padding: 0;
+      background: none;
+      color: var(--fg);
+      font: inherit;
+      border: none;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .cal-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .5rem;
+      padding: .35rem .9rem;
+    }
+    .cal-title {
+      margin: 0;
+      font-size: 1.35rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      white-space: nowrap;
+    }
+    .cal-title .year { color: var(--muted); font-weight: 500; }
+    .cal-nav { display: flex; align-items: center; gap: .4rem; }
+    .cal-nav button {
+      display: grid;
+      place-items: center;
+      height: 2.1rem;
+      min-width: 2.1rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--card);
+      font-size: 1.15rem;
+      padding-bottom: .15rem;
+    }
+    .cal-nav .today-btn {
+      font-size: .8rem;
+      font-weight: 600;
+      padding: 0 .75rem .05rem;
+    }
+    .cal-nav button:active { transform: scale(.94); }
+
+    .cal-views {
+      display: flex;
+      margin: .25rem .9rem .55rem;
+      padding: .2rem;
+      border-radius: 999px;
+      background: var(--border);
+    }
+    .cal-views button {
+      flex: 1;
+      padding: .38rem 0;
+      border-radius: 999px;
+      font-size: .82rem;
+      font-weight: 600;
+      color: var(--muted);
+    }
+    .cal-views button.active {
+      background: var(--card);
+      color: var(--fg);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, .12);
+    }
+
+    /* ---- grid: [week number | 7 days] ---- */
+    .cal-head, .cal-grid {
+      display: grid;
+      grid-template-columns: 1.7rem repeat(7, 1fr);
+    }
+    .cal-head {
+      padding: 0 .35rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .cal-head span {
+      text-align: center;
+      font-size: .68rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: var(--muted);
+      padding-bottom: .3rem;
+    }
+    .cal-grid {
+      flex: 1;
+      min-height: 0;
+      grid-auto-rows: 1fr;
+      padding: 0 .35rem;
+    }
+    .cal-grid .wk {
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding-top: .45rem;
+      font-size: .66rem;
+      font-weight: 600;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+    .cal-grid .day {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding-top: .3rem;
+      border-bottom: 1px solid var(--border);
+      overflow: hidden;
+    }
+    .cal-grid .day.weekend { background: color-mix(in srgb, var(--border) 30%, transparent); }
+    .day .num {
+      display: grid;
+      place-items: center;
+      width: 1.7rem;
+      height: 1.7rem;
+      border-radius: 50%;
+      font-size: .85rem;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+    }
+    .day.past .num, .day.out .num { color: var(--muted); }
+    .day.out .num { opacity: .45; }
+    .day.today .num {
+      background: var(--accent);
+      color: var(--card);
+      font-weight: 700;
+    }
+
+    /* ---- swap animations ---- */
+    .cal.slide-next .cal-grid { animation: cal-slide-next .3s cubic-bezier(.22, .9, .35, 1); }
+    .cal.slide-prev .cal-grid { animation: cal-slide-prev .3s cubic-bezier(.22, .9, .35, 1); }
+    .cal.fade .cal-grid { animation: cal-fade .28s ease-out; }
+    .cal.slide-next .cal-title, .cal.slide-prev .cal-title, .cal.fade .cal-title {
+      animation: cal-fade .28s ease-out;
+    }
+    @keyframes cal-slide-next {
+      from { transform: translateX(6%); opacity: 0; }
+      to   { transform: none; opacity: 1; }
+    }
+    @keyframes cal-slide-prev {
+      from { transform: translateX(-6%); opacity: 0; }
+      to   { transform: none; opacity: 1; }
+    }
+    @keyframes cal-fade {
+      from { transform: scale(.985); opacity: 0; }
+      to   { transform: none; opacity: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .cal .cal-grid, .cal .cal-title { animation: none !important; }
+    }
+
+    @media (min-width: 700px) {
+      .cal-topbar, .cal-toolbar { padding-left: 1.5rem; padding-right: 1.5rem; }
+      .cal-views { margin-left: 1.5rem; margin-right: auto; width: 22rem; }
+      .cal-head, .cal-grid { padding: 0 1rem; }
+      .cal-grid .day { align-items: flex-start; padding-left: .45rem; }
+    }
+  </style>
+{% endblock %}
+
+{% block body %}
+  <div class="cal-app">
+    <header class="cal-topbar">
+      <span class="brand"><img src="{% static 'packages/logo.png' %}" alt=""><span>Harvest<span class="accent">.</span></span></span>
+      <a class="add" href="{% url 'add_package' %}" aria-label="Añadir paquete">+</a>
+    </header>
+    {% include "packages/_calendar.html" %}
+  </div>
+{% endblock %}

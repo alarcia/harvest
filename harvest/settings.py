@@ -121,9 +121,13 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/6.0/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+# Spanish UI: month/weekday names from the `date` template filter and the
+# whole admin come out translated for free.
+LANGUAGE_CODE = 'es'
 
-TIME_ZONE = 'UTC'
+# The calendar's whole job is answering "what happens today / this week",
+# so "today" must be the user's today, not UTC's.
+TIME_ZONE = 'Europe/Madrid'
 
 USE_I18N = True
 
