@@ -94,6 +94,34 @@ the user to bulk-forward their history into it; the samples come from an existin
 which already holds years of them. And never point the app at a live mailbox before the parser is
 proven.
 
+### Placeholder calendar data — hardcoded, and it must be deleted on ingestion
+
+Ahead of even stage 1, the calendar currently renders from a **hardcoded `SAMPLE_CHIPS` list
+in `packages/views.py`** (labels via `STATE_TAGS`), *not* from the database — a deliberate
+shortcut to design and validate how packages are drawn before any real data exists. It assumes
+"today" is a fixed date. **The agent that wires the calendar to real data / builds ingestion
+must delete this placeholder.**
+
+It's a gift to that work, not dead weight: it's the finished spec for *how each state is
+painted*, so the job becomes mapping real lifecycle events onto a vocabulary that already
+exists. Each entry is one mark on one day, keyed by a **rendering `kind`** — and several kinds
+collapse onto the **same model state** (don't let this vocabulary grow the data model):
+
+| chip `kind`        | rendered as                     | lifecycle state (see above) | driven by              |
+| ------------------ | ------------------------------- | --------------------------- | ---------------------- |
+| `ordered`          | ○ hollow dot, no box            | `in_transit`                | "Pedido" email         |
+| `shipped`          | ● filled dot, no box            | `in_transit` (unchanged)    | shipping notice        |
+| `estimated`        | dashed box (uncertain)          | `in_transit`                | estimated arrival date |
+| `waiting`          | filled box                      | `awaiting_pickup`           | "Entregado" email      |
+| `deadline`         | red box (last safe day)         | `awaiting_pickup`           | day vs. read deadline  |
+| `leaves`           | red dashed box (the "antes del" day) | `awaiting_pickup`      | day vs. read deadline  |
+| `picked`           | muted ✓                         | `picked_up`                 | user confirmation      |
+
+So `ordered`/`shipped`/`estimated` are three renderings of one `in_transit` package;
+`waiting`/`deadline`/`leaves` are one `awaiting_pickup` package drawn differently depending on
+how each day relates to the deadline. Use the table as the bridge between real email states and
+how the calendar already knows to draw them.
+
 ## Roadmap
 
 [ROADMAP.md](ROADMAP.md) is the detailed, task-by-task plan and the working checklist. It's

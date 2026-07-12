@@ -9,6 +9,60 @@ from .forms import PackageForm
 # Weeks shown per view. Month is special-cased: its length depends on the anchor.
 VIEW_WEEKS = {"week": 1, "fortnight": 2}
 
+# TEMPORARY: hardcoded chips to design the day-cell rendering, local only.
+# Delete once the calendar reads packages from the database.
+#
+# One entry = one mark on one day. Kinds map 1:1 to the visual grammar:
+#   ordered   — order placed ("Pedido" email). Hollow dot, no box.
+#   shipped   — shipping notice ("Enviado" email). Filled dot, no box.
+#   estimated — tentative arrival ("Llega el lunes"). Dashed box; gone once it lands.
+#   waiting   — sitting at the pickup point, one mark per remaining day. Filled box.
+#   deadline  — last safe day ("antes del 14" ⇒ the 13th). Red filled box.
+#   leaves    — the "antes del" day itself: may leave at any moment. Red dashed
+#               box — dashed meaning uncertain, same grammar as "estimated".
+#   picked    — confirmed picked up that day. Muted + check.
+#
+# The board shows the present and the future, not history. Purge rules:
+#   - One mark for the latest *certain* state; a superseded one disappears
+#     ("Pedido" dies when "Enviado" arrives). "Estimado" rides along while in
+#     transit because it's the uncertain one, and dies when the package lands.
+#   - "waiting" paints only the remaining window, today → deadline, never the
+#     days it has already been sitting there. No deadline (alt store): today only.
+#   - "picked" leaves a single check on its day and clears everything else.
+STATE_TAGS = {
+    "ordered": "Pedido",
+    "shipped": "Enviado",
+    "estimated": "Estimado",
+    "waiting": "Listo",
+    "deadline": "Último día",
+    "leaves": "Se va",
+    "picked": "Recogido",
+}
+
+
+def _c(day, label, source, kind):
+    return {"date": date(2026, 7, day), "label": label, "source": source, "kind": kind}
+
+
+# The samples assume "today" is Sun 2026-07-12.
+SAMPLE_CHIPS = [
+    # Ordered Sat 11, not shipped yet: the order mark plus the soft promise.
+    _c(11, "Cargador USB-C 65W", "amazon", "ordered"),
+    _c(13, "Cargador USB-C 65W", "amazon", "estimated"),
+    # Shipped Fri 10 ("Pedido" of Thu 9 purged), promised for Tue 14.
+    _c(10, "Funda Kindle", "amazon", "shipped"),
+    _c(14, "Funda Kindle", "amazon", "estimated"),
+    # At the locker since Fri 10, "antes del 14": the remaining window is
+    # today (plain), the last safe day (red), and the leave day (red dashed).
+    _c(12, "Auriculares JBL", "amazon", "waiting"),
+    _c(13, "Auriculares JBL", "amazon", "deadline"),
+    _c(14, "Auriculares JBL", "amazon", "leaves"),
+    # Alt store, no deadline: it just rides on today's cell.
+    _c(12, "Puzzle 1000 piezas", "store", "waiting"),
+    # Picked up Fri 10: nothing left but the check on its day.
+    _c(10, "Bombillas E27", "amazon", "picked"),
+]
+
 
 def _monday(day):
     return day - timedelta(days=day.weekday())
@@ -60,6 +114,8 @@ def home(request):
                 "is_today": day == today,
                 "is_past": day < today,
                 "in_month": month is None or day.month == month.month,
+                "chips": [{**c, "tag": STATE_TAGS[c["kind"]]}
+                          for c in SAMPLE_CHIPS if c["date"] == day],
             })
         weeks.append({"number": days[0]["date"].isocalendar()[1], "days": days})
 

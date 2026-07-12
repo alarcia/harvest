@@ -15,11 +15,17 @@
     </nav>
   </div>
 
-  <nav class="cal-views">
-    {% for v, label, link in nav.views %}
-      <button class="{% if v == view %}active{% endif %}" hx-get="{{ link.get }}" hx-push-url="{{ link.push }}">{{ label }}</button>
-    {% endfor %}
-  </nav>
+  <div class="cal-subbar">
+    <nav class="cal-views">
+      {% for v, label, link in nav.views %}
+        <button class="{% if v == view %}active{% endif %}" hx-get="{{ link.get }}" hx-push-url="{{ link.push }}">{{ label }}</button>
+      {% endfor %}
+    </nav>
+    <div class="cal-legend">
+      <span class="lg"><i class="sw dot amazon"></i>Amazon</span>
+      <span class="lg"><i class="sw dot store"></i>Tienda</span>
+    </div>
+  </div>
 
   <div class="cal-head">
     <span aria-label="Número de semana">Sem</span>
@@ -32,6 +38,9 @@
       {% for day in week.days %}
         <div class="day{% if day.is_today %} today{% endif %}{% if day.is_past %} past{% endif %}{% if not day.in_month %} out{% endif %}{% if forloop.counter > 5 %} weekend{% endif %}">
           <span class="num">{{ day.date.day }}</span>
+          {% for c in day.chips %}
+            <span class="pkg src-{{ c.source }} is-{{ c.kind }}" title="{{ c.tag }} · {{ c.label }}"><b>{{ c.tag }}</b> · {{ c.label }}</span>
+          {% endfor %}
         </div>
       {% endfor %}
     {% endfor %}

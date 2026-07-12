@@ -100,9 +100,16 @@
     }
     .cal-nav button:active { transform: scale(.94); }
 
+    .cal-subbar {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: .3rem .9rem;
+      margin: .25rem .9rem .55rem;
+    }
     .cal-views {
       display: flex;
-      margin: .25rem .9rem .55rem;
+      flex: 1 1 100%;
       padding: .2rem;
       border-radius: 999px;
       background: var(--border);
@@ -120,6 +127,21 @@
       color: var(--fg);
       box-shadow: 0 1px 3px rgba(0, 0, 0, .12);
     }
+
+    /* Legend for the package marks; goes away once the codes are second nature. */
+    .cal-legend {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: .2rem .7rem;
+      font-size: .64rem;
+      color: var(--muted);
+    }
+    .cal-legend .lg { display: inline-flex; align-items: center; gap: .3rem; white-space: nowrap; }
+    .cal-legend .sw { display: inline-block; width: 1em; height: .72em; border-radius: 2px; }
+    .cal-legend .dot { width: .6em; height: .6em; border-radius: 50%; }
+    .cal-legend .dot.amazon { background: var(--amazon); }
+    .cal-legend .dot.store { background: var(--store); }
 
     /* ---- grid: [week number | 7 days] ---- */
     .cal-head, .cal-grid {
@@ -142,7 +164,10 @@
     .cal-grid {
       flex: 1;
       min-height: 0;
-      grid-auto-rows: 1fr;
+      /* Rows share the height, but never shrink below what a day with a few
+         chips needs; past that, the grid scrolls instead of clipping. */
+      grid-auto-rows: minmax(7.5rem, 1fr);
+      overflow-y: auto;
       padding: 0 .35rem;
     }
     .cal-grid .wk {
@@ -182,6 +207,59 @@
       font-weight: 700;
     }
 
+    /* ---- packages inside a day cell ---- */
+    .day .pkg {
+      align-self: stretch;
+      margin: .3rem .12rem 0;
+      padding: .16rem .3rem;
+      border-radius: .35rem;
+      font-size: .62rem;
+      font-weight: 600;
+      line-height: 1.25;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: left;
+    }
+    .pkg.src-amazon { color: var(--amazon); }
+    .pkg.src-store { color: var(--store); }
+    /* Ordered/shipped: facts worth a note, not a box — hollow dot that fills
+       in when the shipping notice arrives. */
+    .pkg.is-ordered::before, .pkg.is-shipped::before {
+      content: '';
+      display: inline-block;
+      width: .42em;
+      height: .42em;
+      margin-right: .3em;
+      border: 1.5px solid currentColor;
+      border-radius: 50%;
+    }
+    .pkg.is-shipped::before { background: currentColor; }
+    /* Estimated arrival: the date is a promise, so the box is dashed. */
+    .pkg.is-estimated {
+      border: 1px dashed color-mix(in srgb, currentColor 65%, transparent);
+      background: color-mix(in srgb, currentColor 7%, transparent);
+    }
+    /* Waiting at the pickup point: the actionable state, so it's the loudest. */
+    .pkg.is-waiting { color: var(--bg); }
+    .pkg.is-waiting.src-amazon { background: var(--amazon); }
+    .pkg.is-waiting.src-store { background: var(--store); }
+    /* Last safe day: red beats source color. */
+    .pkg.is-deadline { color: var(--bg); background: var(--danger); }
+    /* The "antes del" day itself: may already be gone — danger plus the
+       dashed = uncertain grammar. */
+    .pkg.is-leaves {
+      color: var(--danger);
+      border: 1px dashed color-mix(in srgb, var(--danger) 65%, transparent);
+      background: color-mix(in srgb, var(--danger) 7%, transparent);
+    }
+    /* Picked up: fades out of the picture. */
+    .pkg.is-picked {
+      color: var(--muted);
+      background: color-mix(in srgb, var(--muted) 10%, transparent);
+    }
+    .pkg.is-picked::before { content: '✓ '; }
+
     /* ---- swap animations ---- */
     .cal.slide-next .cal-grid { animation: cal-slide-next .3s cubic-bezier(.22, .9, .35, 1); }
     .cal.slide-prev .cal-grid { animation: cal-slide-prev .3s cubic-bezier(.22, .9, .35, 1); }
@@ -207,9 +285,11 @@
 
     @media (min-width: 700px) {
       .cal-topbar, .cal-toolbar { padding-left: 1.5rem; padding-right: 1.5rem; }
-      .cal-views { margin-left: 1.5rem; margin-right: auto; width: 22rem; }
+      .cal-subbar { margin-left: 1.5rem; margin-right: 1.5rem; }
+      .cal-views { flex: 0 0 22rem; }
       .cal-head, .cal-grid { padding: 0 1rem; }
-      .cal-grid .day { align-items: flex-start; padding-left: .45rem; }
+      .cal-grid .day { align-items: flex-start; }
+      .cal-grid .day .num { margin-left: .45rem; }
     }
   </style>
 {% endblock %}

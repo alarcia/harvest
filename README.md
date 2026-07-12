@@ -28,16 +28,14 @@ Two package origins feed the calendar:
 - **A local toy store** acting as a drop point for non-Amazon shipments — €1 a package, no
   deadline, but pricier the longer it sits. No email trail, so these get logged by hand.
 
-It's a calendar, not an optimization problem — an "optimal day" algorithm is explicitly out
-of scope until the calendar itself turns out not to be enough.
-
 ## How it works
 
 1. **Ingestion** — a dedicated Gmail inbox collects Amazon emails forwarded to it.
    It's polled over IMAP; every raw email is saved before parsing, so nothing is lost if the
    parser needs to improve later; then it's matched to the right physical package.
-2. **Calendar** — a monthly view where each package is a bar spanning its pickup window,
-   Amazon and non-Amazon visually distinct, and expiring packages flagged in red.
+2. **Calendar** — a mobile-first view (month, fortnight or week) where each package shows up
+   as a labelled chip on the days that matter: ordered, shipped, estimated arrival, ready for
+   pickup, and its last day flagged in red. Amazon and store are color-coded.
 3. **Manual entry** — covered for free by the Django admin, which also doubles as the safety
    net for fixing bad data by hand.
 
@@ -61,7 +59,10 @@ riskiest part of the project and it should be written with real emails already o
 
 ## Status
 
-Pre-code: creating the dedicated inbox. Nothing is forwarded to it yet.
+The app is deployed on the Raspberry Pi and viewable on mobile. The calendar is built —
+month, fortnight and week views, with the per-package chip vocabulary — currently running on
+placeholder data while its look is dialed in. Manual entry works via the Django admin. Still
+ahead, and deliberately last: the email parser and ingestion, the riskiest part of the project.
 
 Real email is kept away from the app until the parser has earned it, in three stages. **Seed
 data** first, from a repeatable command, so the calendar can be built and judged. Then a
