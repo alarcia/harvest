@@ -1,0 +1,15 @@
+{% extends "packages/base.html" %}
+
+{% block title %}Add package — Harvest{% endblock %}
+
+{% block body %}
+  <main class="card">
+    <h2>Add package</h2>
+    <form method="post">
+      {% csrf_token %}
+      {{ form.as_p }}
+      <button type="submit">Save</button>
+    </form>
+    <a class="back" href="{% url 'home' %}">&larr; Back</a>
+  </main>
+{% endblock %}

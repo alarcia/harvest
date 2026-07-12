@@ -2,3 +2,16 @@
 
 # Internal, task-by-task working roadmap — not for public consumption.
 ROADMAP.md
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Django
+db.sqlite3
+db.sqlite3-journal
+staticfiles/
+
+# Environment
+.env

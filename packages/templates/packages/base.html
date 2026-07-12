@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Harvest{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #f7f6f2;
+      --fg: #1c1b18;
+      --muted: #6b6a64;
+      --card: #ffffff;
+      --border: #e6e4dc;
+      --accent: #c8781e;
+      --danger: #b3402e;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #16150f;
+        --fg: #f2f0e8;
+        --muted: #a3a094;
+        --card: #211f16;
+        --border: #33301f;
+        --accent: #e6a24a;
+        --danger: #e0705a;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 1.5rem;
+      background: var(--bg);
+      color: var(--fg);
+      font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    .card {
+      width: 100%;
+      max-width: 30rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 2rem;
+      margin-top: 2rem;
+    }
+    .card.centered { text-align: center; }
+    h1 {
+      margin: 0 0 .25rem;
+      font-size: 2rem;
+      letter-spacing: -0.02em;
+    }
+    h2 { margin: 0 0 1.25rem; font-size: 1.25rem; }
+    .accent { color: var(--accent); }
+    .tagline { margin: 0 0 1.5rem; color: var(--muted); }
+    .status {
+      display: inline-block;
+      font-size: .8rem;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: .25rem .75rem;
+      margin-bottom: 1.5rem;
+    }
+    a { color: var(--accent); text-decoration: none; font-weight: 600; }
+    a:hover { text-decoration: underline; }
+    .links { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+    form p { margin: 0 0 1rem; }
+    label { display: block; margin-bottom: .3rem; font-size: .85rem; color: var(--muted); }
+    input, select {
+      width: 100%;
+      padding: .55rem .65rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--fg);
+      font-size: 1rem;
+    }
+    input[type="checkbox"] { width: auto; }
+    .checkbox-row { display: flex; align-items: center; gap: .5rem; }
+    .checkbox-row label { margin: 0; }
+    button {
+      width: 100%;
+      padding: .7rem;
+      border: none;
+      border-radius: 8px;
+      background: var(--accent);
+      color: var(--card);
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: .5rem;
+    }
+    ul.errorlist {
+      list-style: none;
+      margin: .25rem 0 0;
+      padding: 0;
+      color: var(--danger);
+      font-size: .8rem;
+    }
+    .back { display: block; text-align: center; margin-top: 1.5rem; font-size: .9rem; }
+  </style>
+</head>
+<body>
+  {% block body %}{% endblock %}
+</body>
+</html>

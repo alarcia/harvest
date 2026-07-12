@@ -2,11 +2,44 @@
 
 Calendar for packages at pickup points. The goal is to see at a glance what's waiting, what's arriving, and what's expiring, in order to plan the trip.
 
-Two package sources:
+The app tracks **any package that makes the user drive to a pickup point**, whatever its
+origin. They arrive through two channels:
 
-- **Amazon** (Lockers and Counters). Estimated 4-5 per week.
-  The "ready for pickup" email carries the exact deadline: it's the authoritative source, never calculated.
-- **Alternative store** that acts as a pickup point for non-Amazon shipments. Charges €1 per package and has no deadline, but starts charging more after a certain day.
+- **Amazon** (Lockers and Counters). ~4-5 per week, **mostly Vine** (see below) but also regular
+  paid purchases; both follow the same email lifecycle. The delivery notice ("Entregado")
+  carries the exact deadline: it's the authoritative source, never calculated. A later email
+  misleadingly implies it's already gone — see **Lifecycle**.
+- **Alternative store** — a pickup point that receives **everything non-Amazon** (other shops: a
+  toy store, etc.). Charges €1 per package, has no deadline, but starts charging more after a
+  certain day. No emails: manual entry only.
+
+## Lifecycle
+
+The tracked unit is **one delivery the user goes to pick up** — one row, one bar on the
+calendar. We model the **package**, never the order: a regular Amazon order can split into
+several boxes arriving at different lockers on different days, and that is **several packages**
+(several trips), each its own row. **Vine** — the bulk of the volume — is 1:1 (order = shipment
+= package = item), so there the question never even arises. There is **no order→shipment→item
+hierarchy to model**. Alternative-store items (other shops) are the same kind of row, entered by
+hand (they generate no email).
+
+States, and what drives each transition:
+
+1. **`in_transit`** — the **"Pedido"** email (order placed) arrives. Sets the *estimated*
+   arrival.
+2. **`awaiting_pickup`** — the **"Entregado"** email (arrived at the locker/counter) arrives.
+   Sets the *actual* arrival and the **deadline read from that email** (typically ~4 days of
+   grace). Read, never calculated.
+3. A later **"No longer available for pickup"** email is **misleading — do not trust it.** The
+   package is still there; it only means the carrier will take it back *whenever they next
+   pass*, possibly several more days later. Never auto-expire and never mark `returned` on this
+   email.
+4. **`picked_up`** or **`returned`** — the **user** confirms which. Never derived from an email.
+   (Nothing has been returned so far.)
+
+**Vine** packages are identified at ingestion by a **cost of €0.00** in the email — that single
+flag is all the calendar needs now. After pickup a Vine package becomes *pending review* and
+feeds the reviews module (deferred; see below). Flagging is not building the module.
 
 ## Priorities
 
@@ -19,11 +52,14 @@ In this order, set by the user:
 
 This is a calendar, not an optimization problem. Don't turn it into one.
 
-A **Vine reviews module** is planned for later, once the calendar is finished. Packages
-ingested from Gmail and flagged as Vine feed a separate module — reusing the existing
-ingestion, not a new calendar view — that helps write the reviews, with reminders for what's
-still pending and suggestions to make each one easier. It's out of current scope: don't build
-it early and don't let it shape the data model before its time.
+**Vine is the bulk of what flows through the calendar**, but the calendar itself is
+source-agnostic — it tracks every package equally. A **Vine reviews module** is planned for
+later, once the calendar is finished, and is **100% Vine-only**. The Vine packages already flow
+in from Gmail (identified by the €0.00 cost — see **Lifecycle**); after pickup they sit as
+*pending review*. The module — reusing the existing ingestion, not a new calendar view — helps
+write those reviews, with reminders for what's still pending and suggestions to make each one
+easier. It's out of current scope: **flag the packages now, but don't build the module early**
+and don't let it grow the data model beyond that flag before its time.
 
 ## Decisions made
 
@@ -75,3 +111,7 @@ proven.
   questions in natural language within the response; he'll answer the same way.
 - **Language.** Talk to the user in Spanish. Everything else is written in English: code,
   comments, commit messages, documentation, and the app's own interface.
+- **Never `git commit` or `git push`.** Not even when a task is clearly finished. Leave
+  changes staged/unstaged for the user to commit himself, always — this app deploys via a
+  self-hosted GitHub Actions runner, so a push to `main` triggers a real deploy to the
+  Raspberry Pi.
