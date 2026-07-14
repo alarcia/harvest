@@ -13,13 +13,20 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Local dev keeps its secrets (the Gmail credentials) in a gitignored .env; on
+# the Pi docker-compose injects real environment variables, which win because
+# load_dotenv never overrides an already-set variable.
+load_dotenv(BASE_DIR / '.env')
+
 
 # Everything below is read from the environment so the same image runs in dev
-# and on the Pi: locally there's no .env, so these fall back to the original
-# `startproject` values (DEBUG on, no host restrictions, local sqlite file).
+# and on the Pi: anything missing falls back to the original `startproject`
+# values (DEBUG on, no host restrictions, local sqlite file).
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.environ.get(
@@ -95,7 +102,49 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': os.environ.get('DJANGO_DB_PATH', BASE_DIR / 'db.sqlite3'),
+        # web and the ingest worker share this file from two containers;
+        # wait out the other's writes instead of failing "database is locked".
+        'OPTIONS': {'timeout': 20},
     }
+}
+
+
+# Gmail ingestion — IMAP with an App Password on the dedicated mailbox. The
+# Gmail API was ruled out: `gmail.readonly` is a restricted scope and
+# Testing-mode tokens expire every 7 days. Empty by default: ingestion
+# commands must refuse to run rather than guess.
+GMAIL_IMAP_HOST = os.environ.get('GMAIL_IMAP_HOST', 'imap.gmail.com')
+GMAIL_IMAP_USER = os.environ.get('GMAIL_IMAP_USER', '')
+GMAIL_IMAP_APP_PASSWORD = os.environ.get('GMAIL_IMAP_APP_PASSWORD', '')
+
+# Move successfully-processed emails to Gmail's Trash (auto-deleted after 30
+# days) so the inbox self-cleans and stays a trigger, not an archive. The raw
+# email is saved to the DB first, and failures are kept in the inbox, so this
+# is safe and reversible. Off by default (dev safety); the Pi turns it on.
+GMAIL_TRASH_PROCESSED = os.environ.get('GMAIL_TRASH_PROCESSED', 'false').lower() == 'true'
+
+
+# Logging: single console handler, timestamps in Europe/Madrid, so the whole
+# ingestion audit trail is one `docker logs` away and reads in local time.
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'harvest': {
+            '()': 'packages.logformat.LocalTimeFormatter',
+            'format': '{asctime} [{levelname}] {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {'class': 'logging.StreamHandler', 'formatter': 'harvest'},
+    },
+    'root': {'handlers': ['console'], 'level': 'INFO'},
+    'loggers': {
+        # Our own logs at INFO; quiet Django's per-request noise.
+        'packages': {'level': 'INFO'},
+        'django.request': {'level': 'WARNING'},
+    },
 }
 
 

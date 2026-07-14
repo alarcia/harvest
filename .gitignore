@@ -1,7 +1,9 @@
 .DS_Store
 
-# Internal, task-by-task working roadmap — not for public consumption.
+# Internal working docs — agent context and task list, not for public
+# consumption (personal workflow notes, decision history).
 ROADMAP.md
+CLAUDE.md
 
 # Python
 __pycache__/
@@ -15,3 +17,8 @@ staticfiles/
 
 # Environment
 .env
+.env.example
+
+# Test fixtures are REAL Amazon emails with personal data (names, addresses,
+# order numbers) — kept local only, never committed. See tests/fixtures/README.md.
+tests/fixtures/*.eml

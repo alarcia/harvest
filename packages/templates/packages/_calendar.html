@@ -1,5 +1,15 @@
 {# Swapped whole by HTMX on every navigation, so title, controls and grid never drift apart. #}
 <section id="calendar" class="cal {{ anim }}" hx-target="#calendar" hx-swap="outerHTML">
+  {% if parse_failures %}
+    {# An email the parser didn't understand is never silently dropped: it
+       stays flagged here until it's resolved (via admin) or reprocessed. #}
+    <div class="parse-alert" role="alert">
+      <b>⚠ Correos sin procesar</b>
+      {% for f in parse_failures %}
+        <span>{{ f.received_at|date:"j M, H:i" }} · «{{ f.subject|truncatechars:60 }}» — {{ f.parse_error|truncatechars:110 }}</span>
+      {% endfor %}
+    </div>
+  {% endif %}
   <div class="cal-toolbar">
     <h1 class="cal-title">
       {% if view == "month" %}
@@ -23,7 +33,7 @@
     </nav>
     <div class="cal-legend">
       <span class="lg"><i class="sw dot amazon"></i>Amazon</span>
-      <span class="lg"><i class="sw dot store"></i>Tienda</span>
+      <span class="lg"><i class="sw dot store"></i>Otros</span>
     </div>
   </div>
 
@@ -39,7 +49,9 @@
         <div class="day{% if day.is_today %} today{% endif %}{% if day.is_past %} past{% endif %}{% if not day.in_month %} out{% endif %}{% if forloop.counter > 5 %} weekend{% endif %}">
           <span class="num">{{ day.date.day }}</span>
           {% for c in day.chips %}
-            <span class="pkg src-{{ c.source }} is-{{ c.kind }}" title="{{ c.tag }} · {{ c.label }}"><b>{{ c.tag }}</b> · {{ c.label }}</span>
+            <button class="pkg src-{{ c.source }} is-{{ c.kind }}" title="{{ c.tag }} · {{ c.label }}"
+                    hx-get="{% url 'package_detail' c.package_id %}"
+                    hx-target="#pkg-modal" hx-swap="innerHTML"><b>{{ c.tag }}</b> · {{ c.label }}</button>
           {% endfor %}
         </div>
       {% endfor %}

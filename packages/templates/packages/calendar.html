@@ -259,6 +259,105 @@
       background: color-mix(in srgb, var(--muted) 10%, transparent);
     }
     .pkg.is-picked::before { content: '✓ '; }
+    /* Delivered at home: same muted, done look as picked, but a house marks
+       "no trip, it came to a door" instead of a pickup. */
+    .pkg.is-delivered {
+      color: var(--muted);
+      background: color-mix(in srgb, var(--muted) 10%, transparent);
+    }
+    .pkg.is-delivered::before { content: '🏠 '; }
+
+    /* ---- parse-failure banner: an email the parser choked on ---- */
+    .parse-alert {
+      display: flex;
+      flex-direction: column;
+      gap: .15rem;
+      margin: .2rem .9rem .4rem;
+      padding: .5rem .75rem;
+      border: 1px solid var(--danger);
+      border-radius: .5rem;
+      background: color-mix(in srgb, var(--danger) 8%, transparent);
+      color: var(--danger);
+      font-size: .72rem;
+      line-height: 1.4;
+    }
+
+    /* ---- package detail modal ---- */
+    .modal-back {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      display: grid;
+      place-items: center;
+      padding: 1rem;
+      background: rgba(0, 0, 0, .45);
+    }
+    .modal-card {
+      position: relative;
+      width: 100%;
+      max-width: 22rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.1rem 1.25rem 1.25rem;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, .25);
+    }
+    /* The modal lives outside .cal, so undo base.html's full-width button. */
+    .modal-card .modal-x {
+      position: absolute;
+      top: .3rem;
+      right: .45rem;
+      width: 2rem;
+      margin: 0;
+      padding: 0;
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 1.5rem;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .modal-head {
+      display: flex;
+      align-items: flex-start;
+      gap: .75rem;
+      margin: 0 1.2rem .55rem 0;
+    }
+    .modal-thumb {
+      flex: none;
+      width: 3.5rem;
+      height: 3.5rem;
+      object-fit: contain;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+    }
+    .modal-head h2 { margin: 0; font-size: .95rem; line-height: 1.35; }
+    .modal-point { margin: 0 0 .65rem; font-size: .8rem; font-weight: 600; }
+    .modal-point.amazon { color: var(--amazon); }
+    .modal-point.store { color: var(--store); }
+    .modal-rows {
+      display: grid;
+      gap: .3rem;
+      font-size: .82rem;
+    }
+    .modal-rows b { font-weight: 600; color: var(--muted); }
+    .vine-badge {
+      font-style: normal;
+      font-size: .7rem;
+      font-weight: 700;
+      color: var(--accent);
+      border: 1px solid var(--accent);
+      border-radius: 999px;
+      padding: 0 .45rem;
+    }
+    .modal-code {
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: .08em;
+      font-variant-numeric: tabular-nums;
+    }
+    .modal-barcode { display: inline-block; margin-top: .85rem; font-size: .9rem; }
 
     /* ---- swap animations ---- */
     .cal.slide-next .cal-grid { animation: cal-slide-next .3s cubic-bezier(.22, .9, .35, 1); }
@@ -301,5 +400,8 @@
       <a class="add" href="{% url 'add_package' %}" aria-label="Añadir paquete">+</a>
     </header>
     {% include "packages/_calendar.html" %}
+    {# Landing slot for the package-detail modal; outside the swapped
+       fragment so calendar navigation never wipes an open card. #}
+    <div id="pkg-modal"></div>
   </div>
 {% endblock %}

@@ -23,14 +23,15 @@ class PackageAdmin(admin.ModelAdmin):
         "deadline",
     )
     list_filter = ("state", "is_vine", "pickup_point")
-    search_fields = ("description", "pickup_code")
+    search_fields = ("description", "pickup_code", "order_id", "shipment_id")
     date_hierarchy = "deadline"
     list_select_related = ("pickup_point",)
 
 
 @admin.register(RawEmail)
 class RawEmailAdmin(admin.ModelAdmin):
-    list_display = ("__str__", "message_id", "received_at", "processed")
-    list_filter = ("processed",)
-    search_fields = ("subject", "message_id")
+    list_display = ("__str__", "kind", "received_at", "processed",
+                    "parse_error", "note")
+    list_filter = ("processed", "kind")
+    search_fields = ("subject", "message_id", "parse_error")
     readonly_fields = ("raw",)

@@ -19,6 +19,8 @@ jobs:
           echo "HOST_DB_PATH=${{ vars.HOST_DB_PATH }}" >> .env
           echo "DEPLOY_UID=$(id -u)" >> .env
           echo "DEPLOY_GID=$(id -g)" >> .env
+          echo "GMAIL_IMAP_USER=${{ vars.GMAIL_IMAP_USER }}" >> .env
+          echo "GMAIL_IMAP_APP_PASSWORD=${{ secrets.GMAIL_IMAP_APP_PASSWORD }}" >> .env
 
       - name: Initialize data directory
         run: mkdir -p ${{ vars.HOST_DB_PATH }}

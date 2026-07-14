@@ -1,6 +1,8 @@
 services:
   web:
     build: .
+    image: harvest
+    container_name: harvest-web
     restart: unless-stopped
     user: "${DEPLOY_UID}:${DEPLOY_GID}"
     ports:
@@ -10,5 +12,34 @@ services:
       DJANGO_DEBUG: "False"
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS}
       DJANGO_DB_PATH: /app/data/db.sqlite3
+      # Log timestamps in the user's wall-clock time.
+      TZ: Europe/Madrid
+      GMAIL_IMAP_USER: ${GMAIL_IMAP_USER:-}
+      GMAIL_IMAP_APP_PASSWORD: ${GMAIL_IMAP_APP_PASSWORD:-}
+    volumes:
+      - ${HOST_DB_PATH}:/app/data
+
+  # Inbox scanner. One sweep right after start, then every INGEST_EVERY_SECONDS,
+  # with an idle heartbeat in the logs between sweeps. This is the container the
+  # user pulls the audit trail from — `docker logs -f harvest` — so it takes the
+  # bare `harvest` name. The initial sleep lets web run migrations.
+  ingest:
+    image: harvest
+    container_name: harvest
+    restart: unless-stopped
+    user: "${DEPLOY_UID}:${DEPLOY_GID}"
+    depends_on:
+      - web
+    command: sh -c "sleep 15; exec python manage.py ingest --loop"
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      DJANGO_DEBUG: "False"
+      DJANGO_DB_PATH: /app/data/db.sqlite3
+      TZ: Europe/Madrid
+      GMAIL_IMAP_USER: ${GMAIL_IMAP_USER:-}
+      GMAIL_IMAP_APP_PASSWORD: ${GMAIL_IMAP_APP_PASSWORD:-}
+      INGEST_EVERY_SECONDS: ${INGEST_EVERY_SECONDS:-600}
+      # Move processed emails to Trash so the inbox self-cleans (30-day grace).
+      GMAIL_TRASH_PROCESSED: ${GMAIL_TRASH_PROCESSED:-true}
     volumes:
       - ${HOST_DB_PATH}:/app/data

@@ -1,34 +1,26 @@
 from datetime import date, timedelta
 
-from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 
 from .forms import PackageForm
+from .models import Package, PickupPoint, RawEmail
 
 # Weeks shown per view. Month is special-cased: its length depends on the anchor.
 VIEW_WEEKS = {"week": 1, "fortnight": 2}
 
-# TEMPORARY: hardcoded chips to design the day-cell rendering, local only.
-# Delete once the calendar reads packages from the database.
-#
-# One entry = one mark on one day. Kinds map 1:1 to the visual grammar:
+# The visual grammar: one chip = one mark on one day, keyed by a rendering
+# kind. Several kinds share one model state — how a day relates to the
+# deadline decides the kind, never a new state in the database.
 #   ordered   — order placed ("Pedido" email). Hollow dot, no box.
-#   shipped   — shipping notice ("Enviado" email). Filled dot, no box.
+#   shipped   — shipping notice ("Enviado"). Filled dot, no box.
 #   estimated — tentative arrival ("Llega el lunes"). Dashed box; gone once it lands.
 #   waiting   — sitting at the pickup point, one mark per remaining day. Filled box.
 #   deadline  — last safe day ("antes del 14" ⇒ the 13th). Red filled box.
 #   leaves    — the "antes del" day itself: may leave at any moment. Red dashed
 #               box — dashed meaning uncertain, same grammar as "estimated".
 #   picked    — confirmed picked up that day. Muted + check.
-#
-# The board shows the present and the future, not history. Purge rules:
-#   - One mark for the latest *certain* state; a superseded one disappears
-#     ("Pedido" dies when "Enviado" arrives). "Estimado" rides along while in
-#     transit because it's the uncertain one, and dies when the package lands.
-#   - "waiting" paints only the remaining window, today → deadline, never the
-#     days it has already been sitting there. No deadline (alt store): today only.
-#   - "picked" leaves a single check on its day and clears everything else.
 STATE_TAGS = {
     "ordered": "Pedido",
     "shipped": "Enviado",
@@ -37,31 +29,84 @@ STATE_TAGS = {
     "deadline": "Último día",
     "leaves": "Se va",
     "picked": "Recogido",
+    "delivered": "Entregado",
+}
+
+# Within a day, red first, then actionable, then informational.
+_URGENCY = {"deadline": 0, "leaves": 0, "waiting": 1, "estimated": 2,
+            "shipped": 3, "ordered": 3, "picked": 4, "delivered": 4}
+
+_STATE_LABELS = {
+    Package.State.IN_TRANSIT: "En camino",
+    Package.State.AWAITING_PICKUP: "Listo para recoger",
+    Package.State.PICKED_UP: "Recogido",
+    Package.State.DELIVERED: "Entregado",
+    Package.State.RETURNED: "Devuelto",
 }
 
 
-def _c(day, label, source, kind):
-    return {"date": date(2026, 7, day), "label": label, "source": source, "kind": kind}
+def _marks(pkg, today):
+    """(day, kind) pairs for one package — the board shows the present and
+    the future, not history. Superseded states are purged: the order mark
+    upgrades to the shipping mark, "estimated" dies when the package lands,
+    "waiting" paints only the remaining window (today → deadline), and a
+    picked-up package leaves nothing but the check on its day."""
+    if pkg.state == Package.State.IN_TRANSIT:
+        marks = []
+        if pkg.shipped_on:
+            marks.append((pkg.shipped_on, "shipped"))
+        elif pkg.ordered_on:
+            marks.append((pkg.ordered_on, "ordered"))
+        if pkg.estimated_arrival:
+            marks.append((pkg.estimated_arrival, "estimated"))
+        return marks
+
+    if pkg.state == Package.State.AWAITING_PICKUP:
+        if not pkg.deadline:  # alt store never expires: today's cell only
+            return [(today, "waiting")]
+        last_safe = pkg.deadline - timedelta(days=1)
+        if today > pkg.deadline:
+            # Past the deadline, not confirmed picked: per the misleading
+            # "no longer available" email, it usually is still there.
+            return [(today, "leaves")]
+        marks = []
+        day = today
+        while day < last_safe:
+            marks.append((day, "waiting"))
+            day += timedelta(days=1)
+        if today <= last_safe:
+            marks.append((last_safe, "deadline"))
+        marks.append((pkg.deadline, "leaves"))
+        return marks
+
+    if pkg.state == Package.State.PICKED_UP:
+        day = pkg.picked_up_on or pkg.actual_arrival
+        return [(day, "picked")] if day else []
+
+    if pkg.state == Package.State.DELIVERED:
+        # Home delivery: a single mark on the day it landed. No trip, no
+        # deadline — just a record that it arrived.
+        day = pkg.actual_arrival or pkg.estimated_arrival
+        return [(day, "delivered")] if day else []
+
+    return []  # returned: gone from the board
 
 
-# The samples assume "today" is Sun 2026-07-12.
-SAMPLE_CHIPS = [
-    # Ordered Sat 11, not shipped yet: the order mark plus the soft promise.
-    _c(11, "Cargador USB-C 65W", "amazon", "ordered"),
-    _c(13, "Cargador USB-C 65W", "amazon", "estimated"),
-    # Shipped Fri 10 ("Pedido" of Thu 9 purged), promised for Tue 14.
-    _c(10, "Funda Kindle", "amazon", "shipped"),
-    _c(14, "Funda Kindle", "amazon", "estimated"),
-    # At the locker since Fri 10, "antes del 14": the remaining window is
-    # today (plain), the last safe day (red), and the leave day (red dashed).
-    _c(12, "Auriculares JBL", "amazon", "waiting"),
-    _c(13, "Auriculares JBL", "amazon", "deadline"),
-    _c(14, "Auriculares JBL", "amazon", "leaves"),
-    # Alt store, no deadline: it just rides on today's cell.
-    _c(12, "Puzzle 1000 piezas", "store", "waiting"),
-    # Picked up Fri 10: nothing left but the check on its day.
-    _c(10, "Bombillas E27", "amazon", "picked"),
-]
+def _chips(start, end, today):
+    chips = []
+    packages = (Package.objects
+                .exclude(state=Package.State.RETURNED)
+                .select_related("pickup_point"))
+    for pkg in packages:
+        source = ("store" if pkg.pickup_point.kind == PickupPoint.Kind.ALT_STORE
+                  else "amazon")
+        label = pkg.description or f"Paquete {pkg.pk}"
+        chips.extend(
+            {"date": day, "kind": kind, "tag": STATE_TAGS[kind],
+             "label": label, "source": source, "package_id": pkg.pk}
+            for day, kind in _marks(pkg, today) if start <= day <= end
+        )
+    return chips
 
 
 def _monday(day):
@@ -104,6 +149,9 @@ def home(request):
         prev_anchor, next_anchor = start - timedelta(weeks=n_weeks), start + timedelta(weeks=n_weeks)
         month = None
 
+    end = start + timedelta(weeks=n_weeks, days=-1)
+    chips = _chips(start, end, today)
+
     weeks = []
     for w in range(n_weeks):
         days = []
@@ -114,8 +162,8 @@ def home(request):
                 "is_today": day == today,
                 "is_past": day < today,
                 "in_month": month is None or day.month == month.month,
-                "chips": [{**c, "tag": STATE_TAGS[c["kind"]]}
-                          for c in SAMPLE_CHIPS if c["date"] == day],
+                "chips": sorted((c for c in chips if c["date"] == day),
+                                key=lambda c: _URGENCY[c["kind"]]),
             })
         weeks.append({"number": days[0]["date"].isocalendar()[1], "days": days})
 
@@ -123,8 +171,12 @@ def home(request):
         "view": view,
         "month": month,
         "range_start": start,
-        "range_end": start + timedelta(weeks=n_weeks, days=-1),
+        "range_end": end,
         "weeks": weeks,
+        # Emails the parser choked on: never silently dropped, so they get a
+        # red banner until someone (an agent, probably) sorts them out.
+        "parse_failures": RawEmail.objects.exclude(parse_error="")
+                                          .order_by("-received_at", "-created_at")[:3],
         # Direction of travel decides the swap animation; no direction = fade.
         "anim": {"next": "slide-next", "prev": "slide-prev"}.get(direction, "fade"),
         "nav": {
@@ -139,6 +191,29 @@ def home(request):
     }
     template = "packages/_calendar.html" if request.headers.get("HX-Request") else "packages/calendar.html"
     return render(request, template, context)
+
+
+def package_detail(request, pk):
+    """Minimal product card for a tapped chip, swapped into the modal slot."""
+    pkg = get_object_or_404(Package.objects.select_related("pickup_point"), pk=pk)
+    point = pkg.pickup_point
+    # Amazon pickup names already read "Amazon Locker/Counter - …"; the home
+    # and alt-store cases need a word to say what kind of place it is.
+    if point.kind == PickupPoint.Kind.HOME:
+        point_label = f"Entrega a domicilio · {point.name}"
+    elif point.kind == PickupPoint.Kind.ALT_STORE:
+        # "Otros" (not "Tienda"): the non-Amazon bucket is various stores and
+        # drop-off spots, all handled the same, distinct from Amazon.
+        point_label = f"Otros · {point.name}"
+    else:
+        point_label = point.name
+    return render(request, "packages/_package_detail.html", {
+        "package": pkg,
+        "point_label": point_label,
+        "source": ("store" if point.kind == PickupPoint.Kind.ALT_STORE
+                   else "amazon"),
+        "state_label": _STATE_LABELS.get(pkg.state, pkg.state),
+    })
 
 
 def add_package(request):

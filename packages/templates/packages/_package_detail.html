@@ -1,0 +1,41 @@
+{# Minimal product card swapped into #pkg-modal when a chip is tapped. #}
+<div class="modal-back" onclick="if (event.target === this) this.remove()">
+  <div class="modal-card">
+    <button type="button" class="modal-x" aria-label="Cerrar"
+            onclick="this.closest('.modal-back').remove()">×</button>
+    <div class="modal-head">
+      {% if package.image_url %}
+        <img class="modal-thumb" src="{{ package.image_url }}" alt="">
+      {% endif %}
+      <h2>{{ package.description|default:"(sin descripción)" }}</h2>
+    </div>
+    <p class="modal-point {{ source }}">{{ point_label }}</p>
+    <div class="modal-rows">
+      <span><b>Estado</b> {{ state_label }}{% if package.is_vine %} · <i class="vine-badge">Vine</i>{% endif %}</span>
+      {% if package.state == "in_transit" and package.estimated_arrival %}
+        <span><b>Llegada estimada</b> {{ package.estimated_arrival|date:"l j" }} de {{ package.estimated_arrival|date:"F" }}</span>
+      {% endif %}
+      {% if package.actual_arrival %}
+        {% if package.state == "delivered" %}
+          <span><b>Entregado</b> el {{ package.actual_arrival|date:"j" }} de {{ package.actual_arrival|date:"F" }}</span>
+        {% else %}
+          <span><b>En el punto desde</b> el {{ package.actual_arrival|date:"j" }} de {{ package.actual_arrival|date:"F" }}</span>
+        {% endif %}
+      {% endif %}
+      {% if package.deadline %}
+        <span><b>Recoger antes del</b> {{ package.deadline|date:"j" }} de {{ package.deadline|date:"F" }}</span>
+      {% endif %}
+      {% if package.picked_up_on %}
+        <span><b>Recogido</b> el {{ package.picked_up_on|date:"j" }} de {{ package.picked_up_on|date:"F" }}</span>
+      {% endif %}
+      {% if package.pickup_code %}
+        <span><b>Código de recogida</b> <code class="modal-code">{{ package.pickup_code }}</code></span>
+      {% endif %}
+    </div>
+    {% if package.barcode_url %}
+      <a class="modal-barcode" href="{{ package.barcode_url }}" target="_blank" rel="noopener">
+        Ver código de barras de recogida ↗
+      </a>
+    {% endif %}
+  </div>
+</div>
