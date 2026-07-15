@@ -33,9 +33,12 @@ STATE_TAGS = {
     "delivered": "Entregado",
 }
 
-# Within a day, red first, then actionable, then informational.
-_URGENCY = {"deadline": 0, "leaves": 0, "waiting": 1, "estimated": 2,
-            "shipped": 3, "ordered": 3, "picked": 4, "delivered": 4}
+# Within a day, red first, then actionable, then informational. The certain
+# facts (ordered/shipped) sort before the "estimated" guess: when both share a
+# day, "Enviado" reads before "Estimado" (a fact beats a promise).
+_URGENCY = {"deadline": 0, "leaves": 0, "waiting": 1,
+            "shipped": 2, "ordered": 2, "estimated": 3,
+            "picked": 4, "delivered": 4}
 
 _STATE_LABELS = {
     Package.State.IN_TRANSIT: "En camino",
@@ -77,48 +80,58 @@ def _point_label(point):
 
 
 def _marks(pkg, today):
-    """(day, kind) pairs for one package — the board shows the present and
-    the future, not history. Superseded states are purged: the order mark
+    """(day, kind, note) triples for one package — the board shows the present
+    and the future, not history. Superseded states are purged: the order mark
     upgrades to the shipping mark, "estimated" dies when the package lands,
     "waiting" paints only the remaining window (today → deadline), and a
-    picked-up package leaves nothing but the check on its day."""
+    picked-up package leaves nothing but the check on its day. `note` is a small
+    qualifier shown in parentheses, empty for most marks."""
     if pkg.state == Package.State.IN_TRANSIT:
-        marks = []
+        fact_day, fact_kind = None, None
         if pkg.shipped_on:
-            marks.append((pkg.shipped_on, "shipped"))
+            fact_day, fact_kind = pkg.shipped_on, "shipped"
         elif pkg.ordered_on:
-            marks.append((pkg.ordered_on, "ordered"))
+            fact_day, fact_kind = pkg.ordered_on, "ordered"
+        # Ship and estimated arrival on the *same* day ("Enviado hoy, llega
+        # hoy", the rare same-day delivery): one chip that says both, so the
+        # arrival still shows where the user looks for it instead of vanishing.
+        if pkg.estimated_arrival and pkg.estimated_arrival == fact_day:
+            note = "llega hoy" if fact_day == today else "llega el mismo día"
+            return [(fact_day, fact_kind, note)]
+        marks = []
+        if fact_kind:
+            marks.append((fact_day, fact_kind, ""))
         if pkg.estimated_arrival:
-            marks.append((pkg.estimated_arrival, "estimated"))
+            marks.append((pkg.estimated_arrival, "estimated", ""))
         return marks
 
     if pkg.state == Package.State.AWAITING_PICKUP:
         if not pkg.deadline:  # alt store never expires: today's cell only
-            return [(today, "waiting")]
+            return [(today, "waiting", "")]
         last_safe = pkg.deadline - timedelta(days=1)
         if today > pkg.deadline:
             # Past the deadline, not confirmed picked: per the misleading
             # "no longer available" email, it usually is still there.
-            return [(today, "leaves")]
+            return [(today, "leaves", "")]
         marks = []
         day = today
         while day < last_safe:
-            marks.append((day, "waiting"))
+            marks.append((day, "waiting", ""))
             day += timedelta(days=1)
         if today <= last_safe:
-            marks.append((last_safe, "deadline"))
-        marks.append((pkg.deadline, "leaves"))
+            marks.append((last_safe, "deadline", ""))
+        marks.append((pkg.deadline, "leaves", ""))
         return marks
 
     if pkg.state == Package.State.PICKED_UP:
         day = pkg.picked_up_on or pkg.actual_arrival
-        return [(day, "picked")] if day else []
+        return [(day, "picked", "")] if day else []
 
     if pkg.state == Package.State.DELIVERED:
         # Home delivery: a single mark on the day it landed. No trip, no
         # deadline — just a record that it arrived.
         day = pkg.actual_arrival or pkg.estimated_arrival
-        return [(day, "delivered")] if day else []
+        return [(day, "delivered", "")] if day else []
 
     return []  # returned: gone from the board
 
@@ -134,9 +147,9 @@ def _chips(start, end, today):
         label = _label(pkg)
         detail_url = reverse("package_detail", args=[pkg.pk])
         chips.extend(
-            {"date": day, "kind": kind, "tag": STATE_TAGS[kind],
+            {"date": day, "kind": kind, "tag": STATE_TAGS[kind], "note": note,
              "label": label, "source": source, "detail_url": detail_url}
-            for day, kind in _marks(pkg, today) if start <= day <= end
+            for day, kind, note in _marks(pkg, today) if start <= day <= end
         )
     return chips
 
@@ -155,6 +168,7 @@ def _day_chips(chips, day):
             "date": day,
             "kind": "picked",
             "tag": STATE_TAGS["picked"],
+            "note": "",
             "label": f"{len(picked)} productos",
             "source": "amazon" if any(c["source"] == "amazon" for c in picked) else "store",
             "detail_url": reverse("picked_detail", args=[day.isoformat()]),

@@ -49,9 +49,9 @@
         <div class="day{% if day.is_today %} today{% endif %}{% if day.is_past %} past{% endif %}{% if not day.in_month %} out{% endif %}{% if forloop.counter > 5 %} weekend{% endif %}">
           <span class="num">{{ day.date.day }}</span>
           {% for c in day.chips %}
-            <button class="pkg src-{{ c.source }} is-{{ c.kind }}" title="{{ c.tag }} · {{ c.label }}"
+            <button class="pkg src-{{ c.source }} is-{{ c.kind }}" title="{{ c.tag }}{% if c.note %} ({{ c.note }}){% endif %} · {{ c.label }}"
                     hx-get="{{ c.detail_url }}"
-                    hx-target="#pkg-modal" hx-swap="innerHTML"><b>{{ c.tag }}</b> · {{ c.label }}</button>
+                    hx-target="#pkg-modal" hx-swap="innerHTML"><b>{{ c.tag }}{% if c.note %} ({{ c.note }}){% endif %}</b> · {{ c.label }}</button>
           {% endfor %}
         </div>
       {% endfor %}

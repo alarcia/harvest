@@ -293,6 +293,32 @@ def _apply(parsed):
     return None, f"Sin regla para {kind.value}"  # unreachable; belt and braces
 
 
+def _reparse(record, raw):
+    """Parse `raw` and apply it onto `record`, clearing any earlier error.
+
+    Shared by first-time ingestion and reprocessing (below). A crash or a
+    ParseError is captured on the record — never raised — so one bad email
+    never drops or aborts a batch. The caller saves the record.
+    """
+    record.parse_error = ""
+    try:
+        parsed = parse_email(raw)
+        record.kind = parsed.kind.value
+        if parsed.sent_at:
+            record.received_at = timezone.make_aware(
+                parsed.sent_at, timezone.get_default_timezone()
+            )
+        with transaction.atomic():
+            package, note = _apply(parsed)
+        record.package = package
+        record.note = note
+        record.processed = True
+    except ParseError as exc:
+        record.parse_error = str(exc)
+    except Exception as exc:  # a crash is still never a dropped email
+        record.parse_error = f"{type(exc).__name__}: {exc}"
+
+
 def process_message(raw):
     """One raw RFC822 message (bytes) through the whole pipeline.
 
@@ -321,24 +347,39 @@ def process_message(raw):
         received_at=received_at,
         raw=raw.decode("utf-8", "replace"),
     )
-    try:
-        parsed = parse_email(raw)
-        record.kind = parsed.kind.value
-        if parsed.sent_at:
-            record.received_at = timezone.make_aware(
-                parsed.sent_at, timezone.get_default_timezone()
-            )
-        with transaction.atomic():
-            package, note = _apply(parsed)
-        record.package = package
-        record.note = note
-        record.processed = True
-    except ParseError as exc:
-        record.parse_error = str(exc)
-    except Exception as exc:  # a crash is still never a dropped email
-        record.parse_error = f"{type(exc).__name__}: {exc}"
+    _reparse(record, raw)
     record.save()
     return record, True
+
+
+def reprocess_failures():
+    """Re-parse every stored RawEmail whose parse previously failed.
+
+    The inbox scan is idempotent by Message-ID, so an email that failed to
+    parse once is never retried on later sweeps — even after the parser learns
+    its template. This reaches those stuck failures and re-parses them from the
+    stored raw bytes (no IMAP, no re-forwarding). A failure applied no state, so
+    re-parsing is safe; anything that now parses becomes `processed`, clears its
+    red banner, and gets swept from the inbox by the next normal `ingest` run.
+
+    Returns (total, fixed): how many failures were seen, how many now parse.
+    """
+    failures = list(RawEmail.objects.exclude(parse_error=""))
+    fixed = 0
+    for record in failures:
+        _reparse(record, record.raw.encode("utf-8", "replace"))
+        record.save()
+        if record.parse_error:
+            logger.info("AÚN SIN PARSEAR %r → %s",
+                        record.subject[:70], record.parse_error)
+        else:
+            fixed += 1
+            detail = f" · {record.note}" if record.note else ""
+            logger.info("REPROCESADO %r → %s%s",
+                        record.subject[:70], record.kind or "?", detail)
+    logger.info("Reproceso completado: %d fallo(s), %d resuelto(s)",
+                len(failures), fixed)
+    return len(failures), fixed
 
 
 def _default_connection():

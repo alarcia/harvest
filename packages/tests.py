@@ -7,7 +7,7 @@ broke — keep one fixture per template, and add one whenever a new template
 shows up.
 """
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from email.message import EmailMessage
 from pathlib import Path
@@ -16,7 +16,7 @@ from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from .ingest import process_message, scan_inbox
+from .ingest import process_message, reprocess_failures, scan_inbox
 from .models import Package, PickupPoint, RawEmail
 from .parser import EmailKind, ParseError, parse_email
 
@@ -494,6 +494,40 @@ class IngestTests(TestCase):
         self.assertEqual(pkg.state, Package.State.AWAITING_PICKUP)
         self.assertEqual(pkg.deadline, date(2026, 7, 16))  # unchanged
 
+    def test_reprocess_failures_reparses_a_now_known_template(self):
+        # An email that failed under an older parser is stuck: the idempotent
+        # scan never retries it. Simulate that stale failure, then reprocess.
+        raw = fixture("022-recordatorio-paquete-en-espera-de-recogida.eml")
+        from email import message_from_bytes, policy
+        mid = message_from_bytes(raw, policy=policy.default).get("Message-ID")
+        RawEmail.objects.create(
+            message_id=mid, subject="Recordatorio: Paquete en espera…",
+            raw=raw.decode("utf-8", "replace"),
+            parse_error="Unrecognized email type", processed=False,
+        )
+
+        total, fixed = reprocess_failures()
+        self.assertEqual((total, fixed), (1, 1))
+        record = RawEmail.objects.get(message_id=mid)
+        self.assertEqual(record.parse_error, "")  # banner clears
+        self.assertTrue(record.processed)
+        self.assertEqual(record.kind, "pickup_reminder")
+
+    def test_reprocess_leaves_genuine_failures_flagged(self):
+        # A truly unknown email stays flagged after a reprocess — never silently
+        # cleared just because we retried it.
+        msg = EmailMessage()
+        msg["Subject"] = "Oferta especial solo hoy"
+        msg["Message-ID"] = "<still-junk@example.com>"
+        msg.set_content("Grandes descuentos", subtype="html")
+        process_message(msg.as_bytes())
+
+        total, fixed = reprocess_failures()
+        self.assertEqual((total, fixed), (1, 0))
+        self.assertTrue(
+            RawEmail.objects.get(message_id="<still-junk@example.com>").parse_error
+        )
+
     def test_nameless_delivered_email_leaves_description_blank(self):
         # "Entregado: 1 producto | N.º de pedido …" names no product and there
         # are no item links: the description is left blank (the calendar shows a
@@ -639,3 +673,50 @@ class CalendarViewTests(TestCase):
         html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
         self.assertIn("Producto desconocido".encode(), html)
         self.assertNotIn(b"404-7963783-4668345", html)
+
+    def test_ship_and_arrive_today_merges_into_one_shipped_chip(self):
+        # "Enviado hoy, llega hoy": shipping fact and estimated arrival on the
+        # same day become a single "Enviado (llega hoy)" chip — one mark, but
+        # the arrival is still spelled out where the user looks for it.
+        today = timezone.localdate()
+        home = self._point("Rosa - Can Salgot", PickupPoint.Kind.HOME)
+        Package.objects.create(
+            pickup_point=home, state=Package.State.IN_TRANSIT,
+            description="ivvi Pill Pockets", shipped_on=today,
+            estimated_arrival=today,
+        )
+        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+        self.assertEqual(html.count(b'is-shipped"'), 1)
+        self.assertEqual(html.count(b'is-estimated"'), 0)
+        self.assertIn(b"(llega hoy)", html)
+
+    def test_ship_today_arrive_later_keeps_both_marks(self):
+        # The normal case: shipped today, arrives in a few days — the dot and
+        # the dashed box sit on different days, both worth showing.
+        today = timezone.localdate()
+        home = self._point("Rosa - Can Salgot", PickupPoint.Kind.HOME)
+        Package.objects.create(
+            pickup_point=home, state=Package.State.IN_TRANSIT,
+            description="Colchón", shipped_on=today,
+            estimated_arrival=today + timedelta(days=3),
+        )
+        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+        self.assertEqual(html.count(b'is-shipped"'), 1)
+        self.assertEqual(html.count(b'is-estimated"'), 1)
+
+    def test_shipped_sorts_before_estimated_on_a_shared_day(self):
+        # Two different packages marking the same day: the certain "Enviado"
+        # must read before the "Estimado" guess.
+        today = timezone.localdate()
+        home = self._point("Rosa - Can Salgot", PickupPoint.Kind.HOME)
+        Package.objects.create(
+            pickup_point=home, state=Package.State.IN_TRANSIT,
+            description="Recién enviado", shipped_on=today,
+        )
+        Package.objects.create(
+            pickup_point=home, state=Package.State.IN_TRANSIT,
+            description="Solo estimado", estimated_arrival=today,
+        )
+        html = self.client.get(
+            reverse("home"), HTTP_HX_REQUEST="true").content.decode()
+        self.assertLess(html.index("is-shipped"), html.index("is-estimated"))
