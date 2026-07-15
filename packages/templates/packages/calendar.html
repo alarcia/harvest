@@ -31,6 +31,33 @@
       letter-spacing: -0.02em;
     }
     .cal-topbar .brand img { height: 1.5rem; width: auto; }
+    .cal-topbar .left { display: flex; align-items: center; gap: .5rem; }
+    .cal-topbar .admin-link {
+      display: inline-flex;
+      align-items: center;
+      gap: .3rem;
+      padding: .2rem .55rem .2rem .4rem;
+      border-radius: 999px;
+      font-size: .68rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-decoration: none;
+      opacity: .6;
+      transition: transform .35s ease, opacity .2s ease, background .2s ease, color .2s ease;
+    }
+    .cal-topbar .admin-link .wand {
+      display: inline-block;
+      transition: transform .35s ease;
+    }
+    .cal-topbar .admin-link:hover {
+      opacity: 1;
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      text-decoration: none;
+    }
+    .cal-topbar .admin-link:hover .wand {
+      transform: rotate(-18deg) scale(1.15);
+    }
     .cal-topbar .add {
       display: grid;
       place-items: center;
@@ -414,7 +441,10 @@
 {% block body %}
   <div class="cal-app">
     <header class="cal-topbar">
-      <span class="brand"><img src="{% static 'packages/logo.png' %}" alt=""><span>Harvest<span class="accent">.</span></span></span>
+      <span class="left">
+        <span class="brand"><img src="{% static 'packages/logo.png' %}" alt=""><span>Harvest<span class="accent">.</span></span></span>
+        <a class="admin-link" href="/admin/" title="Panel de administración"><span class="wand">🪄</span>Admin</a>
+      </span>
       <a class="add" href="{% url 'add_package' %}" aria-label="Añadir paquete">+</a>
     </header>
     {% include "packages/_calendar.html" %}
