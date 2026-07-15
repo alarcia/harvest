@@ -1,5 +1,5 @@
 {# Swapped whole by HTMX on every navigation, so title, controls and grid never drift apart. #}
-<section id="calendar" class="cal {{ anim }}" hx-target="#calendar" hx-swap="outerHTML">
+<section id="calendar" class="cal {{ anim }} view-{{ view }}" hx-target="#calendar" hx-swap="outerHTML">
   {% if parse_failures %}
     {% comment %}An email the parser didn't understand is never silently dropped:
     it stays flagged here until it's resolved (via admin) or reprocessed.{% endcomment %}
@@ -46,13 +46,25 @@
     {% for week in weeks %}
       <div class="wk">{{ week.number }}</div>
       {% for day in week.days %}
-        <div class="day{% if day.is_today %} today{% endif %}{% if day.is_past %} past{% endif %}{% if not day.in_month %} out{% endif %}{% if forloop.counter > 5 %} weekend{% endif %}">
+        {% comment %}The whole cell is a tap target: it opens the day modal,
+        where the chips are full-size. Direct chip taps still work (readable
+        on desktop and in the agenda) — `consume` keeps them from also firing
+        the cell. --i staggers the agenda rows' entrance.{% endcomment %}
+        {% widthratio forloop.parentloop.counter0 1 7 as row_offset %}
+        <div class="day{% if day.is_today %} today{% endif %}{% if day.is_past %} past{% endif %}{% if not day.in_month %} out{% endif %}{% if forloop.counter > 5 %} weekend{% endif %}"
+             style="--i:{{ row_offset|add:forloop.counter0 }}"
+             {% if day.chips %}hx-get="{% url 'day_detail' day.date|date:'Y-m-d' %}" hx-target="#pkg-modal" hx-swap="innerHTML"{% endif %}>
           <span class="num">{{ day.date.day }}</span>
-          {% for c in day.chips %}
-            <button class="pkg src-{{ c.source }} is-{{ c.kind }}" title="{{ c.tag }}{% if c.note %} ({{ c.note }}){% endif %} · {{ c.label }}"
-                    hx-get="{{ c.detail_url }}"
-                    hx-target="#pkg-modal" hx-swap="innerHTML"><b>{{ c.tag }}{% if c.note %} ({{ c.note }}){% endif %}</b> · {{ c.label }}</button>
-          {% endfor %}
+          <span class="dow">{{ day.date|date:"D" }}</span>
+          {% if day.chips %}
+            <div class="chips">
+              {% for c in day.chips %}
+                <button class="pkg src-{{ c.source }} is-{{ c.kind }}" title="{{ c.tag }}{% if c.note %} ({{ c.note }}){% endif %} · {{ c.label }}"
+                        hx-get="{{ c.detail_url }}" hx-trigger="click consume"
+                        hx-target="#pkg-modal" hx-swap="innerHTML"><b>{{ c.tag }}{% if c.note %} ({{ c.note }}){% endif %}</b> · {{ c.label }}</button>
+              {% endfor %}
+            </div>
+          {% endif %}
         </div>
       {% endfor %}
     {% endfor %}

@@ -1,8 +1,13 @@
 {# Every item picked up on one day, listed in the shared #pkg-modal slot. #}
-<div class="modal-back" onclick="if (event.target === this) this.remove()">
+<div class="modal-back" onclick="if (event.target === this) closeModal(this)">
   <div class="modal-card">
+    {% if back_day %}
+      <button type="button" class="modal-prev" aria-label="Volver al día"
+              hx-get="{% url 'day_detail' back_day|date:'Y-m-d' %}"
+              hx-target="#pkg-modal" hx-swap="innerHTML">‹</button>
+    {% endif %}
     <button type="button" class="modal-x" aria-label="Cerrar"
-            onclick="this.closest('.modal-back').remove()">×</button>
+            onclick="closeModal(this)">×</button>
     <div class="modal-head">
       <h2>Recogido el {{ day|date:"j" }} de {{ day|date:"F" }}</h2>
     </div>

@@ -1,6 +1,7 @@
 import re
 from datetime import date, timedelta
 
+from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -195,9 +196,14 @@ def _nav(view, anchor, direction=None):
 def home(request):
     """The calendar. Full page normally, bare fragment for HTMX swaps."""
     today = timezone.localdate()
-    view = request.GET.get("view", "month")
+    # Phones open on the fortnight agenda — this week's trip and the next
+    # one's — with the month grid one tap away as the overview. MDN's
+    # recommended sniff: every phone UA carries "Mobi".
+    fallback = ("fortnight" if "Mobi" in request.META.get("HTTP_USER_AGENT", "")
+                else "month")
+    view = request.GET.get("view", fallback)
     if view not in ("month", "week", "fortnight"):
-        view = "month"
+        view = fallback
     anchor = _parse_anchor(request.GET.get("anchor"), today)
     direction = request.GET.get("dir")
 
@@ -257,6 +263,21 @@ def home(request):
     return render(request, template, context)
 
 
+def day_detail(request, day):
+    """One day blown up into the modal slot: the same chips the cell shows,
+    but big enough to read and tap. The whole day cell opens this — on a phone
+    the in-cell chips are dots or slivers — and each row leads on to the
+    package card, which draws a ‹ back to here via ?from_day."""
+    the_day = _parse_anchor(day, None)
+    if the_day is None:
+        raise Http404("Bad date")
+    today = timezone.localdate()
+    return render(request, "packages/_day_detail.html", {
+        "day": the_day,
+        "chips": _day_chips(_chips(the_day, the_day, today), the_day),
+    })
+
+
 def package_detail(request, pk):
     """Minimal product card for a tapped chip, swapped into the modal slot."""
     pkg = get_object_or_404(Package.objects.select_related("pickup_point"), pk=pk)
@@ -268,6 +289,9 @@ def package_detail(request, pk):
         "source": ("store" if point.kind == PickupPoint.Kind.ALT_STORE
                    else "amazon"),
         "state_label": _STATE_LABELS.get(pkg.state, pkg.state),
+        # Set when the card was opened from a day modal: draws the ‹ control
+        # that swaps that day back in.
+        "back_day": _parse_anchor(request.GET.get("from_day"), None),
     })
 
 
@@ -289,8 +313,11 @@ def picked_detail(request, day):
         "source": ("store" if pkg.pickup_point.kind == PickupPoint.Kind.ALT_STORE
                    else "amazon"),
     } for pkg in packages]
-    return render(request, "packages/_picked_detail.html",
-                  {"day": picked_day, "items": items})
+    return render(request, "packages/_picked_detail.html", {
+        "day": picked_day,
+        "items": items,
+        "back_day": _parse_anchor(request.GET.get("from_day"), None),
+    })
 
 
 def add_package(request):

@@ -704,6 +704,58 @@ class CalendarViewTests(TestCase):
         self.assertEqual(html.count(b'is-shipped"'), 1)
         self.assertEqual(html.count(b'is-estimated"'), 1)
 
+    def test_phone_defaults_to_fortnight_desktop_to_month(self):
+        # No explicit view: a phone UA ("Mobi", per MDN) opens the fortnight
+        # agenda — this week's trip and the next one's — while anything else
+        # keeps the month overview. An explicit choice beats the sniff.
+        phone = self.client.get(
+            reverse("home"), HTTP_HX_REQUEST="true",
+            HTTP_USER_AGENT="Mozilla/5.0 (Linux; Android 16; SM-S936B) Mobile Safari")
+        self.assertIn(b"view-fortnight", phone.content)
+        desktop = self.client.get(reverse("home"), HTTP_HX_REQUEST="true")
+        self.assertIn(b"view-month", desktop.content)
+        explicit = self.client.get(reverse("home") + "?view=month",
+                                   HTTP_HX_REQUEST="true", HTTP_USER_AGENT="Mobile")
+        self.assertIn(b"view-month", explicit.content)
+
+    def test_day_cell_opens_the_day_modal(self):
+        # A day with chips carries the day-detail URL: the whole cell is the
+        # tap target that blows the day up into the modal.
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER)
+        self._picked(counter, "Mantel de flores", today)
+        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+        self.assertIn(reverse("day_detail", args=[today.isoformat()]).encode(), html)
+
+    def test_day_detail_lists_chips_with_a_way_back(self):
+        # The day modal names the day's packages, and each chip's URL carries
+        # from_day so the package card can draw its ‹ back to the day.
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER)
+        pkg = self._picked(counter, "Mantel de flores", today)
+        html = self.client.get(
+            reverse("day_detail", args=[today.isoformat()])).content
+        self.assertIn("Mantel de flores".encode(), html)
+        want = f"{reverse('package_detail', args=[pkg.pk])}?from_day={today.isoformat()}"
+        self.assertIn(want.encode(), html)
+
+    def test_day_detail_rejects_a_bad_date(self):
+        self.assertEqual(self.client.get("/day/not-a-date/").status_code, 404)
+
+    def test_package_detail_from_day_offers_the_way_back(self):
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER)
+        pkg = self._picked(counter, "Mantel de flores", today)
+        with_back = self.client.get(reverse("package_detail", args=[pkg.pk]),
+                                    {"from_day": today.isoformat()}).content
+        self.assertIn(reverse("day_detail", args=[today.isoformat()]).encode(),
+                      with_back)
+        bare = self.client.get(reverse("package_detail", args=[pkg.pk])).content
+        self.assertNotIn(b"modal-prev", bare)
+
     def test_shipped_sorts_before_estimated_on_a_shared_day(self):
         # Two different packages marking the same day: the certain "Enviado"
         # must read before the "Estimado" guess.

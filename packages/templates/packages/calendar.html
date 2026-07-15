@@ -6,6 +6,30 @@
 
 {% block head %}
   <script src="{% static 'packages/htmx.min.js' %}" defer></script>
+  <script>
+    // Modal choreography (see the .modal-back rules): closing animates out
+    // before the node leaves the DOM, and swapping card-for-card (day ⇄
+    // package) keeps the backdrop still instead of re-fading it.
+    function closeModal(el) {
+      const back = el.closest('.modal-back');
+      if (!back || back.classList.contains('closing')) return;
+      document.body.classList.remove('modal-open');
+      back.classList.add('closing');
+      setTimeout(() => back.remove(), 170);
+    }
+    document.addEventListener('htmx:beforeSwap', (e) => {
+      if (e.target.id === 'pkg-modal') {
+        document.body.classList.toggle('modal-open',
+          !!e.target.querySelector('.modal-back:not(.closing)'));
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        const back = document.querySelector('#pkg-modal .modal-back');
+        if (back) closeModal(back);
+      }
+    });
+  </script>
   <style>
     .cal-app {
       height: 100vh;
@@ -233,8 +257,21 @@
       color: var(--card);
       font-weight: 700;
     }
+    /* Weekday letters per row: only the mobile agenda shows them — the grid
+       already has its header. */
+    .day .dow { display: none; }
+    /* A day with anything on it opens the day modal; the whole cell taps. */
+    .day[hx-get] { cursor: pointer; }
+    .day[hx-get]:active { background: color-mix(in srgb, var(--fg) 6%, transparent); }
 
     /* ---- packages inside a day cell ---- */
+    .day .chips {
+      align-self: stretch;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .cal .pkg:active { transform: scale(.97); }
     .day .pkg {
       align-self: stretch;
       margin: .3rem .12rem 0;
@@ -318,6 +355,7 @@
       place-items: center;
       padding: 1rem;
       background: rgba(0, 0, 0, .45);
+      animation: back-in .22s ease-out both;
     }
     .modal-card {
       position: relative;
@@ -328,7 +366,17 @@
       border-radius: 16px;
       padding: 1.1rem 1.25rem 1.25rem;
       box-shadow: 0 12px 40px rgba(0, 0, 0, .25);
+      animation: card-in .34s cubic-bezier(.2, 1.4, .4, 1) both;
     }
+    /* Card-for-card swaps (day ⇄ package) keep the backdrop still; only a
+       fresh open fades it in. Closing plays the exit before removal. */
+    body.modal-open .modal-back:not(.closing) { animation: none; }
+    .modal-back.closing { animation: back-out .16s ease-in forwards; }
+    .modal-back.closing .modal-card { animation: card-out .16s ease-in forwards; }
+    @keyframes back-in { from { opacity: 0; } }
+    @keyframes back-out { to { opacity: 0; } }
+    @keyframes card-in { from { opacity: 0; transform: translateY(18px) scale(.95); } }
+    @keyframes card-out { to { opacity: 0; transform: translateY(10px) scale(.97); } }
     /* The modal lives outside .cal, so undo base.html's full-width button. */
     .modal-card .modal-x {
       position: absolute;
@@ -344,6 +392,22 @@
       line-height: 1;
       cursor: pointer;
     }
+    /* ‹ back to the day modal, when the card was opened from one. */
+    .modal-card .modal-prev {
+      position: absolute;
+      top: .3rem;
+      left: .45rem;
+      width: 2rem;
+      margin: 0;
+      padding: 0;
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 1.6rem;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .modal-prev ~ .modal-head { margin-left: 1.5rem; }
     .modal-head {
       display: flex;
       align-items: flex-start;
@@ -404,6 +468,36 @@
     .picked-point.amazon { color: var(--amazon); }
     .picked-point.store { color: var(--store); }
 
+    /* Day modal: one day's chips at reading size. :where() keeps this at
+       .pkg specificity so the kind/source rules above still paint them. */
+    .day-card h2 { font-size: 1.05rem; }
+    .day-list {
+      list-style: none;
+      margin: .3rem 0 0;
+      padding: 0;
+      display: grid;
+      gap: .5rem;
+    }
+    :where(.day-list) .pkg {
+      display: block;
+      width: 100%;
+      margin: 0;
+      padding: .7rem .8rem;
+      border-radius: .6rem;
+      background: color-mix(in srgb, currentColor 8%, transparent);
+      font-size: .85rem;
+      font-weight: 600;
+      line-height: 1.35;
+      text-align: left;
+      cursor: pointer;
+      animation: row-in .3s ease-out both;
+      animation-delay: calc(var(--i, 0) * 35ms);
+    }
+    .day-list .pkg:active { transform: scale(.98); }
+    .day-empty { color: var(--muted); font-size: .85rem; }
+    @keyframes row-in { from { opacity: 0; transform: translateY(8px); } }
+    @keyframes dot-pop { from { opacity: 0; transform: scale(.2); } }
+
     /* ---- swap animations ---- */
     .cal.slide-next .cal-grid { animation: cal-slide-next .3s cubic-bezier(.22, .9, .35, 1); }
     .cal.slide-prev .cal-grid { animation: cal-slide-prev .3s cubic-bezier(.22, .9, .35, 1); }
@@ -424,7 +518,114 @@
       to   { transform: none; opacity: 1; }
     }
     @media (prefers-reduced-motion: reduce) {
-      .cal .cal-grid, .cal .cal-title { animation: none !important; }
+      .cal .cal-grid, .cal .cal-title, .cal .day, .cal .pkg,
+      .modal-back, .modal-card, .day-list .pkg { animation: none !important; }
+    }
+
+    /* ---- phone layout (below the 700px desktop breakpoint) ---- */
+    @media (max-width: 699.98px) {
+      /* The ISO week column pays no rent on a phone: the 7 days get its width. */
+      .cal-head, .cal-grid { grid-template-columns: repeat(7, 1fr); }
+      .cal-head span:first-child, .cal-grid .wk { display: none; }
+
+      /* Month = overview: dots instead of words (hollow = on the way,
+         filled = at the point, red = hurry, faint = done). The day modal
+         does the reading, so the dots take no taps themselves. */
+      .view-month .cal-grid { grid-auto-rows: minmax(4.2rem, 1fr); }
+      .view-month .day .chips {
+        align-self: center;
+        flex-direction: row;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: .3rem;
+        padding: .35rem .2rem 0;
+      }
+      .view-month .day .pkg {
+        width: .55rem;
+        height: .55rem;
+        margin: 0;
+        padding: 0;
+        border: none;
+        border-radius: 50%;
+        font-size: 0;
+        background: currentColor;
+        pointer-events: none;
+        animation: dot-pop .28s cubic-bezier(.3, 1.6, .5, 1) both;
+      }
+      .view-month .day .pkg::before { content: none; }
+      .view-month .day .pkg:nth-child(2) { animation-delay: 40ms; }
+      .view-month .day .pkg:nth-child(3) { animation-delay: 80ms; }
+      .view-month .day .pkg:nth-child(4) { animation-delay: 120ms; }
+      .view-month .day .pkg:nth-child(n+5) { animation-delay: 160ms; }
+      .view-month .day .pkg.is-ordered,
+      .view-month .day .pkg.is-estimated {
+        background: transparent;
+        border: 2px solid currentColor;
+      }
+      .view-month .day .pkg.is-waiting.src-amazon { background: var(--amazon); }
+      .view-month .day .pkg.is-waiting.src-store { background: var(--store); }
+      .view-month .day .pkg.is-deadline,
+      .view-month .day .pkg.is-leaves { background: var(--danger); border: none; }
+      .view-month .day .pkg.is-picked,
+      .view-month .day .pkg.is-delivered { background: var(--muted); opacity: .45; }
+
+      /* Week & fortnight = the reading views: days stack into an agenda,
+         chips get the full width and a finger-sized hit area. */
+      .view-week .cal-head, .view-fortnight .cal-head { display: none; }
+      .view-week .cal-grid, .view-fortnight .cal-grid {
+        display: block;
+        padding: 0 .6rem .9rem;
+      }
+      .view-week .day, .view-fortnight .day {
+        display: grid;
+        grid-template-columns: 2.6rem minmax(0, 1fr);
+        grid-template-areas: "num chips" "dow chips";
+        align-content: start;
+        column-gap: .55rem;
+        padding: .5rem 0 .55rem;
+        overflow: visible;
+        animation: row-in .32s ease-out both;
+        animation-delay: calc(var(--i, 0) * 22ms);
+      }
+      .view-week .day .num, .view-fortnight .day .num { grid-area: num; justify-self: center; }
+      .view-week .day .dow, .view-fortnight .day .dow {
+        grid-area: dow;
+        display: block;
+        justify-self: center;
+        font-size: .6rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        color: var(--muted);
+      }
+      .view-week .day .chips, .view-fortnight .day .chips {
+        grid-area: chips;
+        align-self: center;
+      }
+      .view-week .day .pkg, .view-fortnight .day .pkg {
+        margin: .22rem 0 0;
+        padding: .68rem .75rem;
+        font-size: .84rem;
+        border-radius: .55rem;
+      }
+      .view-week .day .chips .pkg:first-child,
+      .view-fortnight .day .chips .pkg:first-child { margin-top: 0; }
+      /* Empty days stay in the rhythm, but slim: one quiet line. */
+      .view-week .day:not(:has(.chips)), .view-fortnight .day:not(:has(.chips)) {
+        grid-template-areas: "num dow";
+        padding: .28rem 0 .32rem;
+        opacity: .65;
+      }
+      .view-week .day:not(:has(.chips)) .dow,
+      .view-fortnight .day:not(:has(.chips)) .dow {
+        justify-self: start;
+        align-self: center;
+      }
+      .view-week .day.today, .view-fortnight .day.today {
+        background: color-mix(in srgb, var(--accent) 7%, transparent);
+        box-shadow: inset 3px 0 0 var(--accent);
+        border-radius: 0 .5rem .5rem 0;
+      }
     }
 
     @media (min-width: 700px) {

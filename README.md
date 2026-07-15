@@ -38,9 +38,10 @@ Three kinds of destination are handled distinctly:
   idempotent, a parser fix can be replayed over stored failures with `manage.py reprocess`.
   Every action is logged with a timestamp.
 - **Calendar** — a month / fortnight / week view built from server-rendered templates and HTMX
-  fragment swaps, with no JavaScript build step. Each parcel is a chip on the days that matter,
-  and a tap opens a card with the product name, photo, destination, and a link to the pickup
-  barcode.
+  fragment swaps, with no JavaScript build step. Each parcel is a chip on the days that matter;
+  tapping a day opens it enlarged in a modal, and each chip a card with the product name, photo,
+  destination, and a link to the pickup barcode. On phones the fortnight — the default there —
+  renders as a vertical agenda and the month as a dot map, so chips stay readable and tappable.
 - **Manual entry** — handled by the Django admin, which doubles as the data-repair safety net.
 
 ## Stack
@@ -72,6 +73,10 @@ the deadline:
 | `leaves`    | red dashed box (may go)   | awaiting pickup   |
 | `picked`    | muted ✓                   | picked up         |
 | `delivered` | muted 🏠                   | delivered (home)  |
+
+On a phone the month view draws these same kinds as color-coded dots (hollow = on the way,
+filled = waiting, red = hurry, muted = done); reading happens in the agenda-style fortnight
+view or by tapping a day.
 
 ## Getting started
 

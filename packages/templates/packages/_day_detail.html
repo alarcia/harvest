@@ -1,0 +1,26 @@
+{% comment %}One day at full size, in the shared #pkg-modal slot: the same
+chips the cell shows, readable and tap-friendly. Each one swaps in the package
+card (or the consolidated pickup card), carrying ?from_day for the ‹ way
+back.{% endcomment %}
+<div class="modal-back" onclick="if (event.target === this) closeModal(this)">
+  <div class="modal-card day-card">
+    <button type="button" class="modal-x" aria-label="Cerrar"
+            onclick="closeModal(this)">×</button>
+    <div class="modal-head">
+      <h2 class="day-title">{{ day|date:"l j"|capfirst }} de {{ day|date:"F" }}</h2>
+    </div>
+    <ul class="day-list">
+      {% for c in chips %}
+        <li style="--i:{{ forloop.counter0 }}">
+          <button class="pkg src-{{ c.source }} is-{{ c.kind }}"
+                  hx-get="{{ c.detail_url }}?from_day={{ day|date:'Y-m-d' }}"
+                  hx-target="#pkg-modal" hx-swap="innerHTML">
+            <b>{{ c.tag }}{% if c.note %} ({{ c.note }}){% endif %}</b> · {{ c.label }}
+          </button>
+        </li>
+      {% empty %}
+        <li class="day-empty">Nada este día</li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
