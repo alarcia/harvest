@@ -32,10 +32,11 @@ Three kinds of destination are handled distinctly:
 ## How it works
 
 - **Ingestion** — a worker polls the mailbox over IMAP on a loop. Every raw email is stored
-  before parsing (so history can be reprocessed), matched to its parcel by order and shipment
-  id, and de-duplicated by `Message-ID`. Processed mail is moved to Trash so the inbox
-  self-cleans; anything the parser doesn't recognise is flagged on the calendar rather than
-  dropped. Every action is logged with a timestamp.
+  before parsing, matched to its parcel by order and shipment id, and de-duplicated by
+  `Message-ID`. Processed mail is moved to Trash so the inbox self-cleans; anything the parser
+  doesn't recognise is flagged on the calendar rather than dropped. Because the scan is
+  idempotent, a parser fix can be replayed over stored failures with `manage.py reprocess`.
+  Every action is logged with a timestamp.
 - **Calendar** — a month / fortnight / week view built from server-rendered templates and HTMX
   fragment swaps, with no JavaScript build step. Each parcel is a chip on the days that matter,
   and a tap opens a card with the product name, photo, destination, and a link to the pickup

@@ -17,7 +17,7 @@ VIEW_WEEKS = {"week": 1, "fortnight": 2}
 #   ordered   — order placed ("Pedido" email). Hollow dot, no box.
 #   shipped   — shipping notice ("Enviado"). Filled dot, no box.
 #   estimated — tentative arrival ("Llega el lunes"). Dashed box; gone once it lands.
-#   waiting   — sitting at the pickup point, one mark per remaining day. Filled box.
+#   waiting   — sitting at the pickup point, marked once on today. Filled box.
 #   deadline  — last safe day ("antes del 14" ⇒ the 13th). Red filled box.
 #   leaves    — the "antes del" day itself: may leave at any moment. Red dashed
 #               box — dashed meaning uncertain, same grammar as "estimated".
@@ -83,7 +83,7 @@ def _marks(pkg, today):
     """(day, kind, note) triples for one package — the board shows the present
     and the future, not history. Superseded states are purged: the order mark
     upgrades to the shipping mark, "estimated" dies when the package lands,
-    "waiting" paints only the remaining window (today → deadline), and a
+    "waiting" paints only today (not every day of the remaining window), and a
     picked-up package leaves nothing but the check on its day. `note` is a small
     qualifier shown in parentheses, empty for most marks."""
     if pkg.state == Package.State.IN_TRANSIT:
@@ -114,10 +114,8 @@ def _marks(pkg, today):
             # "no longer available" email, it usually is still there.
             return [(today, "leaves", "")]
         marks = []
-        day = today
-        while day < last_safe:
-            marks.append((day, "waiting", ""))
-            day += timedelta(days=1)
+        if today < last_safe:
+            marks.append((today, "waiting", ""))
         if today <= last_safe:
             marks.append((last_safe, "deadline", ""))
         marks.append((pkg.deadline, "leaves", ""))
