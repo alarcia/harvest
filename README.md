@@ -12,6 +12,9 @@
   </p>
 
   <p align="center"><strong>A self-hosted calendar that turns parcel notification emails into a mobile view of what's arriving, waiting, and about to expire</strong></p>
+
+  <img width="3014" height="1442" alt="image" src="https://github.com/user-attachments/assets/d2b715d9-34e2-48c1-a5ae-b345c752af41" />
+
 </div>
 
 ## About
