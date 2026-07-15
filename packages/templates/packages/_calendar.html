@@ -1,8 +1,8 @@
 {# Swapped whole by HTMX on every navigation, so title, controls and grid never drift apart. #}
 <section id="calendar" class="cal {{ anim }}" hx-target="#calendar" hx-swap="outerHTML">
   {% if parse_failures %}
-    {# An email the parser didn't understand is never silently dropped: it
-       stays flagged here until it's resolved (via admin) or reprocessed. #}
+    {% comment %}An email the parser didn't understand is never silently dropped:
+    it stays flagged here until it's resolved (via admin) or reprocessed.{% endcomment %}
     <div class="parse-alert" role="alert">
       <b>⚠ Correos sin procesar</b>
       {% for f in parse_failures %}
@@ -50,7 +50,7 @@
           <span class="num">{{ day.date.day }}</span>
           {% for c in day.chips %}
             <button class="pkg src-{{ c.source }} is-{{ c.kind }}" title="{{ c.tag }} · {{ c.label }}"
-                    hx-get="{% url 'package_detail' c.package_id %}"
+                    hx-get="{{ c.detail_url }}"
                     hx-target="#pkg-modal" hx-swap="innerHTML"><b>{{ c.tag }}</b> · {{ c.label }}</button>
           {% endfor %}
         </div>

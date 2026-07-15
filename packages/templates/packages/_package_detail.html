@@ -7,7 +7,7 @@
       {% if package.image_url %}
         <img class="modal-thumb" src="{{ package.image_url }}" alt="">
       {% endif %}
-      <h2>{{ package.description|default:"(sin descripción)" }}</h2>
+      <h2>{{ label }}</h2>
     </div>
     <p class="modal-point {{ source }}">{{ point_label }}</p>
     <div class="modal-rows">

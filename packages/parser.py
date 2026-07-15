@@ -40,9 +40,10 @@ from bs4 import BeautifulSoup
 class EmailKind(Enum):
     """One value per Amazon template we know. Model states are coarser:
     ORDERED/SHIPPED/OUT_FOR_DELIVERY are all `in_transit`; READY_FOR_PICKUP
-    is `awaiting_pickup`; NO_LONGER_AVAILABLE drives *no* transition (the
-    email is misleading — the package is usually still there);
-    REVIEW_PUBLISHED never touches the calendar (reviews, out of scope)."""
+    is `awaiting_pickup`; NO_LONGER_AVAILABLE and PICKUP_REMINDER drive *no*
+    transition (the first is misleading, the second is a nag about a package
+    already waiting — both change nothing); REVIEW_PUBLISHED never touches the
+    calendar (reviews, out of scope)."""
 
     ORDERED = "ordered"
     SHIPPED = "shipped"
@@ -51,6 +52,7 @@ class EmailKind(Enum):
     PICKED_UP = "picked_up"
     DELIVERED = "delivered"  # home delivery completed (see _KIND_PATTERNS note)
     NO_LONGER_AVAILABLE = "no_longer_available"
+    PICKUP_REMINDER = "pickup_reminder"  # "sigue en espera": a nag, no new info
     REVIEW_PUBLISHED = "review_published"
 
 
@@ -113,6 +115,12 @@ class ParsedEmail:
 # step-tracker label that sits in every email as a progress dot.
 _KIND_PATTERNS = [
     (EmailKind.NO_LONGER_AVAILABLE, r"ya no está disponible para (?:su|la) recogida"),
+    # A reminder that a package is *still* waiting ("El paquete está a la espera
+    # de ser recogido", subject "Recordatorio: Paquete en espera de recogida").
+    # Distinct from READY_FOR_PICKUP ("listo para…"): it repeats a pickup we
+    # already know about and must not re-open or re-date it.
+    (EmailKind.PICKUP_REMINDER,
+     r"está a la espera de ser recogido|paquete en espera de recogida"),
     (EmailKind.READY_FOR_PICKUP, r"listo para (?:su|la)?\s*recogida"),
     (EmailKind.PICKED_UP, r"paquete ha sido recogido"),
     (EmailKind.DELIVERED, r"paquete se ha entregado|paquete ha sido entregado"),
@@ -133,6 +141,7 @@ _REQUIRED = {
     EmailKind.PICKED_UP: ("order_id", "picked_up_on"),
     EmailKind.DELIVERED: ("order_id", "sent_at"),
     EmailKind.NO_LONGER_AVAILABLE: ("order_id",),
+    EmailKind.PICKUP_REMINDER: (),  # informational nag: recognize it, ignore it
     EmailKind.REVIEW_PUBLISHED: (),
 }
 

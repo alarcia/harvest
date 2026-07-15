@@ -13,6 +13,8 @@ from email.message import EmailMessage
 from pathlib import Path
 
 from django.test import SimpleTestCase, TestCase, override_settings
+from django.urls import reverse
+from django.utils import timezone
 
 from .ingest import process_message, scan_inbox
 from .models import Package, PickupPoint, RawEmail
@@ -241,6 +243,16 @@ class ParseEmailTests(SimpleTestCase):
         self.assertIsNotNone(parsed.pickup_location)
         self.assertFalse(parsed.pickup_location.startswith("Amazon"))
 
+    def test_pickup_reminder(self):
+        # "Recordatorio: Paquete en espera de recogida" — a nag that a package
+        # is still waiting. Recognized as its own kind so it never trips the
+        # unknown-email alarm, and ingestion drives no transition from it.
+        parsed = parse_email(
+            fixture("022-recordatorio-paquete-en-espera-de-recogida.eml")
+        )
+        self.assertEqual(parsed.kind, EmailKind.PICKUP_REMINDER)
+        self.assertEqual(parsed.order_id, "407-2753653-0825928")
+
     def test_unknown_template_fails_loudly(self):
         msg = EmailMessage()
         msg["Subject"] = "Oferta especial solo hoy"
@@ -465,6 +477,33 @@ class IngestTests(TestCase):
         cebolla = Package.objects.get(pickup_point__name__startswith="Amazon Locker - cebolla")
         self.assertEqual(cebolla.state, Package.State.AWAITING_PICKUP)
 
+    def test_pickup_reminder_drives_no_transition(self):
+        # The cebolla locker package is awaiting pickup (its Ready email).
+        process_message(
+            fixture("017-fwd-paquete-listo-para-recogida-recoger-en-amazon-locker-ceb.eml")
+        )
+        # A reminder about that very package arrives days later — a nag, no new
+        # information. It must leave the state and deadline exactly as they were.
+        record, _ = process_message(
+            fixture("022-recordatorio-paquete-en-espera-de-recogida.eml")
+        )
+        self.assertTrue(record.processed, record.parse_error)
+        self.assertIn("Recordatorio", record.note)
+        self.assertEqual(Package.objects.count(), 1)  # no new row
+        pkg = Package.objects.get()
+        self.assertEqual(pkg.state, Package.State.AWAITING_PICKUP)
+        self.assertEqual(pkg.deadline, date(2026, 7, 16))  # unchanged
+
+    def test_nameless_delivered_email_leaves_description_blank(self):
+        # "Entregado: 1 producto | N.º de pedido …" names no product and there
+        # are no item links: the description is left blank (the calendar shows a
+        # "desconocido" placeholder) rather than echoing the subject boilerplate.
+        process_message(
+            fixture("021-fwd-entregado-1-producto-n-o-de-pedido-404-7963783-4668345.eml")
+        )
+        pkg = Package.objects.get()
+        self.assertEqual(pkg.description, "")
+
 
 def _junk_email(subject="Newsletter", mid="<junk-scan@example.com>"):
     msg = EmailMessage()
@@ -528,3 +567,75 @@ class ScanInboxTests(TestCase):
         self.assertEqual(stats["trashed"], 0)
         self.assertTrue(fake.readonly)
         self.assertEqual(fake.stored, [])  # nothing moved or flagged
+
+
+class CalendarViewTests(TestCase):
+    """The calendar's rendering rules: the unknown-item placeholder and the one
+    consolidated chip that stands in for a day's whole pickup haul."""
+
+    def _point(self, name, kind):
+        return PickupPoint.objects.create(name=name, kind=kind)
+
+    def _picked(self, point, description, day):
+        return Package.objects.create(
+            pickup_point=point, state=Package.State.PICKED_UP,
+            picked_up_on=day, description=description,
+        )
+
+    def test_same_day_pickups_collapse_into_one_chip(self):
+        # Two things picked up the same day, at different points: the month view
+        # has no room for a chip each, so they become one "N productos" recap
+        # chip that opens the day's consolidated card.
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER)
+        locker = self._point("Amazon Locker - cebolla",
+                             PickupPoint.Kind.AMAZON_LOCKER)
+        self._picked(counter, "Mantel de flores", today)
+        self._picked(locker, "Funda de móvil", today)
+
+        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+        self.assertEqual(html.count(b'is-picked"'), 1)  # one chip, not two
+        self.assertIn(b"2 productos", html)
+        self.assertIn(reverse("picked_detail", args=[today.isoformat()]).encode(), html)
+
+    def test_single_pickup_keeps_its_own_chip(self):
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER)
+        pkg = self._picked(counter, "Mantel de flores", today)
+
+        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+        self.assertEqual(html.count(b'is-picked"'), 1)
+        # A lone pickup still opens its own single-package card, not the recap.
+        self.assertIn(reverse("package_detail", args=[pkg.pk]).encode(), html)
+        self.assertNotIn(
+            reverse("picked_detail", args=[today.isoformat()]).encode(), html)
+
+    def test_picked_detail_lists_every_item_of_the_day(self):
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER)
+        locker = self._point("Amazon Locker - cebolla",
+                             PickupPoint.Kind.AMAZON_LOCKER)
+        self._picked(counter, "Mantel de flores", today)
+        self._picked(locker, "Funda de móvil", today)
+
+        html = self.client.get(
+            reverse("picked_detail", args=[today.isoformat()])).content
+        self.assertIn(b"Mantel de flores", html)
+        self.assertIn("Funda de móvil".encode(), html)
+
+    def test_unknown_item_shows_placeholder_not_boilerplate(self):
+        # A delivered package whose only name is the "N productos | N.º de
+        # pedido …" subject boilerplate: the chip shows a clean placeholder and
+        # never leaks the order number as if it were a product name.
+        today = timezone.localdate()
+        home = self._point("Rosa - Can Salgot", PickupPoint.Kind.HOME)
+        Package.objects.create(
+            pickup_point=home, state=Package.State.DELIVERED, actual_arrival=today,
+            description="Entregado: 1 producto | N.º de pedido 404-7963783-4668345",
+        )
+        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+        self.assertIn("Producto desconocido".encode(), html)
+        self.assertNotIn(b"404-7963783-4668345", html)

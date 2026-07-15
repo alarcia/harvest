@@ -1,3 +1,4 @@
+import re
 from datetime import date, timedelta
 
 from django.shortcuts import get_object_or_404, redirect, render
@@ -43,6 +44,36 @@ _STATE_LABELS = {
     Package.State.DELIVERED: "Entregado",
     Package.State.RETURNED: "Devuelto",
 }
+
+# A description that names only a count, not a product: picked-up / delivered
+# emails with no item links whose subject was just "N productos" or "Entregado:
+# N producto". These name nothing, so the chip shows an honest placeholder
+# rather than echoing the boilerplate (the state tag already says Recogido /
+# Entregado, so repeating it would be the redundant "Entregado · Entregado…").
+# Matches both fresh ingests (empty description) and legacy rows already stored.
+_COUNT_DESC = re.compile(
+    r"^(?:entregado:?\s*)?\d+\s+productos?(?:\s*\|?\s*n\.?º de pedido.*)?$",
+    re.IGNORECASE,
+)
+
+
+def _label(pkg):
+    """The product name to print on a chip, or a placeholder when unknown."""
+    desc = (pkg.description or "").strip()
+    return desc if desc and not _COUNT_DESC.match(desc) else "Producto desconocido"
+
+
+def _point_label(point):
+    """Human name for a pickup point. Amazon venues already read
+    "Amazon Locker/Counter - …"; home and alt-store need a word to say what
+    kind of place it is."""
+    if point.kind == PickupPoint.Kind.HOME:
+        return f"Entrega a domicilio · {point.name}"
+    if point.kind == PickupPoint.Kind.ALT_STORE:
+        # "Otros" (not "Tienda"): the non-Amazon bucket is various stores and
+        # drop-off spots, all handled the same, distinct from Amazon.
+        return f"Otros · {point.name}"
+    return point.name
 
 
 def _marks(pkg, today):
@@ -100,13 +131,35 @@ def _chips(start, end, today):
     for pkg in packages:
         source = ("store" if pkg.pickup_point.kind == PickupPoint.Kind.ALT_STORE
                   else "amazon")
-        label = pkg.description or f"Paquete {pkg.pk}"
+        label = _label(pkg)
+        detail_url = reverse("package_detail", args=[pkg.pk])
         chips.extend(
             {"date": day, "kind": kind, "tag": STATE_TAGS[kind],
-             "label": label, "source": source, "package_id": pkg.pk}
+             "label": label, "source": source, "detail_url": detail_url}
             for day, kind in _marks(pkg, today) if start <= day <= end
         )
     return chips
+
+
+def _day_chips(chips, day):
+    """One day's chips, sorted by urgency, with same-day pickups collapsed into
+    a single recap chip. A pickup trip empties several points at once and the
+    month view has no room for a chip each; one "N productos" chip stands in,
+    and tapping it lists everything that came home that day (see picked_detail).
+    Only pickups collapse — home deliveries stay their own 🏠 marks."""
+    todays = [c for c in chips if c["date"] == day]
+    picked = [c for c in todays if c["kind"] == "picked"]
+    if len(picked) > 1:
+        rest = [c for c in todays if c["kind"] != "picked"]
+        todays = rest + [{
+            "date": day,
+            "kind": "picked",
+            "tag": STATE_TAGS["picked"],
+            "label": f"{len(picked)} productos",
+            "source": "amazon" if any(c["source"] == "amazon" for c in picked) else "store",
+            "detail_url": reverse("picked_detail", args=[day.isoformat()]),
+        }]
+    return sorted(todays, key=lambda c: _URGENCY[c["kind"]])
 
 
 def _monday(day):
@@ -162,8 +215,7 @@ def home(request):
                 "is_today": day == today,
                 "is_past": day < today,
                 "in_month": month is None or day.month == month.month,
-                "chips": sorted((c for c in chips if c["date"] == day),
-                                key=lambda c: _URGENCY[c["kind"]]),
+                "chips": _day_chips(chips, day),
             })
         weeks.append({"number": days[0]["date"].isocalendar()[1], "days": days})
 
@@ -197,23 +249,36 @@ def package_detail(request, pk):
     """Minimal product card for a tapped chip, swapped into the modal slot."""
     pkg = get_object_or_404(Package.objects.select_related("pickup_point"), pk=pk)
     point = pkg.pickup_point
-    # Amazon pickup names already read "Amazon Locker/Counter - …"; the home
-    # and alt-store cases need a word to say what kind of place it is.
-    if point.kind == PickupPoint.Kind.HOME:
-        point_label = f"Entrega a domicilio · {point.name}"
-    elif point.kind == PickupPoint.Kind.ALT_STORE:
-        # "Otros" (not "Tienda"): the non-Amazon bucket is various stores and
-        # drop-off spots, all handled the same, distinct from Amazon.
-        point_label = f"Otros · {point.name}"
-    else:
-        point_label = point.name
     return render(request, "packages/_package_detail.html", {
         "package": pkg,
-        "point_label": point_label,
+        "label": _label(pkg),
+        "point_label": _point_label(point),
         "source": ("store" if point.kind == PickupPoint.Kind.ALT_STORE
                    else "amazon"),
         "state_label": _STATE_LABELS.get(pkg.state, pkg.state),
     })
+
+
+def picked_detail(request, day):
+    """The consolidated pickup chip's card: every item picked up on one day.
+
+    A single trip can empty several counters and lockers, so this lists them
+    all — whatever point each sat in — the way tapping one chip should reveal
+    the whole day's haul."""
+    picked_day = _parse_anchor(day, None)
+    packages = (Package.objects
+                .filter(state=Package.State.PICKED_UP, picked_up_on=picked_day)
+                .select_related("pickup_point")
+                .order_by("pickup_point__name", "pk")) if picked_day else []
+    items = [{
+        "package": pkg,
+        "label": _label(pkg),
+        "point_label": _point_label(pkg.pickup_point),
+        "source": ("store" if pkg.pickup_point.kind == PickupPoint.Kind.ALT_STORE
+                   else "amazon"),
+    } for pkg in packages]
+    return render(request, "packages/_picked_detail.html",
+                  {"day": picked_day, "items": items})
 
 
 def add_package(request):

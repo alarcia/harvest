@@ -78,11 +78,26 @@ def _pickup_point(location):
     return point
 
 
+_COUNT_ONLY = re.compile(r"^\d+\s+productos?$", re.IGNORECASE)
+
+
 def _description(parsed):
+    """A human name for the package. Item links carry the real product title;
+    picked-up and home-delivery emails often have none. Their subject sometimes
+    names the product ("Se ha recogido Cargador…") and sometimes only counts it
+    ("Se han recogido 2 productos", "Entregado: 1 producto") — naming nothing.
+    Return "" in the count-only case so the calendar shows a "desconocido"
+    placeholder instead of echoing the boilerplate; an empty description is not
+    user data, so a later email that does carry the item can still fill it in."""
     if parsed.items:
         return " + ".join(item.title for item in parsed.items)[:255]
-    # Picked-up emails carry no item links, but the subject names the thing.
-    return re.sub(r"^Se han? recogido\s+", "", parsed.subject)[:255]
+    remainder = re.sub(r"^Se han? recogido\s+", "", parsed.subject).strip()
+    remainder = re.sub(r"^Entregado:\s*", "", remainder, flags=re.IGNORECASE).strip()
+    # Delivered subjects append "| N.º de pedido XXX-…"; drop it so what's left
+    # is either a product name or just a count.
+    remainder = re.sub(r"\s*\|?\s*N\.?º de pedido.*$", "", remainder,
+                       flags=re.IGNORECASE).strip()
+    return "" if not remainder or _COUNT_ONLY.match(remainder) else remainder[:255]
 
 
 def _find_packages(parsed):
@@ -264,6 +279,13 @@ def _apply(parsed):
         # The misleading one: the package usually is still there. Record only.
         pkg = matches[0] if matches else None
         return pkg, "Aviso de devolución registrado; sin cambios (correo engañoso)"
+
+    if kind == EmailKind.PICKUP_REMINDER:
+        # A nag that a package is still waiting: the deadline and everything
+        # else came from the original "listo para recogida". Record only —
+        # re-dating or re-opening from a reminder would be wrong.
+        pkg = matches[0] if matches else None
+        return pkg, "Recordatorio de recogida: sin cambios"
 
     if kind == EmailKind.REVIEW_PUBLISHED:
         return None, "Reseña publicada: sin acción de calendario"
