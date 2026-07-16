@@ -84,18 +84,6 @@ On a phone the month view draws these same kinds as color-coded dots (hollow = o
 filled = waiting, red = hurry, muted = done); reading happens in the agenda-style fortnight
 view or by tapping a day.
 
-## Getting started
-
-```bash
-uv sync
-uv run python manage.py migrate
-uv run python manage.py runserver       # http://localhost:8000
-uv run python manage.py test packages   # test suite
-```
-
-Ingestion reads `GMAIL_IMAP_USER` and `GMAIL_IMAP_APP_PASSWORD` from the environment; the
-calendar and admin run without them.
-
 ---
 
 <div align="center">
