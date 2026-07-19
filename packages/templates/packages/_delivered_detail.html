@@ -1,0 +1,30 @@
+{# Every item delivered to one home on one day, listed in the shared #pkg-modal slot. #}
+<div class="modal-back" onclick="if (event.target === this) closeModal(this)">
+  <div class="modal-card">
+    {% if back_day %}
+      <button type="button" class="modal-prev" aria-label="Volver al día"
+              hx-get="{% url 'day_detail' back_day|date:'Y-m-d' %}"
+              hx-target="#pkg-modal" hx-swap="innerHTML">‹</button>
+    {% endif %}
+    <button type="button" class="modal-x" aria-label="Cerrar"
+            onclick="closeModal(this)">×</button>
+    <div class="modal-head">
+      <h2>Entregado el {{ day|date:"j" }} de {{ day|date:"F" }}</h2>
+    </div>
+    <p class="modal-point">{{ point_label }}</p>
+    <ul class="picked-list">
+      {% for it in items %}
+        <li class="picked-item">
+          {% if it.package.image_url %}
+            <img class="picked-thumb" src="{{ it.package.image_url }}" alt="">
+          {% endif %}
+          <div class="picked-body">
+            <span class="picked-name">{{ it.label }}{% if it.package.is_vine %} <i class="vine-badge">Vine</i>{% endif %}</span>
+          </div>
+        </li>
+      {% empty %}
+        <li class="picked-item"><span class="picked-name">Nada que mostrar</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>

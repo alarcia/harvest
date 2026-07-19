@@ -1,4 +1,5 @@
 import re
+from collections import defaultdict
 from datetime import date, timedelta
 
 from django.http import Http404
@@ -147,18 +148,22 @@ def _chips(start, end, today):
         detail_url = reverse("package_detail", args=[pkg.pk])
         chips.extend(
             {"date": day, "kind": kind, "tag": STATE_TAGS[kind], "note": note,
-             "label": label, "source": source, "detail_url": detail_url}
+             "label": label, "source": source, "detail_url": detail_url,
+             "point_id": pkg.pickup_point_id}
             for day, kind, note in _marks(pkg, today) if start <= day <= end
         )
     return chips
 
 
 def _day_chips(chips, day):
-    """One day's chips, sorted by urgency, with same-day pickups collapsed into
-    a single recap chip. A pickup trip empties several points at once and the
-    month view has no room for a chip each; one "N productos" chip stands in,
-    and tapping it lists everything that came home that day (see picked_detail).
-    Only pickups collapse — home deliveries stay their own 🏠 marks."""
+    """One day's chips, sorted by urgency, with same-day pickups and same-day,
+    same-address deliveries each collapsed into a recap chip. A pickup trip
+    empties several points at once, so *every* pickup that day folds into one
+    "N productos" chip (see picked_detail). Deliveries instead fold per
+    address: two homes getting packages the same day is rare, and each is a
+    different person to tell "this is what arrived (or should arrive)", so
+    they stay separate chips — only deliveries to the *same* home collapse
+    (see delivered_detail)."""
     todays = [c for c in chips if c["date"] == day]
     picked = [c for c in todays if c["kind"] == "picked"]
     if len(picked) > 1:
@@ -172,6 +177,30 @@ def _day_chips(chips, day):
             "source": "amazon" if any(c["source"] == "amazon" for c in picked) else "store",
             "detail_url": reverse("picked_detail", args=[day.isoformat()]),
         }]
+
+    delivered_by_point = defaultdict(list)
+    for c in todays:
+        if c["kind"] == "delivered":
+            delivered_by_point[c["point_id"]].append(c)
+    if any(len(group) > 1 for group in delivered_by_point.values()):
+        rest = [c for c in todays if c["kind"] != "delivered"]
+        collapsed = []
+        for point_id, group in delivered_by_point.items():
+            if len(group) > 1:
+                collapsed.append({
+                    "date": day,
+                    "kind": "delivered",
+                    "tag": STATE_TAGS["delivered"],
+                    "note": "",
+                    "label": f"{len(group)} productos",
+                    "source": group[0]["source"],
+                    "point_id": point_id,
+                    "detail_url": reverse("delivered_detail", args=[day.isoformat(), point_id]),
+                })
+            else:
+                collapsed.extend(group)
+        todays = rest + collapsed
+
     return sorted(todays, key=lambda c: _URGENCY[c["kind"]])
 
 
@@ -315,6 +344,30 @@ def picked_detail(request, day):
     } for pkg in packages]
     return render(request, "packages/_picked_detail.html", {
         "day": picked_day,
+        "items": items,
+        "back_day": _parse_anchor(request.GET.get("from_day"), None),
+    })
+
+
+def delivered_detail(request, day, point_id):
+    """The consolidated per-address delivery chip's card: every item
+    delivered to one home on one day.
+
+    Unlike a pickup, a delivery only ever concerns the one address it landed
+    at, so this stays scoped to `point_id` — two homes on the same day are
+    two separate chips, each opening its own card."""
+    the_day = _parse_anchor(day, None)
+    packages = [
+        pkg for pkg in (Package.objects
+                         .filter(state=Package.State.DELIVERED, pickup_point_id=point_id)
+                         .select_related("pickup_point")
+                         .order_by("pk"))
+        if the_day and (pkg.actual_arrival or pkg.estimated_arrival) == the_day
+    ] if the_day else []
+    items = [{"package": pkg, "label": _label(pkg)} for pkg in packages]
+    return render(request, "packages/_delivered_detail.html", {
+        "day": the_day,
+        "point_label": _point_label(packages[0].pickup_point) if packages else "",
         "items": items,
         "back_day": _parse_anchor(request.GET.get("from_day"), None),
     })

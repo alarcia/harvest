@@ -804,6 +804,54 @@ class CalendarViewTests(TestCase):
         self.assertIn(b"Mantel de flores", html)
         self.assertIn("Funda de móvil".encode(), html)
 
+    def _delivered(self, point, description, day):
+        return Package.objects.create(
+            pickup_point=point, state=Package.State.DELIVERED,
+            actual_arrival=day, description=description,
+        )
+
+    def test_same_day_same_address_deliveries_collapse_into_one_chip(self):
+        # Two boxes landing at the same home the same day fold into one
+        # "N productos" recap chip, same as the pickup recap.
+        today = timezone.localdate()
+        home = self._point("Rosa - Can Salgot", PickupPoint.Kind.HOME)
+        self._delivered(home, "Mantel de flores", today)
+        self._delivered(home, "Funda de móvil", today)
+
+        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+        self.assertEqual(html.count(b'is-delivered"'), 1)
+        self.assertIn(b"2 productos", html)
+        self.assertIn(
+            reverse("delivered_detail", args=[today.isoformat(), home.pk]).encode(), html)
+
+    def test_same_day_different_address_deliveries_stay_separate(self):
+        # Two homes getting packages the same day is rare, and each is a
+        # different person to tell what arrived — unlike pickups, these must
+        # NOT fold into a single recap chip.
+        today = timezone.localdate()
+        home1 = self._point("Rosa - Can Salgot", PickupPoint.Kind.HOME)
+        home2 = self._point("Padres - Mataró", PickupPoint.Kind.HOME)
+        pkg1 = self._delivered(home1, "Mantel de flores", today)
+        pkg2 = self._delivered(home2, "Funda de móvil", today)
+
+        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+        self.assertEqual(html.count(b'is-delivered"'), 2)
+        self.assertIn(reverse("package_detail", args=[pkg1.pk]).encode(), html)
+        self.assertIn(reverse("package_detail", args=[pkg2.pk]).encode(), html)
+        self.assertNotIn(b"productos", html)
+
+    def test_delivered_detail_lists_every_item_of_the_address(self):
+        today = timezone.localdate()
+        home = self._point("Rosa - Can Salgot", PickupPoint.Kind.HOME)
+        self._delivered(home, "Mantel de flores", today)
+        self._delivered(home, "Funda de móvil", today)
+
+        html = self.client.get(
+            reverse("delivered_detail", args=[today.isoformat(), home.pk])).content
+        self.assertIn(b"Mantel de flores", html)
+        self.assertIn("Funda de móvil".encode(), html)
+        self.assertIn(b"Can Salgot", html)
+
     def test_unknown_item_shows_placeholder_not_boilerplate(self):
         # A delivered package whose only name is the "N productos | N.º de
         # pedido …" subject boilerplate: the chip shows a clean placeholder and
