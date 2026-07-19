@@ -43,6 +43,7 @@ from .parser import EmailKind, ParseError, parse_email
 logger = logging.getLogger("packages.ingest")
 
 _LOCATION = re.compile(r"^Amazon (Locker|Counter) - ")
+_POSTAL_CODE = re.compile(r"\b(\d{5})\b")
 
 # States only move forward; a late or re-forwarded email never regresses one.
 # PICKED_UP and DELIVERED are both terminal (a pickup and a home delivery).
@@ -59,9 +60,16 @@ def _pickup_point(location):
     """PickupPoint for a destination line. "Amazon Locker/Counter - …" is a
     real pickup point; any other named place is a home/relative address (a
     HOME point, delivered and done, no trip). None only when there's no
-    location at all. Dedup is by the exact string — Amazon spells the same
-    venue differently across templates, so near-duplicates are expected and
-    benign (the calendar only colors by amazon-vs-store)."""
+    location at all.
+
+    Amazon spells the same venue differently depending on the email template
+    (the order line reads "Les Mesures, ..., LA SEU D´URGELL, 25700", the
+    pickup-ready/picked-up line reads "Les Mesures ... LLEIDA , 25700" — same
+    counter). That's not benign: the pickup-empties-the-whole-point sweep
+    (below, on EmailKind.PICKED_UP) matches by PickupPoint FK, so two rows
+    for the same physical point would let packages hide from the sweep.
+    Amazon/Locker points therefore dedup by postal code, the one token every
+    template agrees on, not by the free-text name."""
     if not location:
         return None
     match = _LOCATION.match(location)
@@ -72,6 +80,15 @@ def _pickup_point(location):
         return point
     kind = (PickupPoint.Kind.AMAZON_LOCKER if match.group(1) == "Locker"
             else PickupPoint.Kind.AMAZON_COUNTER)
+    postal = _POSTAL_CODE.search(location)
+    if postal:
+        point, _ = PickupPoint.objects.get_or_create(
+            kind=kind, location_key=postal.group(1),
+            defaults={"name": location[:120]},
+        )
+        return point
+    # No postal code found (layout moved): fall back to exact-string dedup
+    # rather than refusing to create a point at all.
     point, _ = PickupPoint.objects.get_or_create(
         name=location[:120], defaults={"kind": kind},
     )

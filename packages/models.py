@@ -17,6 +17,14 @@ class PickupPoint(models.Model):
 
     name = models.CharField(max_length=120)
     kind = models.CharField(max_length=20, choices=Kind.choices)
+    # Postal code read from the venue line, used to dedup Amazon Locker/Counter
+    # points: Amazon spells the same venue differently across templates (the
+    # "Pedido" line reads "Les Mesures, ..., LA SEU D´URGELL, 25700", the
+    # "Entregado" line reads "Les Mesures ... LLEIDA , 25700" — same counter,
+    # different punctuation and even city vs. province). The postal code is
+    # the one token both templates agree on, so it's the dedup key instead of
+    # the free-text name. Blank for HOME/ALT_STORE points, which dedup by name.
+    location_key = models.CharField(max_length=5, blank=True, db_index=True)
 
     class Meta:
         ordering = ["name"]

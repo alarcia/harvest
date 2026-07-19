@@ -621,6 +621,22 @@ class IngestTests(TestCase):
         cebolla = Package.objects.get(pickup_point__name__startswith="Amazon Locker - cebolla")
         self.assertEqual(cebolla.state, Package.State.AWAITING_PICKUP)
 
+    def test_same_venue_across_templates_shares_one_pickup_point(self):
+        # The "Pedido" line and the "Entregado" line spell the Les Mesures
+        # counter differently (comma placement, city vs. province name) but
+        # are the same physical counter (postal code 25700). They must
+        # collapse into one PickupPoint, not two — both so the "Add package"
+        # dropdown doesn't show duplicates and so a later pickup-sweep at
+        # this counter (matched by PickupPoint FK) catches every package
+        # waiting there, whichever template created its row.
+        process_message(fixture("006-fwd-pedido-cargador-inalambrico.eml"))
+        process_message(
+            fixture("008-fwd-paquete-listo-para-recogida-recoger-en-amazon-counter-le.eml")
+        )
+        self.assertEqual(
+            PickupPoint.objects.filter(kind=PickupPoint.Kind.AMAZON_COUNTER).count(), 1
+        )
+
     def test_pickup_reminder_drives_no_transition(self):
         # The cebolla locker package is awaiting pickup (its Ready email).
         process_message(
