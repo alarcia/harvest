@@ -114,6 +114,47 @@ def _find_packages(parsed):
     return []
 
 
+def _find_all_packages(parsed, point):
+    """Every package this email covers — id matches plus an ASIN rescue,
+    unlike _find_packages's single strongest-key match.
+
+    _find_packages deliberately narrows to *one* shipment (right for "which
+    box is this Enviado about", when a split order has several packages
+    sharing an order_id but only one may share this shipment_id). Two gaps
+    that leaves, both confirmed against real mail (2026-07-18: a dog ramp
+    and a hair dryer, two unrelated home orders, delivered in the same
+    visit):
+
+    - A notification can print more than one order/shipment id at once —
+      matching shipment_ids/order_ids (plural) already covers that (see
+      fixture 018, a consolidated pickup naming two orders).
+    - Worse: Amazon's "Entregado"/"En reparto" template for a home address
+      prints only ONE order's "Pedido n.º" and tracking link even when it
+      *pictures* an item from a second, unrelated order — that order's id
+      never appears anywhere in the email. The only thread back to its
+      package is the product photo (ASIN), so a package still in flight at
+      the same destination is rescued by ASIN too.
+
+    Used by the kinds where dropping a match would strand a package
+    (READY_FOR_PICKUP, DELIVERED); PICKED_UP doesn't need it — its
+    point-wide sweep already catches everything else waiting there."""
+    found = {}
+    if parsed.shipment_ids:
+        for pkg in Package.objects.filter(shipment_id__in=parsed.shipment_ids):
+            found[pkg.pk] = pkg
+    ids = set(parsed.order_ids) | ({parsed.order_id} if parsed.order_id else set())
+    if ids:
+        for pkg in Package.objects.filter(order_id__in=ids):
+            found[pkg.pk] = pkg
+    asins = {item.asin for item in parsed.items if item.asin}
+    if asins and point is not None:
+        for pkg in (Package.objects
+                    .filter(asin__in=asins, pickup_point=point)
+                    .exclude(pk__in=found)):
+            found[pkg.pk] = pkg
+    return list(found.values())
+
+
 def _fill(pkg, parsed):
     """Copy fields the email knows and the package doesn't. Never overwrites
     user-edited data with blanks. Cost/Vine is deliberately *not* here — it
@@ -153,10 +194,10 @@ def _apply(parsed):
     """
     sent_on = parsed.sent_at.date() if parsed.sent_at else None
     kind = parsed.kind
-    matches = _find_packages(parsed)
     point = _pickup_point(parsed.pickup_location)
 
     if kind in (EmailKind.ORDERED, EmailKind.SHIPPED, EmailKind.OUT_FOR_DELIVERY):
+        matches = _find_packages(parsed)
         pkg = None
         if matches:
             # A shipped notice for an order that already has a *different*
@@ -193,6 +234,7 @@ def _apply(parsed):
         return pkg, ""
 
     if kind == EmailKind.READY_FOR_PICKUP:
+        matches = _find_all_packages(parsed, point)
         if not matches:
             if point is None:
                 return None, "Listo para recogida sin punto Amazon: ignorado"
@@ -220,6 +262,7 @@ def _apply(parsed):
         return matches[0], note
 
     if kind == EmailKind.PICKED_UP:
+        matches = _find_packages(parsed)
         picked_day = parsed.picked_up_on or sent_on
         # One scan at the counter/locker hands over *everything* waiting there
         # — the terminal releases every available package at once. And the
@@ -259,6 +302,7 @@ def _apply(parsed):
     if kind == EmailKind.DELIVERED:
         # Home delivery reaching its destination: terminal, no pickup trip.
         delivered_day = sent_on  # "Entregado hoy" ≈ the email's send day
+        matches = _find_all_packages(parsed, point)
         if not matches:
             if point is None:
                 return None, "Entregado sin pedido conocido ni destino: ignorado"
@@ -273,10 +317,13 @@ def _apply(parsed):
                 pkg.pickup_point = point
             _fill(pkg, parsed)
             pkg.save()
-        return matches[0], ""
+        note = ("" if len(matches) == 1
+                else f"Entrega consolidada: {len(matches)} paquetes actualizados")
+        return matches[0], note
 
     if kind == EmailKind.NO_LONGER_AVAILABLE:
         # The misleading one: the package usually is still there. Record only.
+        matches = _find_packages(parsed)
         pkg = matches[0] if matches else None
         return pkg, "Aviso de devolución registrado; sin cambios (correo engañoso)"
 
@@ -284,6 +331,7 @@ def _apply(parsed):
         # A nag that a package is still waiting: the deadline and everything
         # else came from the original "listo para recogida". Record only —
         # re-dating or re-opening from a reminder would be wrong.
+        matches = _find_packages(parsed)
         pkg = matches[0] if matches else None
         return pkg, "Recordatorio de recogida: sin cambios"
 

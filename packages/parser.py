@@ -80,6 +80,10 @@ class ParsedEmail:
     order_ids: frozenset = frozenset()  # all ids seen (body + links); a
     # consolidated locker pickup carries ids of every bundled order
     shipment_id: str | None = None
+    shipment_ids: frozenset = frozenset()  # every shipment id seen; a
+    # consolidated notification (e.g. two home-delivery orders dropped off in
+    # the same visit) can carry more than one, unlike shipment_id's single
+    # "the box this specific Enviado is about"
     items: tuple = ()
     pickup_location: str | None = None
     total: Decimal | None = None  # order total as printed; 0.00 ⇒ Vine (weak
@@ -291,6 +295,7 @@ def parse_email(raw):
     url_ids = _ORDER_ID.findall(urls)
     order_id = text_ids[0] if text_ids else (url_ids[0] if url_ids else None)
     shipment_id = match.group(1) if (match := _SHIPMENT_ID.search(urls)) else None
+    shipment_ids = frozenset(_SHIPMENT_ID.findall(urls))
     total_raw = _TOTAL.search(haystack)
 
     arrives = _first_line_match(_ARRIVES, lines)
@@ -307,6 +312,7 @@ def parse_email(raw):
         order_id=order_id,
         order_ids=frozenset(text_ids + url_ids),
         shipment_id=shipment_id,
+        shipment_ids=shipment_ids,
         items=_items(soup),
         pickup_location=_pickup_location(lines),
         total=Decimal(total_raw.group(1).replace(",", ".")) if total_raw else None,

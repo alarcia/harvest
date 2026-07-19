@@ -399,6 +399,150 @@ class IngestTests(TestCase):
         self.assertEqual(pkg.pickup_point.kind, PickupPoint.Kind.HOME)
         self.assertEqual(pkg.actual_arrival, date(2026, 7, 13))
 
+    def test_delivered_home_consolidates_two_orders(self):
+        # A consolidated notification can print more than one order and
+        # shipment id (proven for PICKED_UP by the real fixture 018, which
+        # names two orders but only one shipment id) — the same template
+        # habit is plausible for a consolidated DELIVERED. The parser only
+        # ever captured a single `shipment_id` (the first one seen in the
+        # HTML), and the old matching narrowed to just that shipment —
+        # silently leaving whichever order's shipment id wasn't first still
+        # `in_transit`. Both must transition, regardless of which shipment
+        # came first. (The real 2026-07-18 incident this whole area of code
+        # was fixed for turned out to be the harder sibling case below,
+        # where the second order's id never appears in the email at all —
+        # this test guards the "id present but not first" half of it.)
+        home = PickupPoint.objects.create(
+            name="Rosa - Can Salgot, Barcelona", kind=PickupPoint.Kind.HOME,
+        )
+        first = Package.objects.create(
+            pickup_point=home, order_id="404-1111111-1111111",
+            shipment_id="AAAA111111", description="6-in-1 Hot Air Brush & Hair Dryer",
+            state=Package.State.IN_TRANSIT,
+        )
+        second = Package.objects.create(
+            pickup_point=home, order_id="404-2222222-2222222",
+            shipment_id="BBBB222222", description="Otro producto",
+            state=Package.State.IN_TRANSIT,
+        )
+        msg = EmailMessage()
+        msg["Subject"] = "Entregado: 2 productos"
+        msg["Message-ID"] = "<two-orders-delivered@example.com>"
+        msg.set_content(
+            "<h2>¡Tu paquete se ha entregado!</h2>"
+            "<p>Entregado hoy</p>"
+            "<p>El pedido ha sido entregado en la dirección indicada.</p>"
+            "<p>Rosa - Can Salgot, Barcelona</p>"
+            "<p>Pedido n.º 404-1111111-1111111</p>"
+            '<a href="https://www.amazon.es/gp/r.html?M=urn:rtn:msg:20260718150100'
+            '&U=https%3A%2F%2Fwww.amazon.es%2Fprogress-tracker%2Fpackage%3ForderId'
+            '%3D404-1111111-1111111%26shipmentId%3DAAAA111111">Seguimiento</a>'
+            "<p>Pedido n.º 404-2222222-2222222</p>"
+            '<a href="https://www.amazon.es/gp/r.html?M=urn:rtn:msg:20260718150100'
+            '&U=https%3A%2F%2Fwww.amazon.es%2Fprogress-tracker%2Fpackage%3ForderId'
+            '%3D404-2222222-2222222%26shipmentId%3DBBBB222222">Seguimiento</a>',
+            subtype="html",
+        )
+        record, _ = process_message(msg.as_bytes())
+        self.assertTrue(record.processed, record.parse_error)
+
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.state, Package.State.DELIVERED)
+        self.assertEqual(second.state, Package.State.DELIVERED)
+        self.assertEqual(first.actual_arrival, date(2026, 7, 18))
+        self.assertEqual(second.actual_arrival, date(2026, 7, 18))
+        self.assertIn("2 paquetes", record.note)
+
+    def test_delivered_home_rescues_unlisted_sibling_by_asin(self):
+        # The actual 2026-07-18 incident, replayed from the real emails
+        # (fixtures 013/046/059/064): two independent home orders — a dog
+        # ramp (407-2023163-0562738) and a hair dryer bought minutes apart —
+        # delivered by Amazon in the same visit. The consolidated "En
+        # reparto"/"Entregado" emails picture *both* items but only ever
+        # print the dog ramp's own "Pedido n.º" and tracking link; the hair
+        # dryer's order id never appears in either email's text at all, so
+        # no amount of order/shipment id matching can find it. Its ASIN
+        # (B0H33JF6HM, from the photo link) and shared destination are the
+        # only thread back to its package — confirmed by hand in the admin
+        # afterwards, this test is what keeps it from recurring.
+        process_message(fixture("013-pedido-eheyciga-escalera-perros-4.eml"))
+        process_message(fixture("046-enviado-eheyciga-escalera-perros-4.eml"))
+        dog_ramp = Package.objects.get(order_id="407-2023163-0562738")
+        home = dog_ramp.pickup_point
+        self.assertEqual(home.kind, PickupPoint.Kind.HOME)
+
+        hair_dryer = Package.objects.create(
+            pickup_point=home, order_id="407-1111111-1111111",
+            asin="B0H33JF6HM", description="6-in-1 Hot Air Brush & Hair Dryer",
+            state=Package.State.IN_TRANSIT,
+        )
+
+        # "En reparto" (OUT_FOR_DELIVERY) only ever touches the named order —
+        # by design (see _find_packages) it must NOT rescue the sibling yet.
+        process_message(
+            fixture("059-en-reparto-6-in-1-hot-air-brush-hair-y-1-productos-mas.eml")
+        )
+        hair_dryer.refresh_from_db()
+        self.assertEqual(hair_dryer.state, Package.State.IN_TRANSIT)
+
+        record, _ = process_message(
+            fixture("064-entregado-6-in-1-hot-air-brush-hair-y-1-producto-mas.eml")
+        )
+        self.assertTrue(record.processed, record.parse_error)
+
+        dog_ramp.refresh_from_db()
+        hair_dryer.refresh_from_db()
+        self.assertEqual(dog_ramp.state, Package.State.DELIVERED)
+        self.assertEqual(hair_dryer.state, Package.State.DELIVERED)
+        self.assertEqual(hair_dryer.actual_arrival, date(2026, 7, 18))
+
+    def test_ready_for_pickup_consolidates_two_orders(self):
+        # Same root cause as the home-delivery case above, one step earlier
+        # in the lifecycle: a "listo para recogida" notification can also
+        # bundle boxes from two different orders/shipments arriving at the
+        # same locker/counter together.
+        point = PickupPoint.objects.create(
+            name="Amazon Locker - Test, Barcelona",
+            kind=PickupPoint.Kind.AMAZON_LOCKER,
+        )
+        first = Package.objects.create(
+            pickup_point=point, order_id="404-3333333-3333333",
+            shipment_id="CCCC333333", description="Producto uno",
+            state=Package.State.IN_TRANSIT,
+        )
+        second = Package.objects.create(
+            pickup_point=point, order_id="404-4444444-4444444",
+            shipment_id="DDDD444444", description="Producto dos",
+            state=Package.State.IN_TRANSIT,
+        )
+        msg = EmailMessage()
+        msg["Subject"] = "Paquete listo para recogida"
+        msg["Message-ID"] = "<two-orders-ready@example.com>"
+        msg.set_content(
+            "<p>El paquete está listo para su recogida</p>"
+            "<p>antes del 20 de julio</p>"
+            "<p>El código de recogida es 123456</p>"
+            "<p>Amazon Locker - Test, Barcelona</p>"
+            "<p>Pedido n.º 404-3333333-3333333</p>"
+            '<a href="https://www.amazon.es/gp/r.html?M=urn:rtn:msg:20260718090000'
+            '&U=https%3A%2F%2Fwww.amazon.es%2Fprogress-tracker%2Fpackage%3ForderId'
+            '%3D404-3333333-3333333%26shipmentId%3DCCCC333333">Seguimiento</a>'
+            "<p>Pedido n.º 404-4444444-4444444</p>"
+            '<a href="https://www.amazon.es/gp/r.html?M=urn:rtn:msg:20260718090000'
+            '&U=https%3A%2F%2Fwww.amazon.es%2Fprogress-tracker%2Fpackage%3ForderId'
+            '%3D404-4444444-4444444%26shipmentId%3DDDDD444444">Seguimiento</a>',
+            subtype="html",
+        )
+        record, _ = process_message(msg.as_bytes())
+        self.assertTrue(record.processed, record.parse_error)
+
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.state, Package.State.AWAITING_PICKUP)
+        self.assertEqual(second.state, Package.State.AWAITING_PICKUP)
+        self.assertIn("2 paquetes", record.note)
+
     def test_review_creates_no_row(self):
         record, _ = process_message(
             fixture("010-fwd-gracias-por-su-resena-de-cargador-inalambrico-mag-en-ama.eml")
