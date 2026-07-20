@@ -170,6 +170,21 @@ class ParseEmailTests(SimpleTestCase):
             "https://m.media-amazon.com/images/I/61LHU0-P3OL._SS90_.jpg",
         )
 
+    def test_ordered_arrival_window(self):
+        # Newer Pedido template gives a delivery window instead of a single
+        # day: "Llegada entre el 24 de julio y el 28 de julio". We keep the
+        # first (earliest) date as the estimate; the later Enviado replaces it.
+        parsed = parse_email(
+            fixture("023-fwd-pedido-veebmys-correa-movil-llegada-entre-fechas.eml")
+        )
+        self.assertEqual(parsed.kind, EmailKind.ORDERED)
+        self.assertEqual(parsed.order_id, "404-4372144-5150738")
+        self.assertEqual(parsed.sent_at.date(), date(2026, 7, 20))
+        self.assertEqual(parsed.estimated_arrival, date(2026, 7, 24))
+        self.assertTrue(
+            parsed.pickup_location.startswith("Amazon Counter - Les Mesures")
+        )
+
     def test_ready_for_pickup_locker_consolidated(self):
         # One locker slot, two items, and two order numbers: the body says
         # "Pedido n.º 407-..." while the links reference 404-....

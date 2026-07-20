@@ -163,6 +163,10 @@ _ASIN_ANY = re.compile(r"/dp/([A-Z0-9]{10})")
 _REVIEW_ID = re.compile(r"/review/(R[A-Z0-9]+)")
 _TOTAL = re.compile(r"Total\s+(\d+[.,]\d{2})\s*€")
 _ARRIVES = re.compile(r"^Llega (.+)$")
+# A delivery-window variant of the arrival line: "Llegada entre el 24 de julio
+# y el 28 de julio". We keep only the first (earliest) date as the estimate;
+# the later Enviado email replaces it with a single firm day.
+_ARRIVES_RANGE = re.compile(r"^Llegada entre el (.+?) y el .+$")
 _BEFORE = re.compile(r"antes del (.+)$")
 _PICKED = re.compile(r"^Recogido (.+)$")
 # Searched over the joined text: the value may sit in its own tag (own line).
@@ -298,7 +302,7 @@ def parse_email(raw):
     shipment_ids = frozenset(_SHIPMENT_ID.findall(urls))
     total_raw = _TOTAL.search(haystack)
 
-    arrives = _first_line_match(_ARRIVES, lines)
+    arrives = _first_line_match(_ARRIVES, lines) or _first_line_match(_ARRIVES_RANGE, lines)
     before = _first_line_match(_BEFORE, lines)
     if before is None and (match := _BEFORE.search(subject)):
         before = match.group(1)
