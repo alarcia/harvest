@@ -14,6 +14,10 @@ class PickupPoint(models.Model):
         # A home/relative address: Amazon delivers and that's the end of it,
         # no pickup trip. The name is the destination line from the email.
         HOME = "home", "Entrega a domicilio"
+        # A failed home delivery diverted to a carrier's own office (e.g. UPS
+        # after a missed handoff). The email never names the specific office,
+        # only the carrier, so this dedups by carrier name, not a real address.
+        CARRIER = "carrier", "Transportista"
 
     name = models.CharField(max_length=120)
     kind = models.CharField(max_length=20, choices=Kind.choices)
@@ -63,6 +67,14 @@ class Package(models.Model):
     description = models.CharField(max_length=255, blank=True)
     pickup_code = models.CharField(max_length=20, blank=True)
 
+    # Set when a home delivery is diverted to a carrier's office (see
+    # PickupPoint.Kind.CARRIER). The delivery-attempt email never carries the
+    # carrier's own tracking number (only Amazon's own order links), so it's
+    # filled in by hand once looked up; carrier_tracking_url stays blank until
+    # then.
+    carrier = models.CharField(max_length=32, blank=True)
+    carrier_tracking_number = models.CharField(max_length=64, blank=True)
+
     # Ingestion matching keys. The Amazon order number ("Pedido n.º") groups
     # every email of a lifecycle; the shipment id pins the box when an order
     # splits into several packages. Blank for alt-store (manual) packages.
@@ -104,6 +116,36 @@ class Package(models.Model):
 
     def __str__(self):
         return self.description or f"Package #{self.pk}"
+
+    @property
+    def carrier_tracking_url(self):
+        """Direct link to the carrier's own locator (office + hours) — the
+        one thing the delivery-attempt email never provides. Only UPS is
+        wired up; extend with an elif once another carrier's format is
+        confirmed against a real email, per the CARRIER kind's docstring."""
+        if self.carrier == "UPS" and self.carrier_tracking_number:
+            return f"https://www.ups.com/track?loc=es_ES&tracknum={self.carrier_tracking_number}"
+        return ""
+
+    @property
+    def amazon_tracking_url(self):
+        """Direct link to Amazon's own order-tracking page — simplified from
+        the "Seguimiento del envío" button in the email, which wraps this
+        same destination in a one-time click-tracking redirect
+        (gp/r.html?...&U=<this, url-encoded>&...) that isn't worth storing.
+        Only offered for a carrier pickup (2026-07-24): that's the one
+        situation with no other way to check status, since neither the
+        deadline nor the office ever came from the email — see
+        carrier_tracking_url."""
+        if self.pickup_point.kind != PickupPoint.Kind.CARRIER:
+            return ""
+        if not (self.order_id and self.shipment_id):
+            return ""
+        return (
+            "https://www.amazon.es/progress-tracker/package"
+            f"?_encoding=UTF8&orderId={self.order_id}"
+            f"&packageIndex=0&shipmentId={self.shipment_id}"
+        )
 
 
 class RawEmail(models.Model):

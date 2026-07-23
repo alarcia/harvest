@@ -381,6 +381,33 @@ def _apply(parsed):
                 else f"Recogida consolidada: {len(matches)} paquetes actualizados")
         return matches[0], note
 
+    if kind == EmailKind.DELIVERY_ATTEMPT:
+        # A home delivery UPS couldn't hand over: diverted to UPS's own
+        # office. The email carries neither a deadline nor the office itself
+        # — only Amazon's own order-tracking link — so the point dedups by
+        # carrier name only (see PickupPoint.Kind.CARRIER); the user fills in
+        # carrier_tracking_number by hand once they look it up. Matched like
+        # ORDERED/SHIPPED (order/shipment id): a failed attempt is always one
+        # already-tracked shipment, never a bundle.
+        matches = _find_packages(parsed)
+        if not matches:
+            if point is None:
+                return None, "Intento de entrega sin pedido conocido ni destino: ignorado"
+            matches = [Package(pickup_point=point, order_id=parsed.order_id or "")]
+        carrier_point, _ = PickupPoint.objects.get_or_create(
+            kind=PickupPoint.Kind.CARRIER, name="UPS",
+        )
+        for pkg in matches:
+            if _RANK[pkg.state] >= _RANK[Package.State.PICKED_UP]:
+                continue  # already resolved; a re-forward must not reopen it
+            pkg.state = Package.State.AWAITING_PICKUP
+            pkg.actual_arrival = sent_on
+            pkg.carrier = "UPS"
+            pkg.pickup_point = carrier_point
+            _fill(pkg, parsed)
+            pkg.save()
+        return matches[0], "Intento de entrega fallido (UPS): a la espera de recogida en su oficina"
+
     if kind == EmailKind.PICKED_UP:
         matches = _find_packages(parsed)
         picked_day = parsed.picked_up_on or sent_on

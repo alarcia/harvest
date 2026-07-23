@@ -40,15 +40,19 @@ from bs4 import BeautifulSoup
 class EmailKind(Enum):
     """One value per Amazon template we know. Model states are coarser:
     ORDERED/SHIPPED/OUT_FOR_DELIVERY are all `in_transit`; READY_FOR_PICKUP
-    is `awaiting_pickup`; NO_LONGER_AVAILABLE and PICKUP_REMINDER drive *no*
-    transition (the first is misleading, the second is a nag about a package
-    already waiting — both change nothing); REVIEW_PUBLISHED never touches
-    the calendar, but does drive the `reviews` app (see `packages.ingest`)."""
+    and DELIVERY_ATTEMPT both land on `awaiting_pickup` (the second at a
+    carrier's office instead of an Amazon point); NO_LONGER_AVAILABLE and
+    PICKUP_REMINDER drive *no* transition (the first is misleading, the
+    second is a nag about a package already waiting — both change nothing);
+    REVIEW_PUBLISHED never touches the calendar, but does drive the
+    `reviews` app (see `packages.ingest`)."""
 
     ORDERED = "ordered"
     SHIPPED = "shipped"
     OUT_FOR_DELIVERY = "out_for_delivery"
     READY_FOR_PICKUP = "ready_for_pickup"
+    DELIVERY_ATTEMPT = "delivery_attempt"  # failed home delivery, UPS only for
+    # now (see _KIND_PATTERNS note) — diverted to the carrier's own office
     PICKED_UP = "picked_up"
     DELIVERED = "delivered"  # home delivery completed (see _KIND_PATTERNS note)
     NO_LONGER_AVAILABLE = "no_longer_available"
@@ -130,6 +134,11 @@ _KIND_PATTERNS = [
     (EmailKind.PICKUP_REMINDER,
      r"está a la espera de ser recogido|paquete en espera de recogida"),
     (EmailKind.READY_FOR_PICKUP, r"listo para (?:su|la)?\s*recogida"),
+    # UPS-specific on purpose: the carrier name is printed right in this
+    # sentence ("Lamentablemente, UPS no ha podido realizar la entrega…").
+    # Only UPS is handled for now — a different carrier's equivalent notice
+    # must keep tripping the unrecognized-email banner until it's added here.
+    (EmailKind.DELIVERY_ATTEMPT, r"ups no ha podido realizar la entrega"),
     (EmailKind.PICKED_UP, r"paquete ha sido recogido"),
     (EmailKind.DELIVERED, r"paquete se ha entregado|paquete ha sido entregado"),
     (EmailKind.REVIEW_PUBLISHED, r"tu reseña está en directo|gracias por su reseña"),
@@ -146,6 +155,10 @@ _REQUIRED = {
     EmailKind.OUT_FOR_DELIVERY: ("order_id", "sent_at", "estimated_arrival"),
     EmailKind.READY_FOR_PICKUP: ("order_id", "sent_at", "pickup_before",
                                  "pickup_code", "pickup_location"),
+    # No pickup_before/pickup_code: the email genuinely doesn't carry them —
+    # UPS gives neither a deadline nor the office in it, only the tracking
+    # link the user has to open by hand (see Package.carrier_tracking_url).
+    EmailKind.DELIVERY_ATTEMPT: ("order_id", "sent_at", "pickup_location"),
     EmailKind.PICKED_UP: ("order_id", "picked_up_on"),
     EmailKind.DELIVERED: ("order_id", "sent_at"),
     EmailKind.NO_LONGER_AVAILABLE: ("order_id",),

@@ -270,6 +270,42 @@ class ParseEmailTests(SimpleTestCase):
         self.assertEqual(parsed.kind, EmailKind.PICKUP_REMINDER)
         self.assertEqual(parsed.order_id, "407-2753653-0825928")
 
+    def test_delivery_attempt_ups(self):
+        # "Intento de entrega" — UPS couldn't hand a home delivery over and
+        # held it at its own office. The email carries the destination and
+        # order/shipment ids but, unlike READY_FOR_PICKUP, neither a deadline
+        # nor the office itself — only Amazon's own tracking link (real UPS
+        # tracking number is nowhere in the email, confirmed against the raw
+        # source; the user reads it off Amazon's own order page by hand).
+        parsed = parse_email(
+            fixture("107-intento-de-entrega-ones-funda-magnetica-para.eml")
+        )
+        self.assertEqual(parsed.kind, EmailKind.DELIVERY_ATTEMPT)
+        self.assertEqual(parsed.order_id, "404-2171566-7826720")
+        self.assertEqual(parsed.shipment_id, "TCl8Nkz09")
+        self.assertEqual(parsed.sent_at.date(), date(2026, 7, 23))
+        self.assertIsNone(parsed.pickup_before)
+        self.assertIsNone(parsed.pickup_code)
+        self.assertFalse(parsed.pickup_location.startswith("Amazon"))
+        self.assertTrue(parsed.item_title.startswith("ONES Funda Magnética"))
+        self.assertEqual(parsed.asin, "B0GL7ZD86T")
+
+    def test_delivery_attempt_other_carrier_stays_unrecognized(self):
+        # Only UPS is handled for now (user's explicit ask, 2026-07-23): a
+        # different carrier's equivalent notice must keep tripping the
+        # unrecognized-email banner rather than being guessed at.
+        msg = EmailMessage()
+        msg["Subject"] = 'Intento de entrega: "Otro producto..."'
+        msg["Message-ID"] = "<seur-attempt@example.com>"
+        msg.set_content(
+            "<p>Se ha intentado realizar tu entrega</p>"
+            "<p>Lamentablemente, SEUR no ha podido realizar la entrega y te "
+            "la ha dejado en su oficina para que la recojas.</p>",
+            subtype="html",
+        )
+        with self.assertRaisesMessage(ParseError, "Unrecognized email type"):
+            parse_email(msg.as_bytes())
+
     def test_unknown_template_fails_loudly(self):
         msg = EmailMessage()
         msg["Subject"] = "Oferta especial solo hoy"
@@ -350,6 +386,90 @@ class IngestTests(TestCase):
         self.assertEqual(pkg.pickup_point.kind, PickupPoint.Kind.AMAZON_LOCKER)
         self.assertIn("Bonsenkitchen", pkg.description)
         self.assertIn("XOKUWU", pkg.description)  # both bundled items named
+
+    def test_delivery_attempt_transitions_existing_home_package(self):
+        # Real 2026-07-23 case: a home delivery already tracked in_transit
+        # (its Pedido/Enviado already seen) that UPS couldn't hand over —
+        # same package, now awaiting pickup at UPS's office instead of
+        # landing at home.
+        home = PickupPoint.objects.create(
+            name="Rosa - Can Salgot (lliça D'amunt), Barcelona",
+            kind=PickupPoint.Kind.HOME,
+        )
+        pkg = Package.objects.create(
+            pickup_point=home, order_id="404-2171566-7826720",
+            shipment_id="TCl8Nkz09", description="ONES Funda Magnética",
+            state=Package.State.IN_TRANSIT,
+            estimated_arrival=date(2026, 8, 5),
+        )
+        record, _ = process_message(
+            fixture("107-intento-de-entrega-ones-funda-magnetica-para.eml")
+        )
+        self.assertTrue(record.processed, record.parse_error)
+        self.assertEqual(Package.objects.count(), 1)  # same package
+        pkg.refresh_from_db()
+        self.assertEqual(pkg.state, Package.State.AWAITING_PICKUP)
+        self.assertEqual(pkg.actual_arrival, date(2026, 7, 23))
+        self.assertEqual(pkg.carrier, "UPS")
+        self.assertEqual(pkg.carrier_tracking_number, "")  # not in the email
+        self.assertEqual(pkg.carrier_tracking_url, "")  # blank until filled in
+        self.assertEqual(pkg.pickup_point.kind, PickupPoint.Kind.CARRIER)
+        self.assertEqual(pkg.pickup_point.name, "UPS")
+        self.assertIsNone(pkg.deadline)  # never provided; never guessed
+        # Amazon's own order-tracking page — simplified from the email's
+        # click-tracking redirect, built from the order/shipment ids alone —
+        # is the only way left to check status, so it's always offered here.
+        self.assertEqual(
+            pkg.amazon_tracking_url,
+            "https://www.amazon.es/progress-tracker/package"
+            "?_encoding=UTF8&orderId=404-2171566-7826720"
+            "&packageIndex=0&shipmentId=TCl8Nkz09",
+        )
+
+    def test_delivery_attempt_alone_creates_awaiting_package(self):
+        # The email arrives before any Pedido/Enviado ever did (edge case,
+        # out-of-order forwarding) — still lands as an awaiting-pickup row.
+        record, _ = process_message(
+            fixture("107-intento-de-entrega-ones-funda-magnetica-para.eml")
+        )
+        self.assertTrue(record.processed, record.parse_error)
+        pkg = Package.objects.get()
+        self.assertEqual(pkg.state, Package.State.AWAITING_PICKUP)
+        self.assertEqual(pkg.pickup_point.kind, PickupPoint.Kind.CARRIER)
+        self.assertEqual(pkg.order_id, "404-2171566-7826720")
+        self.assertTrue(pkg.description.startswith("ONES Funda Magnética"))
+
+    def test_amazon_tracking_url_only_offered_for_carrier_pickups(self):
+        # A normal Amazon Counter pickup already has everything it needs
+        # (deadline, pickup code, barcode) — the Amazon tracking link exists
+        # only for the one case that has nothing else: a carrier pickup.
+        point = PickupPoint.objects.create(
+            name="Amazon Counter - Test", kind=PickupPoint.Kind.AMAZON_COUNTER,
+        )
+        pkg = Package.objects.create(
+            pickup_point=point, order_id="404-1111111-1111111",
+            shipment_id="AAAA111111", state=Package.State.AWAITING_PICKUP,
+        )
+        self.assertEqual(pkg.amazon_tracking_url, "")
+
+    def test_delivery_attempt_other_carrier_email_is_flagged(self):
+        # Mirrors test_unparseable_email_is_stored_and_flagged: a non-UPS
+        # delivery-attempt notice must surface the red banner, same as any
+        # other email type ingestion doesn't yet understand.
+        msg = EmailMessage()
+        msg["Subject"] = 'Intento de entrega: "Otro producto..."'
+        msg["Message-ID"] = "<seur-attempt-ingest@example.com>"
+        msg.set_content(
+            "<p>Se ha intentado realizar tu entrega</p>"
+            "<p>Lamentablemente, SEUR no ha podido realizar la entrega y te "
+            "la ha dejado en su oficina para que la recojas.</p>",
+            subtype="html",
+        )
+        record, created = process_message(msg.as_bytes())
+        self.assertTrue(created)
+        self.assertFalse(record.processed)
+        self.assertIn("Unrecognized", record.parse_error)
+        self.assertEqual(Package.objects.count(), 0)
 
     def test_return_notice_drives_no_transition(self):
         process_message(
@@ -963,6 +1083,37 @@ class CalendarViewTests(TestCase):
             picked_up_on=day, description=description,
         )
 
+    def test_carrier_pickup_gets_the_action_needed_chip(self):
+        # A UPS delivery attempt (PickupPoint.Kind.CARRIER) has no known
+        # deadline, but must never look like the calm, business-as-usual
+        # "waiting" chip a normal Amazon/alt-store pickup gets — it needs an
+        # active trip today (user, 2026-07-24).
+        carrier = self._point("UPS", PickupPoint.Kind.CARRIER)
+        pkg = Package.objects.create(
+            pickup_point=carrier, state=Package.State.AWAITING_PICKUP,
+            description="ONES Funda Magnética", carrier="UPS",
+        )
+        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+        self.assertIn(b'is-action_needed"', html)
+        self.assertNotIn(b'is-waiting"', html)
+        self.assertIn("Recoger ya".encode(), html)
+
+        detail = self.client.get(reverse("package_detail", args=[pkg.pk])).content
+        self.assertIn("Recoger ya en el transportista".encode(), detail)
+
+    def test_alt_store_awaiting_pickup_keeps_the_calm_waiting_chip(self):
+        # Regression guard: the alt store also has no deadline, but it's mild
+        # (a per-package €1, more after a while) — it must keep the original
+        # passive "waiting" chip, not the carrier's louder one.
+        store = self._point("Tienda de juguetes", PickupPoint.Kind.ALT_STORE)
+        Package.objects.create(
+            pickup_point=store, state=Package.State.AWAITING_PICKUP,
+            description="Juguete",
+        )
+        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+        self.assertIn(b'is-waiting"', html)
+        self.assertNotIn(b'is-action_needed"', html)
+
     def test_same_day_pickups_collapse_into_one_chip(self):
         # Two things picked up the same day, at different points: the month view
         # has no room for a chip each, so they become one "N productos" recap
@@ -1098,6 +1249,104 @@ class CalendarViewTests(TestCase):
         html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
         self.assertEqual(html.count(b'is-shipped"'), 1)
         self.assertEqual(html.count(b'is-estimated"'), 1)
+
+    def test_in_transit_counter_previews_deadline_and_leaves(self):
+        # Before the real "Entregado" email, an in-transit Counter package
+        # forecasts its last-safe day and "se va" day from the estimated
+        # arrival plus the observed 7-day grace (see _PREVIEW_GRACE_DAYS).
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER)
+        arrival = today + timedelta(days=2)
+        Package.objects.create(
+            pickup_point=counter, state=Package.State.IN_TRANSIT,
+            description="Cargador", estimated_arrival=arrival,
+        )
+        last_safe = arrival + timedelta(days=6)
+        leaves = arrival + timedelta(days=7)
+
+        html = self.client.get(
+            reverse("day_detail", args=[last_safe.isoformat()])).content
+        self.assertIn(b'is-deadline_estimated"', html)
+        self.assertIn("Último día (estimado)".encode(), html)
+
+        html = self.client.get(
+            reverse("day_detail", args=[leaves.isoformat()])).content
+        self.assertIn(b'is-leaves_estimated"', html)
+        self.assertIn("Se va (estimado)".encode(), html)
+
+    def test_in_transit_locker_previews_deadline_and_leaves(self):
+        # Same forecast, but a Locker's observed grace is 3 days, not 7.
+        today = timezone.localdate()
+        locker = self._point("Amazon Locker - cebolla",
+                             PickupPoint.Kind.AMAZON_LOCKER)
+        arrival = today + timedelta(days=2)
+        Package.objects.create(
+            pickup_point=locker, state=Package.State.IN_TRANSIT,
+            description="Funda de móvil", estimated_arrival=arrival,
+        )
+        last_safe = arrival + timedelta(days=2)
+        leaves = arrival + timedelta(days=3)
+
+        html = self.client.get(
+            reverse("day_detail", args=[last_safe.isoformat()])).content
+        self.assertIn(b'is-deadline_estimated"', html)
+
+        html = self.client.get(
+            reverse("day_detail", args=[leaves.isoformat()])).content
+        self.assertIn(b'is-leaves_estimated"', html)
+
+    def test_home_and_alt_store_get_no_deadline_preview(self):
+        # Neither ever has a real deadline, so forecasting one would be
+        # actively misleading — no preview chips at all, on any day.
+        today = timezone.localdate()
+        home = self._point("Rosa - Can Salgot", PickupPoint.Kind.HOME)
+        store = self._point("Juguetería", PickupPoint.Kind.ALT_STORE)
+        arrival = today + timedelta(days=2)
+        Package.objects.create(
+            pickup_point=home, state=Package.State.IN_TRANSIT,
+            description="Mantel", estimated_arrival=arrival,
+        )
+        Package.objects.create(
+            pickup_point=store, state=Package.State.IN_TRANSIT,
+            description="Puzzle", estimated_arrival=arrival,
+        )
+        for offset in range(0, 10):
+            day = arrival + timedelta(days=offset)
+            html = self.client.get(
+                reverse("day_detail", args=[day.isoformat()])).content
+            self.assertNotIn(b"is-deadline_estimated", html)
+            self.assertNotIn(b"is-leaves_estimated", html)
+
+    def test_preview_disappears_once_the_real_deadline_lands(self):
+        # Once the "Entregado" email arrives (awaiting_pickup, real deadline
+        # set), the forecast is superseded, not stacked alongside the real
+        # waiting/deadline/leaves marks.
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER)
+        Package.objects.create(
+            pickup_point=counter, state=Package.State.AWAITING_PICKUP,
+            description="Cargador", estimated_arrival=today - timedelta(days=1),
+            actual_arrival=today, deadline=today + timedelta(days=7),
+        )
+        html = self.client.get(
+            reverse("day_detail", args=[today.isoformat()])).content
+        self.assertNotIn(b"is-deadline_estimated", html)
+        self.assertNotIn(b"is-leaves_estimated", html)
+
+    def test_package_detail_shows_preview_deadline_while_in_transit(self):
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER)
+        arrival = today + timedelta(days=2)
+        pkg = Package.objects.create(
+            pickup_point=counter, state=Package.State.IN_TRANSIT,
+            description="Cargador", estimated_arrival=arrival,
+        )
+        html = self.client.get(
+            reverse("package_detail", args=[pkg.pk])).content.decode()
+        self.assertIn("previsión", html)
 
     def test_phone_defaults_to_fortnight_desktop_to_month(self):
         # No explicit view: a phone UA ("Mobi", per MDN) opens the fortnight

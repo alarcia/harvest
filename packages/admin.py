@@ -23,7 +23,8 @@ class PackageAdmin(admin.ModelAdmin):
         "deadline",
     )
     list_filter = ("state", "is_vine", "pickup_point")
-    search_fields = ("description", "pickup_code", "order_id", "shipment_id")
+    search_fields = ("description", "pickup_code", "order_id", "shipment_id",
+                     "carrier_tracking_number")
     date_hierarchy = "deadline"
     list_select_related = ("pickup_point",)
 

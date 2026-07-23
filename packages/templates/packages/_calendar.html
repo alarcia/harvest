@@ -217,12 +217,20 @@
     /* Last safe day: red beats source color. */
     .pkg.is-deadline { color: var(--bg); background: var(--danger); }
     /* The "antes del" day itself: may already be gone — danger plus the
-       dashed = uncertain grammar. */
-    .pkg.is-leaves {
+       dashed = uncertain grammar. Forecasted last-day/leaves-day previews
+       (still in_transit, no "Entregado" email yet) share the same look —
+       a guess is a guess, whichever kind of guess it is. */
+    .pkg.is-leaves, .pkg.is-deadline_estimated, .pkg.is-leaves_estimated {
       color: var(--danger);
       border: 1px dashed color-mix(in srgb, var(--danger) 65%, transparent);
       background: color-mix(in srgb, var(--danger) 7%, transparent);
     }
+    /* Awaiting pickup at a carrier's office: no deadline, but the most urgent
+       mark on the board, not the least — solid red like "deadline" (a
+       certain fact, not a dashed guess), plus a ⚠ so it never reads as the
+       same passive "Listo" as a normal wait. */
+    .pkg.is-action_needed { color: var(--bg); background: var(--danger); }
+    .pkg.is-action_needed::before { content: '⚠ '; }
     /* Picked up: fades out of the picture. */
     .pkg.is-picked {
       color: var(--muted);
@@ -366,7 +374,15 @@
       .view-month .day .pkg.is-waiting.src-amazon { background: var(--amazon); }
       .view-month .day .pkg.is-waiting.src-store { background: var(--store); }
       .view-month .day .pkg.is-deadline,
-      .view-month .day .pkg.is-leaves { background: var(--danger); border: none; }
+      .view-month .day .pkg.is-leaves,
+      .view-month .day .pkg.is-action_needed { background: var(--danger); border: none; }
+      /* Forecasted deadline/leaves: same hollow-dot grammar as is-estimated
+         (uncertain), tinted red instead of the source color (it's a warning). */
+      .view-month .day .pkg.is-deadline_estimated,
+      .view-month .day .pkg.is-leaves_estimated {
+        background: transparent;
+        border: 2px solid var(--danger);
+      }
       .view-month .day .pkg.is-picked,
       .view-month .day .pkg.is-delivered { background: var(--muted); opacity: .45; }
 

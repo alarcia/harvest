@@ -20,6 +20,9 @@
       {% if package.state == "in_transit" and package.estimated_arrival %}
         <span><b>Llegada estimada</b> {{ package.estimated_arrival|date:"l j" }} de {{ package.estimated_arrival|date:"F" }}</span>
       {% endif %}
+      {% if preview_leaves_day %}
+        <span><b>Recoger antes del (previsión)</b> {{ preview_leaves_day|date:"j" }} de {{ preview_leaves_day|date:"F" }}</span>
+      {% endif %}
       {% if package.actual_arrival %}
         {% if package.state == "delivered" %}
           <span><b>Entregado</b> el {{ package.actual_arrival|date:"j" }} de {{ package.actual_arrival|date:"F" }}</span>
@@ -36,10 +39,23 @@
       {% if package.pickup_code %}
         <span><b>Código de recogida</b> <code class="modal-code">{{ package.pickup_code }}</code></span>
       {% endif %}
+      {% if package.carrier %}
+        <span><b>Transportista</b> {{ package.carrier }}{% if package.carrier_tracking_number %} · {{ package.carrier_tracking_number }}{% endif %}</span>
+      {% endif %}
     </div>
     {% if package.barcode_url %}
       <a class="modal-barcode" href="{{ package.barcode_url }}" target="_blank" rel="noopener">
         Ver código de barras de recogida ↗
+      </a>
+    {% endif %}
+    {% if package.amazon_tracking_url %}
+      <a class="modal-barcode" href="{{ package.amazon_tracking_url }}" target="_blank" rel="noopener">
+        Seguimiento en Amazon ↗
+      </a>
+    {% endif %}
+    {% if package.carrier_tracking_url %}
+      <a class="modal-barcode" href="{{ package.carrier_tracking_url }}" target="_blank" rel="noopener">
+        Ver oficina en el localizador de {{ package.carrier }} ↗
       </a>
     {% endif %}
   </div>

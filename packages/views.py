@@ -18,31 +18,77 @@ VIEW_WEEKS = {"week": 1, "fortnight": 2}
 # The visual grammar: one chip = one mark on one day, keyed by a rendering
 # kind. Several kinds share one model state — how a day relates to the
 # deadline decides the kind, never a new state in the database.
-#   ordered   — order placed ("Pedido" email). Hollow dot, no box.
-#   shipped   — shipping notice ("Enviado"). Filled dot, no box.
-#   estimated — tentative arrival ("Llega el lunes"). Dashed box; gone once it lands.
-#   waiting   — sitting at the pickup point, marked once on today. Filled box.
-#   deadline  — last safe day ("antes del 14" ⇒ the 13th). Red filled box.
-#   leaves    — the "antes del" day itself: may leave at any moment. Red dashed
-#               box — dashed meaning uncertain, same grammar as "estimated".
-#   picked    — confirmed picked up that day. Muted + check.
+#   ordered            — order placed ("Pedido" email). Hollow dot, no box.
+#   shipped             — shipping notice ("Enviado"). Filled dot, no box.
+#   estimated           — tentative arrival ("Llega el lunes"). Dashed box; gone once it lands.
+#   deadline_estimated,
+#   leaves_estimated    — forecast of the last-safe/"antes del" days, from the
+#                         estimated arrival plus the pickup point's observed
+#                         grace window (see _PREVIEW_GRACE_DAYS). Same red
+#                         dashed box as "leaves": a guess, superseded the
+#                         moment the real "Entregado" email sets the real
+#                         deadline and the package leaves in_transit.
+#   waiting             — sitting at the pickup point, marked once on today. Filled box.
+#   deadline            — last safe day ("antes del 14" ⇒ the 13th). Red filled box.
+#   leaves              — the "antes del" day itself: may leave at any moment. Red dashed
+#                         box — dashed meaning uncertain, same grammar as "estimated".
+#   action_needed       — awaiting pickup at a carrier's office (see
+#                         PickupPoint.Kind.CARRIER), marked once on today like
+#                         "waiting". No known deadline, but *more* urgent, not
+#                         less — a failed delivery needs an active trip, not a
+#                         routine one — so it borrows "deadline"'s solid red
+#                         instead of "waiting"'s passive source color, plus a
+#                         ⚠ mark (user, 2026-07-24: must read as distinct from
+#                         the passive "Listo"/"Entregado").
+#   picked              — confirmed picked up that day. Muted + check.
 STATE_TAGS = {
     "ordered": "Pedido",
     "shipped": "Enviado",
     "estimated": "Estimado",
+    "deadline_estimated": "Último día",
+    "leaves_estimated": "Se va",
     "waiting": "Listo",
     "deadline": "Último día",
     "leaves": "Se va",
+    "action_needed": "Recoger ya",
     "picked": "Recogido",
     "delivered": "Entregado",
 }
 
 # Within a day, red first, then actionable, then informational. The certain
 # facts (ordered/shipped) sort before the "estimated" guess: when both share a
-# day, "Enviado" reads before "Estimado" (a fact beats a promise).
-_URGENCY = {"deadline": 0, "leaves": 0, "waiting": 1,
-            "shipped": 2, "ordered": 2, "estimated": 3,
+# day, "Enviado" reads before "Estimado" (a fact beats a promise). The
+# deadline/leaves forecasts are guesses too, so they sort with "estimated".
+# action_needed sits with deadline/leaves: no date attached, but the most
+# urgent thing on the board regardless.
+_URGENCY = {"deadline": 0, "leaves": 0, "action_needed": 0, "waiting": 1,
+            "shipped": 2, "ordered": 2,
+            "estimated": 3, "deadline_estimated": 3, "leaves_estimated": 3,
             "picked": 4, "delivered": 4}
+
+# Grace observed between the "Entregado" email (actual_arrival) and the
+# "antes del" deadline it carries: 3 days at a Locker, 7 at a Counter,
+# consistent across every real package so far (checked 2026-07-23 against
+# production data and fixtures). Not something the parser ever reads or
+# calculates — the real deadline always comes from the email — but stable
+# enough to *forecast* it for a package still in_transit, before that email
+# arrives. The alt store and home deliveries have no deadline at all, so
+# they're absent here and get no preview.
+_PREVIEW_GRACE_DAYS = {
+    PickupPoint.Kind.AMAZON_LOCKER: 3,
+    PickupPoint.Kind.AMAZON_COUNTER: 7,
+}
+
+
+def _preview_leaves_day(pkg):
+    """The forecasted "antes del" day for an in-transit package at a pickup
+    point with a known grace window, or None. A guess from the estimated
+    arrival — never a substitute for the real deadline once it's read from
+    the "Entregado" email."""
+    grace = _PREVIEW_GRACE_DAYS.get(pkg.pickup_point.kind)
+    if not (pkg.estimated_arrival and grace):
+        return None
+    return pkg.estimated_arrival + timedelta(days=grace)
 
 _STATE_LABELS = {
     Package.State.IN_TRANSIT: "En camino",
@@ -51,6 +97,17 @@ _STATE_LABELS = {
     Package.State.DELIVERED: "Entregado",
     Package.State.RETURNED: "Devuelto",
 }
+
+
+def _state_label(pkg):
+    """The modal's "Estado" line. A carrier pickup reuses AWAITING_PICKUP but
+    must not read as the calm "Listo para recoger" — same reasoning as the
+    action_needed chip kind, so the card doesn't undercut the calendar's own
+    red warning the moment the user taps in for the actionable detail."""
+    if (pkg.state == Package.State.AWAITING_PICKUP
+            and pkg.pickup_point.kind == PickupPoint.Kind.CARRIER):
+        return "Recoger ya en el transportista"
+    return _STATE_LABELS.get(pkg.state, pkg.state)
 
 # A description that names only a count, not a product: picked-up / delivered
 # emails with no item links whose subject was just "N productos" or "Entregado:
@@ -80,6 +137,8 @@ def _point_label(point):
         # "Otros" (not "Tienda"): the non-Amazon bucket is various stores and
         # drop-off spots, all handled the same, distinct from Amazon.
         return f"Otros · {point.name}"
+    if point.kind == PickupPoint.Kind.CARRIER:
+        return f"Recogida en transportista · {point.name}"
     return point.name
 
 
@@ -96,20 +155,30 @@ def _marks(pkg, today):
             fact_day, fact_kind = pkg.shipped_on, "shipped"
         elif pkg.ordered_on:
             fact_day, fact_kind = pkg.ordered_on, "ordered"
+        marks = []
         # Ship and estimated arrival on the *same* day ("Enviado hoy, llega
         # hoy", the rare same-day delivery): one chip that says both, so the
         # arrival still shows where the user looks for it instead of vanishing.
         if pkg.estimated_arrival and pkg.estimated_arrival == fact_day:
             note = "llega hoy" if fact_day == today else "llega el mismo día"
-            return [(fact_day, fact_kind, note)]
-        marks = []
-        if fact_kind:
-            marks.append((fact_day, fact_kind, ""))
-        if pkg.estimated_arrival:
-            marks.append((pkg.estimated_arrival, "estimated", ""))
+            marks.append((fact_day, fact_kind, note))
+        else:
+            if fact_kind:
+                marks.append((fact_day, fact_kind, ""))
+            if pkg.estimated_arrival:
+                marks.append((pkg.estimated_arrival, "estimated", ""))
+        leaves_day = _preview_leaves_day(pkg)
+        if leaves_day:
+            marks.append((leaves_day - timedelta(days=1), "deadline_estimated", "estimado"))
+            marks.append((leaves_day, "leaves_estimated", "estimado"))
         return marks
 
     if pkg.state == Package.State.AWAITING_PICKUP:
+        if pkg.pickup_point.kind == PickupPoint.Kind.CARRIER:
+            # UPS never gives a deadline either, but unlike the alt store this
+            # isn't mild — a failed delivery needs an active trip today, so it
+            # gets its own louder mark instead of falling into "waiting" below.
+            return [(today, "action_needed", "")]
         if not pkg.deadline:  # alt store never expires: today's cell only
             return [(today, "waiting", "")]
         last_safe = pkg.deadline - timedelta(days=1)
@@ -332,7 +401,11 @@ def package_detail(request, pk):
         "point_label": _point_label(point),
         "source": ("store" if point.kind == PickupPoint.Kind.ALT_STORE
                    else "amazon"),
-        "state_label": _STATE_LABELS.get(pkg.state, pkg.state),
+        "state_label": _state_label(pkg),
+        # Only meaningful while in_transit: once the real "Entregado" email
+        # sets pkg.deadline, that's what the card shows instead.
+        "preview_leaves_day": (_preview_leaves_day(pkg)
+                                if pkg.state == Package.State.IN_TRANSIT else None),
         # Set when the card was opened from a day modal: draws the ‹ control
         # that swaps that day back in.
         "back_day": _parse_anchor(request.GET.get("from_day"), None),
