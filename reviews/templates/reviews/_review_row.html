@@ -1,0 +1,25 @@
+{% comment %}One row in the pending backlog. mode: "urgent" | "pending" — decides
+the meta line, the only thing that differs between the two lists. The whole row
+is a button opening the review's detail card (same #modal as the written
+reviews). The view only ever passes rows with a known order date; the last
+branch below is a defensive fallback, not a real case.{% endcomment %}
+<li>
+  <button type="button" class="rev-row-btn{% if mode == "urgent" %} is-due{% endif %}"
+          hx-get="{% url 'review_detail' r.pk %}" hx-target="#modal" hx-swap="innerHTML">
+    {% if r.package.image_url %}<img class="rev-thumb" src="{{ r.package.image_url }}" alt="">{% endif %}
+    <div class="rev-body">
+      <span class="rev-name">{{ r.product_title|default:"Producto desconocido" }}{% if r.is_vine %} <i class="vine-badge">Vine</i>{% endif %}</span>
+      <span class="rev-meta">
+        {% if mode == "urgent" %}
+          Vencida desde el {{ r.due_on|date:"j" }} de {{ r.due_on|date:"F" }}
+        {% elif r.due_on %}
+          Reseña antes del {{ r.due_on|date:"j" }} de {{ r.due_on|date:"F" }}
+        {% elif r.package.ordered_on %}
+          Pedido el {{ r.package.ordered_on|date:"j" }} de {{ r.package.ordered_on|date:"F" }}
+        {% else %}
+          Sin fecha de pedido
+        {% endif %}
+      </span>
+    </div>
+  </button>
+</li>

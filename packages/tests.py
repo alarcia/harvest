@@ -16,7 +16,9 @@ from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from .ingest import process_message, reprocess_failures, scan_inbox
+from reviews.models import Review
+
+from .ingest import backfill_reviews, process_message, reprocess_failures, scan_inbox
 from .models import Package, PickupPoint, RawEmail
 from .parser import EmailKind, ParseError, parse_email
 
@@ -713,6 +715,176 @@ class IngestTests(TestCase):
         pkg = Package.objects.get()
         self.assertEqual(pkg.description, "")
 
+    # ---- R1: reviews follow the packages that owe them ----
+
+    def test_vine_pedido_creates_pending_review(self):
+        process_message(fixture("016-fwd-pedido-intex-64761-colchon.eml"))
+        pkg = Package.objects.get()
+        review = Review.objects.get()
+        self.assertEqual(review.package_id, pkg.pk)
+        self.assertEqual(review.status, Review.Status.PENDING)
+        self.assertEqual(review.asin, pkg.asin)
+        self.assertEqual(review.product_title, pkg.description)
+        self.assertIsNone(review.due_on)  # not picked up yet
+
+    def test_vine_refuted_deletes_untouched_pending_review(self):
+        process_message(fixture("016-fwd-pedido-intex-64761-colchon.eml"))
+        self.assertEqual(Review.objects.count(), 1)
+        process_message(fixture("019-fwd-enviado-intex-64761-colchon.eml"))
+        self.assertEqual(Review.objects.count(), 0)  # discarded, never Vine after all
+
+    def test_vine_refuted_keeps_review_the_user_already_touched(self):
+        process_message(fixture("016-fwd-pedido-intex-64761-colchon.eml"))
+        review = Review.objects.get()
+        review.notes = "Ya lo estoy probando"
+        review.save()
+        process_message(fixture("019-fwd-enviado-intex-64761-colchon.eml"))
+        # Refuted as Vine, but the row survives — it's the user's now.
+        self.assertEqual(Review.objects.count(), 1)
+        pkg = Package.objects.get()
+        self.assertFalse(pkg.is_vine)
+
+    def test_genuine_vine_review_not_duplicated_across_lifecycle(self):
+        process_message(fixture("006-fwd-pedido-cargador-inalambrico.eml"))
+        process_message(fixture("007-fwd-enviado-cargador-inalambrico.eml"))
+        self.assertEqual(Review.objects.count(), 1)
+
+    def test_pickup_sets_review_due_on_30_days_out(self):
+        for name in (
+            "006-fwd-pedido-cargador-inalambrico.eml",
+            "007-fwd-enviado-cargador-inalambrico.eml",
+            "008-fwd-paquete-listo-para-recogida-recoger-en-amazon-counter-le.eml",
+            "009-fwd-se-ha-recogido-cargador-inalambrico-magnetico-25w-con-us.eml",
+        ):
+            process_message(fixture(name))
+        review = Review.objects.get()
+        self.assertEqual(review.due_on, date(2026, 8, 7))  # picked up 2026-07-08 + 30
+
+    def test_review_published_creates_review_when_none_pending(self):
+        record, _ = process_message(
+            fixture("010-fwd-gracias-por-su-resena-de-cargador-inalambrico-mag-en-ama.eml")
+        )
+        self.assertTrue(record.processed, record.parse_error)
+        review = Review.objects.get()
+        self.assertEqual(review.status, Review.Status.PUBLISHED)
+        self.assertEqual(review.asin, "B0GXK1FPTY")
+        self.assertEqual(review.review_id, "R1IUNF3PY66WHI")
+        self.assertEqual(review.title, "Carga rápido y los imanes agarran bien")
+        self.assertEqual(review.rating, 4)
+        self.assertTrue(review.text.endswith("ideal para..."))
+        self.assertFalse(review.text_is_complete)  # only ever an excerpt
+        self.assertIsNone(review.package)  # no matching package was ever seen
+
+    def test_review_published_closes_matching_pending_review(self):
+        process_message(fixture("006-fwd-pedido-cargador-inalambrico.eml"))
+        pkg = Package.objects.get()
+        review = Review.objects.get()
+        self.assertEqual(review.status, Review.Status.PENDING)
+
+        process_message(
+            fixture("010-fwd-gracias-por-su-resena-de-cargador-inalambrico-mag-en-ama.eml")
+        )
+        self.assertEqual(Review.objects.count(), 1)  # same row, not a second one
+        review.refresh_from_db()
+        self.assertEqual(review.status, Review.Status.PUBLISHED)
+        self.assertEqual(review.package_id, pkg.pk)
+        self.assertEqual(review.review_id, "R1IUNF3PY66WHI")
+
+    def test_review_published_prefers_approved_over_pending(self):
+        pending = Review.objects.create(
+            product_title="otro", asin="B0GXK1FPTY", status=Review.Status.PENDING,
+        )
+        approved = Review.objects.create(
+            product_title="Cargador Inalámbrico (mío)", asin="B0GXK1FPTY",
+            status=Review.Status.APPROVED, title="Mi propio título", rating=5,
+        )
+        process_message(
+            fixture("010-fwd-gracias-por-su-resena-de-cargador-inalambrico-mag-en-ama.eml")
+        )
+        approved.refresh_from_db()
+        pending.refresh_from_db()
+        self.assertEqual(approved.status, Review.Status.PUBLISHED)
+        self.assertEqual(approved.title, "Mi propio título")  # never overwritten
+        self.assertEqual(pending.status, Review.Status.PENDING)  # untouched
+
+    def test_review_published_is_idempotent(self):
+        process_message(
+            fixture("010-fwd-gracias-por-su-resena-de-cargador-inalambrico-mag-en-ama.eml")
+        )
+        self.assertEqual(Review.objects.count(), 1)
+        # A stray re-forward of the very same confirmation must not duplicate it.
+        msg = EmailMessage()
+        msg["Subject"] = "Re-fwd"
+        msg["Message-ID"] = "<second-copy@example.com>"
+        raw = fixture("010-fwd-gracias-por-su-resena-de-cargador-inalambrico-mag-en-ama.eml")
+        from email import message_from_bytes, policy
+        body = message_from_bytes(raw, policy=policy.default).get_body(
+            preferencelist=("html", "plain"))
+        msg.set_content(body.get_content(), subtype="html")
+        record, _ = process_message(msg.as_bytes())
+        self.assertEqual(Review.objects.count(), 1)
+        self.assertIn("ya registrada", record.note)
+
+
+class BackfillReviewsTests(TestCase):
+    """The one-off that catches real data up to R1 (2026-07-23): Vine
+    packages ingested before the hooks existed, and review_published emails
+    that were correctly parsed but, under the old no-op handler, produced
+    nothing."""
+
+    def test_backfills_pending_review_for_pre_existing_vine_package(self):
+        point = PickupPoint.objects.create(
+            name="Amazon Locker - Test", kind=PickupPoint.Kind.AMAZON_LOCKER,
+        )
+        pkg = Package.objects.create(
+            pickup_point=point, description="Viejo paquete Vine", asin="B0OLDVINE1",
+            is_vine=True, state=Package.State.PICKED_UP,
+            picked_up_on=date(2026, 6, 1),
+        )
+        result = backfill_reviews()
+        self.assertEqual(result["packages"], 1)
+        review = Review.objects.get(package=pkg)
+        self.assertEqual(review.status, Review.Status.PENDING)
+        self.assertEqual(review.due_on, date(2026, 7, 1))  # picked up + 30
+
+    def test_backfill_is_idempotent(self):
+        point = PickupPoint.objects.create(
+            name="Amazon Locker - Test", kind=PickupPoint.Kind.AMAZON_LOCKER,
+        )
+        Package.objects.create(
+            pickup_point=point, description="Viejo paquete Vine", is_vine=True,
+        )
+        backfill_reviews()
+        result = backfill_reviews()
+        self.assertEqual(result["packages"], 0)  # already has one, second pass no-ops
+        self.assertEqual(Review.objects.count(), 1)
+
+    def test_backfill_replays_stranded_review_published_emails(self):
+        raw = fixture("010-fwd-gracias-por-su-resena-de-cargador-inalambrico-mag-en-ama.eml")
+        RawEmail.objects.create(
+            message_id="<stranded@example.com>", subject="Gracias por tu reseña",
+            raw=raw.decode("utf-8", "replace"), processed=True,
+            kind="review_published", note="Reseña publicada: sin acción de calendario",
+        )
+        result = backfill_reviews()
+        self.assertEqual(result["emails"], 1)
+        review = Review.objects.get()
+        self.assertEqual(review.status, Review.Status.PUBLISHED)
+        self.assertEqual(review.review_id, "R1IUNF3PY66WHI")
+        record = RawEmail.objects.get(message_id="<stranded@example.com>")
+        self.assertNotIn("sin acción", record.note)
+
+    def test_backfill_replay_is_idempotent(self):
+        raw = fixture("010-fwd-gracias-por-su-resena-de-cargador-inalambrico-mag-en-ama.eml")
+        RawEmail.objects.create(
+            message_id="<stranded-2@example.com>", subject="Gracias por tu reseña",
+            raw=raw.decode("utf-8", "replace"), processed=True,
+            kind="review_published", note="Reseña publicada: sin acción de calendario",
+        )
+        backfill_reviews()
+        backfill_reviews()
+        self.assertEqual(Review.objects.count(), 1)
+
 
 def _junk_email(subject="Newsletter", mid="<junk-scan@example.com>"):
     msg = EmailMessage()
@@ -995,3 +1167,20 @@ class CalendarViewTests(TestCase):
         html = self.client.get(
             reverse("home"), HTTP_HX_REQUEST="true").content.decode()
         self.assertLess(html.index("is-shipped"), html.index("is-estimated"))
+
+    @override_settings(STORAGES={
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    })  # the full-page branch renders the topbar's {% static %} logo, which
+        # needs a collectstatic manifest this dev/test environment doesn't have
+    def test_history_restore_request_gets_the_full_page_not_a_fragment(self):
+        # htmx tags a post-cache-miss browser-back request with HX-Request
+        # too, but replaces the *whole document* with the response — serving
+        # it the bare #app-view fragment renders as raw, chromeless HTML.
+        fragment = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+        self.assertNotIn(b"<!doctype html>", fragment)
+
+        restored = self.client.get(
+            reverse("home"), HTTP_HX_REQUEST="true",
+            HTTP_HX_HISTORY_RESTORE_REQUEST="true").content
+        self.assertIn(b"<!doctype html>", restored)
+        self.assertIn(b"app-topbar", restored)

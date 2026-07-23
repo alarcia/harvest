@@ -1,0 +1,26 @@
+{% load static %}
+{% comment %}Shared chrome for the calendar and the reviews module: brand,
+section pills (self and other always visible, current one highlighted so
+the markup is byte-identical on both pages) and the untouched admin link.
+Lives outside #app-view, so switching sections never re-fetches this.{% endcomment %}
+<header class="app-topbar">
+  <span class="left">
+    <span class="brand"><img src="{% static 'packages/logo.png' %}" alt=""><span>Harvest<span class="accent">.</span></span></span>
+    <a class="nav-link{% if active_nav == 'calendar' %} active{% endif %}"
+       href="{% url 'home' %}" aria-label="Calendario" title="Calendario"
+       hx-get="{% url 'home' %}" hx-target="#app-view" hx-swap="outerHTML" hx-push-url="{% url 'home' %}">
+      <span class="ico">📅</span><span class="label">Calendario</span>
+    </a>
+    <a class="nav-link{% if active_nav == 'reviews' %} active{% endif %}"
+       href="{% url 'reviews_list' %}"
+       aria-label="Reseñas{% if vencidas_count %}, {{ vencidas_count }} vencidas{% endif %}" title="Reseñas"
+       hx-get="{% url 'reviews_list' %}" hx-target="#app-view" hx-swap="outerHTML" hx-push-url="{% url 'reviews_list' %}">
+      <span class="ico">⭐</span><span class="label">Reseñas</span>
+      {% if vencidas_count %}<span class="badge">{{ vencidas_count }}</span>{% endif %}
+    </a>
+    <a class="nav-link" href="/admin/" aria-label="Panel de administración" title="Panel de administración">
+      <span class="ico">🪄</span><span class="label">Admin</span>
+    </a>
+  </span>
+  <a class="add" href="{% url 'add_package' %}" aria-label="Añadir paquete">+</a>
+</header>

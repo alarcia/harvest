@@ -1,4 +1,4 @@
-{% comment %}One day at full size, in the shared #pkg-modal slot: the same
+{% comment %}One day at full size, in the shared #modal slot: the same
 chips the cell shows, readable and tap-friendly. Each one swaps in the package
 card (or the consolidated pickup card), carrying ?from_day for the ‹ way
 back.{% endcomment %}
@@ -14,7 +14,7 @@ back.{% endcomment %}
         <li style="--i:{{ forloop.counter0 }}">
           <button class="pkg src-{{ c.source }} is-{{ c.kind }}"
                   hx-get="{{ c.detail_url }}?from_day={{ day|date:'Y-m-d' }}"
-                  hx-target="#pkg-modal" hx-swap="innerHTML">
+                  hx-target="#modal" hx-swap="innerHTML">
             <b>{{ c.tag }}{% if c.note %} ({{ c.note }}){% endif %}</b> · {{ c.label }}
           </button>
         </li>

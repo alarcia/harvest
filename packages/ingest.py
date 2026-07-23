@@ -30,12 +30,15 @@ import hashlib
 import imaplib
 import logging
 import re
+from datetime import timedelta
 from email import message_from_bytes, policy
 from email.utils import parsedate_to_datetime
 
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
+
+from reviews.models import Review
 
 from .models import Package, PickupPoint, RawEmail
 from .parser import EmailKind, ParseError, parse_email
@@ -203,6 +206,102 @@ def _apply_cost(pkg, parsed, *, authoritative):
         pkg.is_vine = parsed.total == 0
 
 
+def _sync_review_for_vine(pkg):
+    """Keep a package's owed review in lockstep with its Vine flag, right
+    after `_apply_cost` decides it. Vine confirmed ⇒ a pending Review exists
+    (created here on first sighting, product title/ASIN copied); Vine
+    *refuted* by the Enviado ⇒ drop the auto-created Review, but only if it's
+    still exactly as ingestion left it — untouched by a human (via admin,
+    until R3's editor exists). Idempotent: called on every Ordered/Enviado/
+    Reparto for the package, it's a no-op once the Review already matches."""
+    existing = getattr(pkg, "review", None)
+    if pkg.is_vine:
+        if existing is None:
+            Review.objects.create(
+                package=pkg,
+                product_title=pkg.description or f"Paquete #{pkg.pk}",
+                asin=pkg.asin,
+            )
+            return "reseña pendiente creada"
+        return ""
+    untouched = (existing is not None and existing.status == Review.Status.PENDING
+                 and not existing.title and not existing.text
+                 and not existing.draft and not existing.notes
+                 and existing.rating is None)
+    if untouched:
+        existing.delete()
+        return "reseña pendiente descartada (ya no es Vine)"
+    return ""
+
+
+def _set_review_due(pkg, picked_up_on):
+    """Pickup starts the use/testing window: the hard reminder is pickup +
+    30 days, the default the model promises — set once here and never
+    overwritten again (due_on stays user-editable after that)."""
+    review = getattr(pkg, "review", None)
+    if review is not None and review.status == Review.Status.PENDING and not review.due_on:
+        review.due_on = picked_up_on + timedelta(days=30)
+        review.save(update_fields=["due_on"])
+
+
+def _apply_review_published(parsed, sent_on):
+    """The absolute end of the review chapter, whatever happened before in
+    Harvest — or nothing at all: a review written straight on Amazon closes
+    the same way. Matching: ASIN first (any non-published status; prefer
+    `approved` — the user's own pasted-in text beats a fresh row), falling
+    back to the full item title against `product_title` (exact or a prefix
+    either way, since a title stored before this parser could be shorter).
+    No match ⇒ the chapter still closes: a fresh `published` row is created
+    directly from the email, package linked by ASIN if one is known.
+
+    Idempotent by `review_id` — Amazon's own globally-unique id for one
+    review — so a replayed email (the R1 backfill, or a stray re-forward)
+    never creates a duplicate."""
+    if parsed.review_id and Review.objects.filter(review_id=parsed.review_id).exists():
+        return None, "Reseña publicada: ya registrada"
+
+    review = None
+    if parsed.asin:
+        candidates = Review.objects.filter(asin=parsed.asin).exclude(
+            status=Review.Status.PUBLISHED)
+        review = (candidates.filter(status=Review.Status.APPROVED).first()
+                  or candidates.first())
+    if review is None and parsed.item_title:
+        title = parsed.item_title
+        matches = [
+            r for r in Review.objects.exclude(status=Review.Status.PUBLISHED)
+            if r.product_title and (r.product_title == title
+                                     or title.startswith(r.product_title)
+                                     or r.product_title.startswith(title))
+        ]
+        if matches:
+            review = next((r for r in matches if r.status == Review.Status.APPROVED),
+                          matches[0])
+
+    created = review is None
+    if created:
+        review = Review(product_title=parsed.item_title or "Producto desconocido",
+                         asin=parsed.asin or "")
+        if parsed.asin:
+            pkg = Package.objects.filter(asin=parsed.asin, review__isnull=True).first()
+            if pkg is not None:
+                review.package = pkg
+
+    if not review.title and parsed.review_headline:
+        review.title = parsed.review_headline[:255]
+    if review.rating is None and parsed.review_rating:
+        review.rating = parsed.review_rating
+    if not review.text and parsed.review_excerpt:
+        review.text = parsed.review_excerpt
+        review.text_is_complete = False
+    review.status = Review.Status.PUBLISHED
+    review.review_id = parsed.review_id or review.review_id
+    review.published_on = review.published_on or sent_on
+    review.save()
+
+    return None, "Reseña publicada" + (" (nueva)" if created else "")
+
+
 def _apply(parsed):
     """Map one parsed email onto the packages table.
 
@@ -246,9 +345,13 @@ def _apply(parsed):
         was_vine = pkg.is_vine
         _apply_cost(pkg, parsed, authoritative=(kind == EmailKind.SHIPPED))
         pkg.save()
+        notes = []
         if kind == EmailKind.SHIPPED and was_vine and not pkg.is_vine:
-            return pkg, f"Coste real {parsed.total}€ en el envío: desmarcado como Vine"
-        return pkg, ""
+            notes.append(f"Coste real {parsed.total}€ en el envío: desmarcado como Vine")
+        review_note = _sync_review_for_vine(pkg)
+        if review_note:
+            notes.append(review_note)
+        return pkg, " · ".join(notes)
 
     if kind == EmailKind.READY_FOR_PICKUP:
         matches = _find_all_packages(parsed, point)
@@ -306,12 +409,14 @@ def _apply(parsed):
             )
             _fill(pkg, parsed)
             pkg.save()
+            _set_review_due(pkg, picked_day)
             return pkg, ""
         for pkg in targets:
             pkg.state = Package.State.PICKED_UP
             pkg.picked_up_on = picked_day
             _fill(pkg, parsed)
             pkg.save()
+            _set_review_due(pkg, picked_day)
         extra = len(targets) - len(matched_pks)
         note = "" if extra <= 0 else f"Recogida en bloque: +{extra} paquete(s) del mismo punto"
         return targets[0], note
@@ -353,7 +458,7 @@ def _apply(parsed):
         return pkg, "Recordatorio de recogida: sin cambios"
 
     if kind == EmailKind.REVIEW_PUBLISHED:
-        return None, "Reseña publicada: sin acción de calendario"
+        return _apply_review_published(parsed, sent_on)
 
     return None, f"Sin regla para {kind.value}"  # unreachable; belt and braces
 
@@ -445,6 +550,54 @@ def reprocess_failures():
     logger.info("Reproceso completado: %d fallo(s), %d resuelto(s)",
                 len(failures), fixed)
     return len(failures), fixed
+
+
+def backfill_reviews():
+    """One-off: bring `reviews.Review` up to date with everything that
+    predates these hooks (2026-07-23) — real Vine packages and successfully
+    processed `review_published` RawEmails with nothing to show for them,
+    since the old handler for that kind was a no-op. `reprocess_failures()`
+    never reaches these: they have no `parse_error`, they parsed fine, they
+    just did nothing. Two passes, both idempotent — safe to run more than
+    once if new Vine packages or review emails show up before the next
+    normal ingest sweep reaches them on its own:
+
+    1. Every already-Vine package with no Review yet gets one (mirroring
+       `_sync_review_for_vine`), `due_on` backfilled too if it's already
+       past pickup (`_set_review_due`'s rule, applied retroactively).
+    2. Every stored `review_published` RawEmail that parsed without error
+       gets replayed through `_apply` — `_apply_review_published`'s
+       `review_id` guard keeps a second run from ever duplicating one.
+
+    Returns {"packages": n, "emails": n} for the command to report.
+    """
+    backfilled = 0
+    for pkg in Package.objects.filter(is_vine=True, review__isnull=True):
+        review = Review.objects.create(
+            package=pkg,
+            product_title=pkg.description or f"Paquete #{pkg.pk}",
+            asin=pkg.asin,
+        )
+        if pkg.picked_up_on:
+            review.due_on = pkg.picked_up_on + timedelta(days=30)
+            review.save(update_fields=["due_on"])
+        backfilled += 1
+        logger.info("BACKFILL reseña pendiente ← %r", pkg.description or f"Paquete #{pkg.pk}")
+
+    replayed = 0
+    emails = RawEmail.objects.filter(kind=EmailKind.REVIEW_PUBLISHED.value, parse_error="")
+    for record in emails:
+        parsed = parse_email(record.raw.encode("utf-8", "replace"))
+        with transaction.atomic():
+            _, note = _apply(parsed)
+        record.note = note
+        record.save(update_fields=["note"])
+        replayed += 1
+        logger.info("BACKFILL %r → %s", record.subject[:70], note)
+
+    logger.info("Backfill de reseñas completado: %d paquete(s) Vine, %d email(s) reproducido(s)",
+                backfilled, replayed)
+    return {"packages": backfilled, "emails": replayed}
 
 
 def _default_connection():

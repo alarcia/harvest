@@ -7,6 +7,8 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 
+from reviews.models import Review
+
 from .forms import PackageForm
 from .models import Package, PickupPoint, RawEmail
 
@@ -222,6 +224,17 @@ def _nav(view, anchor, direction=None):
     return {"get": f"{url}&dir={direction}" if direction else url, "push": url}
 
 
+def wants_fragment(request):
+    """True for a genuine htmx swap, false for a full page load *and* for a
+    history-restore request. htmx tags every request it makes with
+    HX-Request, including the one it fires after a browser-back cache miss
+    (sessionStorage is per-tab and iOS Safari purges it freely) — but that
+    request replaces the *whole document*, so serving it a bare fragment
+    renders as raw, chromeless HTML instead of the page it was on."""
+    return (request.headers.get("HX-Request") == "true"
+            and request.headers.get("HX-History-Restore-Request") != "true")
+
+
 def home(request):
     """The calendar. Full page normally, bare fragment for HTMX swaps."""
     today = timezone.localdate()
@@ -276,6 +289,8 @@ def home(request):
         # red banner until someone (an agent, probably) sorts them out.
         "parse_failures": RawEmail.objects.exclude(parse_error="")
                                           .order_by("-received_at", "-created_at")[:3],
+        # The reviews nav pill's nag badge — same query on both pages.
+        "vencidas_count": Review.objects.vencidas(today).count(),
         # Direction of travel decides the swap animation; no direction = fade.
         "anim": {"next": "slide-next", "prev": "slide-prev"}.get(direction, "fade"),
         "nav": {
@@ -288,7 +303,7 @@ def home(request):
                       (("month", "Mes"), ("fortnight", "Quincena"), ("week", "Semana"))],
         },
     }
-    template = "packages/_calendar.html" if request.headers.get("HX-Request") else "packages/calendar.html"
+    template = "packages/_calendar.html" if wants_fragment(request) else "packages/calendar.html"
     return render(request, template, context)
 
 

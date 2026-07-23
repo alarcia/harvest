@@ -1,0 +1,16 @@
+{% extends "packages/base.html" %}
+
+{% block title %}Harvest · Reseñas{% endblock %}
+{% block body_class %}app-page{% endblock %}
+
+{% block body %}
+  <div class="app-shell">
+    {% include "packages/_topbar.html" with active_nav="reviews" vencidas_count=vencidas_count %}
+    {% include "reviews/_reviews.html" %}
+    {% comment %}Landing slot for detail modals; outside the swapped fragment
+    so the toggle/nav never wipes an open card. Shared id (#modal) with the
+    calendar shell so a card opens whichever page is the outer document after
+    a nav-pill swap.{% endcomment %}
+    <div id="modal" class="modal-slot"></div>
+  </div>
+{% endblock %}

@@ -1,0 +1,30 @@
+{# Read-only detail card for a review (any status), swapped into #modal. #}
+<div class="modal-back" onclick="if (event.target === this) closeModal(this)">
+  <div class="modal-card">
+    <button type="button" class="modal-x" aria-label="Cerrar" onclick="closeModal(this)">×</button>
+    <div class="modal-head">
+      {% if review.package.image_url %}
+        <img class="modal-thumb" src="{{ review.package.image_url }}" alt="">
+      {% endif %}
+      <h2>{{ review.product_title|default:"Producto desconocido" }}</h2>
+    </div>
+    <div class="modal-rows">
+      <span>
+        <b>Estado</b> {{ status_label }}
+        {% if review.is_vine %} · <i class="vine-badge">Vine</i>{% endif %}
+      </span>
+      {% if review.title %}<span><b>Título de la reseña</b> «{{ review.title }}»</span>{% endif %}
+      {% if review.rating %}<span><b>Puntuación</b> {{ review.rating }}★</span>{% endif %}
+      {% if review.approved_on %}<span><b>Aprobada</b> el {{ review.approved_on|date:"j" }} de {{ review.approved_on|date:"F" }}</span>{% endif %}
+      {% if review.published_on %}<span><b>Publicada</b> el {{ review.published_on|date:"j" }} de {{ review.published_on|date:"F" }}</span>{% endif %}
+    </div>
+    {% if review.text %}
+      <p class="review-text">{{ review.text|linebreaksbr }}</p>
+      {% if not review.text_is_complete %}
+        <p class="review-origin">Origen: email (incompleta)</p>
+      {% endif %}
+    {% else %}
+      <p class="review-text review-text-empty">Sin texto guardado.</p>
+    {% endif %}
+  </div>
+</div>

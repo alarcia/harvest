@@ -16,6 +16,7 @@
       --danger: #b3402e;
       --amazon: #33658a;
       --store: #7d4a94;
+      --success: #4a7c59;
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -28,6 +29,7 @@
         --danger: #e0705a;
         --amazon: #85b0d1;
         --store: #bb93cf;
+        --success: #7fb88f;
       }
     }
     * { box-sizing: border-box; }
@@ -108,7 +110,269 @@
       font-size: .8rem;
     }
     .back { display: block; text-align: center; margin-top: 1.5rem; font-size: .9rem; }
+
+    /* ---- shared app shell: full-screen chrome for the calendar and the
+       reviews module, so switching between them never touches this markup,
+       only the content slot beneath it (#app-view). ---- */
+    .app-shell {
+      height: 100vh;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .app-topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: .6rem .9rem .2rem;
+    }
+    .app-topbar .brand {
+      display: flex;
+      align-items: center;
+      gap: .45rem;
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      text-decoration: none;
+      color: inherit;
+    }
+    .app-topbar .brand img { height: 1.5rem; width: auto; }
+    .app-topbar .left { display: flex; align-items: center; gap: .35rem; }
+    .app-topbar .nav-link {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: .3rem;
+      padding: .2rem .55rem .2rem .4rem;
+      border-radius: 999px;
+      font-size: .68rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-decoration: none;
+      opacity: .6;
+      transition: transform .35s ease, opacity .2s ease, background .2s ease, color .2s ease;
+    }
+    .app-topbar .nav-link .ico { display: inline-block; transition: transform .35s ease; }
+    .app-topbar .nav-link:hover,
+    .app-topbar .nav-link.active {
+      opacity: 1;
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      text-decoration: none;
+    }
+    .app-topbar .nav-link:hover .ico { transform: rotate(-18deg) scale(1.15); }
+    /* Superscript nag badge (vencidas count) riding the top-right corner of
+       the "Reseñas" pill; absent when there's nothing overdue. */
+    .app-topbar .nav-link .badge {
+      position: absolute;
+      top: -.3rem;
+      right: -.35rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 1.05rem;
+      height: 1.05rem;
+      padding: 0 .3rem;
+      border-radius: 999px;
+      background: var(--danger);
+      color: #fff;
+      font-size: .62rem;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .app-topbar .add {
+      display: grid;
+      place-items: center;
+      width: 2rem;
+      height: 2rem;
+      border-radius: 50%;
+      background: var(--accent);
+      color: var(--card);
+      font-size: 1.3rem;
+      line-height: 1;
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .app-topbar .add:hover { text-decoration: none; }
+    /* Smallest phones (iPhone SE class, ~375px): three pills plus the brand
+       and the + button don't fit with labels. Icons stay tappable with an
+       aria-label; everything from ~400px up keeps reading normally. */
+    @media (max-width: 399.98px) {
+      .app-topbar .nav-link { padding: .3rem .4rem; }
+      .app-topbar .nav-link .label { display: none; }
+    }
+
+    /* ---- shared detail modal (calendar package cards, review cards) ---- */
+    .modal-back {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      display: grid;
+      place-items: center;
+      padding: 1rem;
+      background: rgba(0, 0, 0, .45);
+      animation: back-in .22s ease-out both;
+    }
+    .modal-card {
+      position: relative;
+      width: 100%;
+      max-width: 22rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.1rem 1.25rem 1.25rem;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, .25);
+      animation: card-in .34s cubic-bezier(.2, 1.4, .4, 1) both;
+    }
+    /* Card-for-card swaps keep the backdrop still; only a fresh open fades
+       it in. Closing plays the exit before removal. */
+    body.modal-open .modal-back:not(.closing) { animation: none; }
+    .modal-back.closing { animation: back-out .16s ease-in forwards; }
+    .modal-back.closing .modal-card { animation: card-out .16s ease-in forwards; }
+    @keyframes back-in { from { opacity: 0; } }
+    @keyframes back-out { to { opacity: 0; } }
+    @keyframes card-in { from { opacity: 0; transform: translateY(18px) scale(.95); } }
+    @keyframes card-out { to { opacity: 0; transform: translateY(10px) scale(.97); } }
+    .modal-card .modal-x {
+      position: absolute;
+      top: .3rem;
+      right: .45rem;
+      width: 2rem;
+      margin: 0;
+      padding: 0;
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 1.5rem;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .modal-card .modal-prev {
+      position: absolute;
+      top: .3rem;
+      left: .45rem;
+      width: 2rem;
+      margin: 0;
+      padding: 0;
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 1.6rem;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .modal-prev ~ .modal-head { margin-left: 1.5rem; }
+    .modal-head {
+      display: flex;
+      align-items: flex-start;
+      gap: .75rem;
+      margin: 0 1.2rem .55rem 0;
+    }
+    .modal-thumb {
+      flex: none;
+      width: 3.5rem;
+      height: 3.5rem;
+      object-fit: contain;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+    }
+    .modal-head h2 { margin: 0; font-size: .95rem; line-height: 1.35; }
+    .modal-point { margin: 0 0 .65rem; font-size: .8rem; font-weight: 600; }
+    .modal-point.amazon { color: var(--amazon); }
+    .modal-point.store { color: var(--store); }
+    .modal-rows { display: grid; gap: .3rem; font-size: .82rem; }
+    .modal-rows b { font-weight: 600; color: var(--muted); }
+    .vine-badge {
+      font-style: normal;
+      font-size: .7rem;
+      font-weight: 700;
+      color: var(--accent);
+      border: 1px solid var(--accent);
+      border-radius: 999px;
+      padding: 0 .45rem;
+    }
+    .modal-code {
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: .08em;
+      font-variant-numeric: tabular-nums;
+    }
+    .modal-barcode { display: inline-block; margin-top: .85rem; font-size: .9rem; }
+
+    @keyframes row-in { from { opacity: 0; transform: translateY(8px); } }
+
+    @media (prefers-reduced-motion: reduce) {
+      .modal-back, .modal-card { animation: none !important; }
+    }
   </style>
+  <script src="{% static 'packages/htmx.min.js' %}" defer></script>
+  <script>
+    // htmx caches restored pages in sessionStorage, keyed by its own
+    // "current path" bookkeeping entry — also in sessionStorage. If that
+    // entry is lost mid-session (iOS Safari purges a backgrounded tab's
+    // storage; the cache also just holds the last 10 pages) but the
+    // history entries themselves survive (they're browser-level, not
+    // storage), htmx resolves the save-key from the *already-updated*
+    // location on the next back/forward, silently caching the pre-swap DOM
+    // under the page it's actually navigating to. It then "finds" that
+    // entry and calls it a cache hit — restoring the wrong content with no
+    // server round-trip at all, so nothing server-side can catch it (verified
+    // against real htmx 2.0.7 behavior 2026-07-23; see reviews/views.py).
+    // Disabling the cache outright makes every back/forward re-fetch from
+    // the server instead — imperceptible on this app's scale, and it's the
+    // only way to guarantee what's shown always matches the URL. Deferred
+    // to DOMContentLoaded: htmx.min.js is itself `defer`red, and (unlike
+    // external scripts) that doesn't reliably order an inline script after
+    // it — `htmx` isn't guaranteed to exist yet at this script's own
+    // top level, only by DOMContentLoaded, which every deferred script
+    // is guaranteed to precede.
+    //
+    // The explicit removeItem matters for *existing* tabs: sessionStorage
+    // survives a reload — even a hard Cmd+Shift+R — so any stale fragment
+    // cached under the old code would otherwise keep being restored until
+    // the tab is closed. Wiping it here makes the fix take hold the moment
+    // this new code first runs, not only in freshly opened tabs.
+    document.addEventListener('DOMContentLoaded', () => {
+      htmx.config.historyCacheSize = 0;
+      try { sessionStorage.removeItem('htmx-history-cache'); } catch (e) {}
+    });
+
+    // Modal choreography, shared by the single #modal slot both the
+    // calendar and reviews shells provide: closing animates out before the
+    // node leaves the DOM, and swapping card-for-card keeps the backdrop
+    // still instead of re-fading it.
+    function closeModal(el) {
+      const back = el.closest('.modal-back');
+      if (!back || back.classList.contains('closing')) return;
+      document.body.classList.remove('modal-open');
+      back.classList.add('closing');
+      setTimeout(() => back.remove(), 170);
+    }
+    document.addEventListener('htmx:beforeSwap', (e) => {
+      if (e.target.matches('.modal-slot')) {
+        document.body.classList.toggle('modal-open',
+          !!e.target.querySelector('.modal-back:not(.closing)'));
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        const back = document.querySelector('.modal-slot .modal-back');
+        if (back) closeModal(back);
+      }
+    });
+
+    // The topbar sits outside #app-view, so it never re-fetches when a nav
+    // pill swaps sections — just re-mark which one is active client-side.
+    function syncNav() {
+      document.querySelectorAll('.app-topbar .nav-link[hx-get]').forEach((a) => {
+        a.classList.toggle('active', a.getAttribute('href') === location.pathname);
+      });
+    }
+    document.addEventListener('DOMContentLoaded', syncNav);
+    document.addEventListener('htmx:afterSwap', syncNav);
+  </script>
   {% block head %}{% endblock %}
 </head>
 <body class="{% block body_class %}card-page{% endblock %}">

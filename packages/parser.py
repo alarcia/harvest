@@ -42,8 +42,8 @@ class EmailKind(Enum):
     ORDERED/SHIPPED/OUT_FOR_DELIVERY are all `in_transit`; READY_FOR_PICKUP
     is `awaiting_pickup`; NO_LONGER_AVAILABLE and PICKUP_REMINDER drive *no*
     transition (the first is misleading, the second is a nag about a package
-    already waiting — both change nothing); REVIEW_PUBLISHED never touches the
-    calendar (reviews, out of scope)."""
+    already waiting — both change nothing); REVIEW_PUBLISHED never touches
+    the calendar, but does drive the `reviews` app (see `packages.ingest`)."""
 
     ORDERED = "ordered"
     SHIPPED = "shipped"
@@ -95,6 +95,10 @@ class ParsedEmail:
     temp_password: str | None = None  # home-delivery one-time password
     picked_up_on: date | None = None
     review_id: str | None = None
+    review_headline: str | None = None  # the review's own title
+    review_rating: int | None = None  # 1-5, decoded from the star image name
+    review_excerpt: str | None = None  # truncated body preview only — see
+    # Review.text_is_complete: the email never carries the full text
 
     @property
     def is_vine(self):
@@ -146,7 +150,9 @@ _REQUIRED = {
     EmailKind.DELIVERED: ("order_id", "sent_at"),
     EmailKind.NO_LONGER_AVAILABLE: ("order_id",),
     EmailKind.PICKUP_REMINDER: (),  # informational nag: recognize it, ignore it
-    EmailKind.REVIEW_PUBLISHED: (),
+    # item_title/review_id are the matching keys the reviews module needs
+    # (audited against fixture 010: both are always present).
+    EmailKind.REVIEW_PUBLISHED: ("item_title", "review_id"),
 }
 
 # Bidi embeddings (Amazon wraps order numbers in RTL marks), zero-widths,
@@ -176,6 +182,11 @@ _ORDER_LINE = re.compile(r"^Pedido n")
 # Noise between the pickup-point line and "Pedido n.º": opening hours.
 _NOISE_LINE = re.compile(r"^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$|^[\w\sñáéíóúü-]+:$",
                          re.IGNORECASE)
+# The star rating isn't printed as text — it's the filename of the star-row
+# image (audited fixture 010: "star_lightmode_4.png" / the dark-mode twin).
+_STAR_RATING = re.compile(r"star_(?:light|dark)mode_(\d)\.png")
+_REVIEW_LABEL = "Tu opinión"
+_VIEW_FULL_REVIEW = "Vea su reseña completa"
 
 
 def _text_lines(html):
@@ -251,6 +262,28 @@ def _items(soup):
     return tuple(items)
 
 
+def _review_headline_and_excerpt(lines):
+    """The review's own headline and its truncated body preview, out of the
+    "Tu opinión" block. The excerpt repeats at more than one truncation
+    length in the same email (different client/breakpoint renderings of the
+    same paragraph) — keep the longest, which carries the most text."""
+    try:
+        idx = lines.index(_REVIEW_LABEL)
+    except ValueError:
+        return None, None
+    block = lines[idx + 1:]
+    try:
+        block = block[:block.index(_VIEW_FULL_REVIEW)]
+    except ValueError:
+        pass
+    if not block:
+        return None, None
+    headline = block[0]
+    body_lines = [line for line in block[1:] if line != headline]
+    excerpt = max(body_lines, key=len) if body_lines else None
+    return headline, excerpt
+
+
 def _barcode_url(soup):
     img = soup.find("img", alt="Pickup barcode")
     return _clean_img_url(img["src"]) if img and img.get("src") else None
@@ -307,6 +340,8 @@ def parse_email(raw):
     if before is None and (match := _BEFORE.search(subject)):
         before = match.group(1)
     picked = _first_line_match(_PICKED, lines)
+    review_headline, review_excerpt = _review_headline_and_excerpt(lines)
+    star_match = _STAR_RATING.search(html)
 
     parsed = ParsedEmail(
         kind=kind,
@@ -327,6 +362,9 @@ def parse_email(raw):
         temp_password=match.group(1) if (match := _TEMP_PASSWORD.search(haystack)) else None,
         picked_up_on=_resolve_date(picked, sent_at) if picked else None,
         review_id=match.group(1) if (match := _REVIEW_ID.search(urls)) else None,
+        review_headline=review_headline,
+        review_rating=int(star_match.group(1)) if star_match else None,
+        review_excerpt=review_excerpt,
     )
 
     missing = [name for name in _REQUIRED[kind] if getattr(parsed, name) is None]
