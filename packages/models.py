@@ -1,4 +1,57 @@
+from decimal import Decimal
+
 from django.db import models
+
+
+class Config(models.Model):
+    """Single-row table for the few numbers that must change without a deploy.
+
+    Always read through `load()`, which creates the row on first use, so
+    nothing has to seed it and a fresh database behaves like a configured one.
+    """
+
+    # Sellers outside the EU are charged a fixed EU import duty and, in
+    # practice, all of them pass it on to the buyer — so since 2026 a *free*
+    # Vine order can print this exact amount instead of 0.00€ (see
+    # `means_vine`). The figure is legislation, not code: it will change, hence
+    # this row rather than a constant.
+    eu_import_surcharge = models.DecimalField(
+        max_digits=6, decimal_places=2, default=Decimal("3.63"),
+        help_text="Recargo aduanero de la UE que los vendedores de fuera de la "
+                  "Unión repercuten al cliente. Un pedido Vine con recargo "
+                  "cuesta exactamente esta cifra en el correo de envío en lugar "
+                  "de 0,00€. Ponlo a 0 para desactivar la excepción.",
+    )
+
+    class Meta:
+        verbose_name = "configuración"
+        verbose_name_plural = "configuración"
+
+    def __str__(self):
+        return "Configuración"
+
+    @classmethod
+    def load(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def means_vine(self, total):
+        """Does this order total, as printed by Amazon, mean "free Vine item"?
+
+        0.00€ is the classic signal (weak on the Pedido email, authoritative on
+        the Enviado — see ingest._apply_cost). The second case is the EU import
+        surcharge: a Vine order from a seller outside the Union costs the user
+        exactly that surcharge and nothing else, so the total reads e.g. 3.63€
+        on an item that is still free. Any *other* amount is a real purchase.
+
+        A paid order that happens to cost exactly the surcharge would be
+        misread — accepted: `is_vine` stays editable in the admin, and the
+        alternative (missing every surcharged Vine review) is worse.
+        """
+        if total is None:
+            return False
+        return total == 0 or (self.eu_import_surcharge > 0
+                              and total == self.eu_import_surcharge)
 
 
 class PickupPoint(models.Model):
@@ -93,7 +146,8 @@ class Package(models.Model):
     picked_up_on = models.DateField(null=True, blank=True)
 
     # Vine (free-in-exchange-for-a-review) items are flagged at ingestion from
-    # a cost of €0.00; for now the flag is all the calendar needs.
+    # the printed total (€0.00, or exactly the EU import surcharge — see
+    # Config.means_vine); for now the flag is all the calendar needs.
     is_vine = models.BooleanField(default=False)
     cost = models.DecimalField(max_digits=6, decimal_places=2, default=0)
 

@@ -1,6 +1,21 @@
 from django.contrib import admin
 
-from .models import Package, PickupPoint, RawEmail
+from .models import Config, Package, PickupPoint, RawEmail
+
+
+@admin.register(Config)
+class ConfigAdmin(admin.ModelAdmin):
+    """One row, always pk=1 (see Config.load). Adding a second or deleting the
+    only one would leave ingestion reading a different row than the user edits,
+    so both are off."""
+
+    list_display = ("__str__", "eu_import_surcharge")
+
+    def has_add_permission(self, request):
+        return not Config.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(PickupPoint)

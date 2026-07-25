@@ -40,7 +40,7 @@ from django.utils import timezone
 
 from reviews.models import Review
 
-from .models import Package, PickupPoint, RawEmail
+from .models import Config, Package, PickupPoint, RawEmail
 from .parser import EmailKind, ParseError, parse_email
 
 logger = logging.getLogger("packages.ingest")
@@ -201,15 +201,20 @@ def _apply_cost(pkg, parsed, *, authoritative):
     A Vine order and a paid order settled with Amazon balance BOTH print
     "Total 0.00€" on the *Pedido* email — indistinguishable there. Only the
     *Enviado* email prints the real amount (the colchón: 0.00€ ordered,
-    19.98€ shipped). So: assume Vine from a 0.00€ order, then let the shipped
+    19.98€ shipped). So: assume Vine from a free order, then let the shipped
     email confirm or refute it. The shipped total is `authoritative` and a
     later-processed Pedido (re-forward, out-of-order delivery) must not
-    clobber it — guarded by shipped_on."""
+    clobber it — guarded by shipped_on.
+
+    "Free" is not always 0.00€: a Vine item from a seller outside the EU
+    carries the import surcharge, and that is the whole total the user pays.
+    Config.means_vine owns that rule; `cost` still records what was really
+    charged."""
     if parsed.total is None:
         return
     if authoritative or not pkg.shipped_on:
         pkg.cost = parsed.total
-        pkg.is_vine = parsed.total == 0
+        pkg.is_vine = Config.load().means_vine(parsed.total)
 
 
 def _sync_review_for_vine(pkg):
@@ -356,8 +361,14 @@ def _apply(parsed):
         _apply_cost(pkg, parsed, authoritative=(kind == EmailKind.SHIPPED))
         pkg.save()
         notes = []
-        if kind == EmailKind.SHIPPED and was_vine and not pkg.is_vine:
-            notes.append(f"Coste real {parsed.total}€ en el envío: desmarcado como Vine")
+        if kind == EmailKind.SHIPPED and parsed.total:
+            # A non-zero shipped total is the interesting case: it either
+            # refutes Vine (real purchase) or is just the EU import surcharge
+            # on a still-free item. Say which, the log is the audit trail.
+            if pkg.is_vine:
+                notes.append(f"Recargo UE de {parsed.total}€ en el envío: sigue siendo Vine")
+            elif was_vine:
+                notes.append(f"Coste real {parsed.total}€ en el envío: desmarcado como Vine")
         review_note = _sync_review_for_vine(pkg)
         if review_note:
             notes.append(review_note)

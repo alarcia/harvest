@@ -90,8 +90,10 @@ class ParsedEmail:
     # "the box this specific Enviado is about"
     items: tuple = ()
     pickup_location: str | None = None
-    total: Decimal | None = None  # order total as printed; 0.00 ⇒ Vine (weak
-    # signal: a paid order settled with gift balance also prints 0.00)
+    total: Decimal | None = None  # order total exactly as printed. Whether it
+    # means "Vine" is not the parser's call — 0.00 is a weak signal (a paid
+    # order settled with gift balance also prints 0.00) and the EU import
+    # surcharge makes a free item cost money: see models.Config.means_vine.
     estimated_arrival: date | None = None
     estimated_arrival_end: date | None = None  # set only when the email gave a
     # window ("Llegada entre el 24 y el 28 de julio"): estimated_arrival is its
@@ -106,10 +108,6 @@ class ParsedEmail:
     review_rating: int | None = None  # 1-5, decoded from the star image name
     review_excerpt: str | None = None  # truncated body preview only — see
     # Review.text_is_complete: the email never carries the full text
-
-    @property
-    def is_vine(self):
-        return self.total is not None and self.total == 0
 
     @property
     def item_title(self):

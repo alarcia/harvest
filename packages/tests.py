@@ -20,7 +20,7 @@ from django.utils.formats import date_format
 from reviews.models import Review
 
 from .ingest import backfill_reviews, process_message, reprocess_failures, scan_inbox
-from .models import Package, PickupPoint, RawEmail
+from .models import Config, Package, PickupPoint, RawEmail
 from .parser import EmailKind, ParseError, _resolve_date, parse_email
 from .views import _estimate_line, _estimate_note
 
@@ -75,7 +75,6 @@ class ParseEmailTests(SimpleTestCase):
         # "Llega el lunes", sent Wednesday July 1st -> Monday July 6th.
         self.assertEqual(parsed.estimated_arrival, date(2026, 7, 6))
         self.assertEqual(parsed.total, Decimal("0.00"))
-        self.assertTrue(parsed.is_vine)
         self.assertEqual(parsed.asin, "B0GXK1FPTY")
         self.assertTrue(
             parsed.item_title.startswith("Cargador Inalámbrico Magnético 25W")
@@ -92,7 +91,7 @@ class ParseEmailTests(SimpleTestCase):
         self.assertEqual(parsed.shipment_id, "TnzBz0Vk4")
         self.assertEqual(parsed.sent_at.date(), date(2026, 7, 2))
         self.assertEqual(parsed.estimated_arrival, date(2026, 7, 6))
-        self.assertTrue(parsed.is_vine)
+        self.assertEqual(parsed.total, Decimal("0.00"))
 
     def test_ready_for_pickup(self):
         parsed = parse_email(
@@ -243,8 +242,17 @@ class ParseEmailTests(SimpleTestCase):
         self.assertEqual(parsed.kind, EmailKind.SHIPPED)
         self.assertEqual(parsed.order_id, "408-3509044-1782749")
         self.assertEqual(parsed.total, Decimal("19.98"))
-        self.assertFalse(parsed.is_vine)
         self.assertEqual(parsed.shipment_id, "TgvslGX9H")
+
+    def test_shipped_vine_with_eu_import_surcharge(self):
+        # A Vine item from a seller outside the EU: the Pedido printed 0.00€,
+        # the Enviado prints the bare import surcharge (3.63€) — still free
+        # in the sense that matters, still owes a review. See Config.means_vine.
+        parsed = parse_email(
+            fixture("106-enviado-ones-funda-magnetica-para-galaxy-s26-recargo-ue.eml"))
+        self.assertEqual(parsed.kind, EmailKind.SHIPPED)
+        self.assertEqual(parsed.order_id, "404-2171566-7826720")
+        self.assertEqual(parsed.total, Decimal("3.63"))
 
     def test_picked_up_multi_product(self):
         # "Se han recogido 4 productos": same body headline as the single
@@ -795,6 +803,37 @@ class IngestTests(TestCase):
         self.assertEqual(pkg.cost, Decimal("19.98"))
         self.assertEqual(pkg.shipment_id, "TgvslGX9H")
         self.assertIn("Vine", record.note)
+
+    def test_eu_import_surcharge_keeps_vine(self):
+        # Real case (order 404-2171566-7826720): Pedido 0.00€ → assumed Vine;
+        # the Enviado prints 3.63€, which is only the EU import duty the
+        # non-EU seller passes on — the item itself is still free, so the
+        # package stays Vine (and keeps owing a review) instead of being
+        # refuted like the colchón above.
+        process_message(fixture("095-pedido-ones-funda-magnetica-para-galaxy-s26.eml"))
+        pkg = Package.objects.get()
+        self.assertTrue(pkg.is_vine)
+
+        record, _ = process_message(
+            fixture("106-enviado-ones-funda-magnetica-para-galaxy-s26-recargo-ue.eml"))
+        self.assertEqual(Package.objects.count(), 1)
+        pkg.refresh_from_db()
+        self.assertTrue(pkg.is_vine)
+        self.assertEqual(pkg.cost, Decimal("3.63"))  # what was really charged
+        self.assertIn("Recargo UE", record.note)
+        self.assertEqual(Review.objects.filter(package=pkg).count(), 1)
+
+    def test_eu_import_surcharge_amount_comes_from_config(self):
+        # The figure is legislation: it changes, so it lives in the database.
+        # Raise it and the old amount stops meaning Vine.
+        config = Config.load()
+        config.eu_import_surcharge = Decimal("4.50")
+        config.save()
+        process_message(
+            fixture("106-enviado-ones-funda-magnetica-para-galaxy-s26-recargo-ue.eml"))
+        pkg = Package.objects.get()
+        self.assertFalse(pkg.is_vine)
+        self.assertEqual(pkg.cost, Decimal("3.63"))
 
     def test_shipped_first_out_of_order_does_not_get_reflagged(self):
         # Enviado processed before its Pedido (re-forward / racing delivery):
