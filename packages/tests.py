@@ -439,16 +439,47 @@ class IngestTests(TestCase):
         self.assertEqual(pkg.order_id, "404-2171566-7826720")
         self.assertTrue(pkg.description.startswith("ONES Funda Magnética"))
 
-    def test_amazon_tracking_url_only_offered_for_carrier_pickups(self):
-        # A normal Amazon Counter pickup already has everything it needs
-        # (deadline, pickup code, barcode) — the Amazon tracking link exists
-        # only for the one case that has nothing else: a carrier pickup.
+    def test_amazon_tracking_url_offered_for_every_amazon_package(self):
+        # It's no longer a carrier-only escape hatch: any Amazon package, in
+        # any state, links to its own tracker (it opens the Amazon app).
         point = PickupPoint.objects.create(
             name="Amazon Counter - Test", kind=PickupPoint.Kind.AMAZON_COUNTER,
         )
         pkg = Package.objects.create(
             pickup_point=point, order_id="404-1111111-1111111",
             shipment_id="AAAA111111", state=Package.State.AWAITING_PICKUP,
+        )
+        self.assertEqual(
+            pkg.amazon_tracking_url,
+            "https://www.amazon.es/progress-tracker/package"
+            "?_encoding=UTF8&orderId=404-1111111-1111111"
+            "&packageIndex=0&shipmentId=AAAA111111",
+        )
+
+    def test_amazon_tracking_url_falls_back_to_the_order_page(self):
+        # Emails that carry only an order number (a consolidated pickup, a
+        # Pedido not yet shipped) leave no shipment id to pin the box, so the
+        # link degrades to the order page instead of disappearing.
+        point = PickupPoint.objects.create(
+            name="Amazon Locker - Test", kind=PickupPoint.Kind.AMAZON_LOCKER,
+        )
+        pkg = Package.objects.create(
+            pickup_point=point, order_id="407-2753653-0825928",
+            state=Package.State.PICKED_UP,
+        )
+        self.assertEqual(
+            pkg.amazon_tracking_url,
+            "https://www.amazon.es/gp/your-account/order-details"
+            "?_encoding=UTF8&orderID=407-2753653-0825928",
+        )
+
+    def test_alt_store_package_has_no_amazon_link(self):
+        # Manual, non-Amazon rows: no order number, nothing to link to.
+        point = PickupPoint.objects.create(
+            name="Tienda alternativa", kind=PickupPoint.Kind.ALT_STORE,
+        )
+        pkg = Package.objects.create(
+            pickup_point=point, state=Package.State.AWAITING_PICKUP,
         )
         self.assertEqual(pkg.amazon_tracking_url, "")
 

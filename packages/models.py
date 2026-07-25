@@ -129,22 +129,30 @@ class Package(models.Model):
 
     @property
     def amazon_tracking_url(self):
-        """Direct link to Amazon's own order-tracking page — simplified from
+        """Direct link to Amazon's own page for this package — simplified from
         the "Seguimiento del envío" button in the email, which wraps this
         same destination in a one-time click-tracking redirect
         (gp/r.html?...&U=<this, url-encoded>&...) that isn't worth storing.
-        Only offered for a carrier pickup (2026-07-24): that's the one
-        situation with no other way to check status, since neither the
-        deadline nor the office ever came from the email — see
-        carrier_tracking_url."""
-        if self.pickup_point.kind != PickupPoint.Kind.CARRIER:
+
+        Offered on every Amazon package whatever its state (2026-07-25): it
+        started life as the carrier pickup's only way to check status, but the
+        link is just as useful anywhere — it opens the Amazon app on the phone.
+        Built from ids we already store, so nothing new has to be collected.
+        The tracker needs the shipment id to pin the box; the emails that only
+        carry an order number (a consolidated "Se ha recogido", a Pedido not
+        yet shipped) fall back to the order page, which is one tap away from
+        the same tracking. Alt-store packages have no order id and no link."""
+        if not self.pickup_point.is_amazon or not self.order_id:
             return ""
-        if not (self.order_id and self.shipment_id):
-            return ""
+        if self.shipment_id:
+            return (
+                "https://www.amazon.es/progress-tracker/package"
+                f"?_encoding=UTF8&orderId={self.order_id}"
+                f"&packageIndex=0&shipmentId={self.shipment_id}"
+            )
         return (
-            "https://www.amazon.es/progress-tracker/package"
-            f"?_encoding=UTF8&orderId={self.order_id}"
-            f"&packageIndex=0&shipmentId={self.shipment_id}"
+            "https://www.amazon.es/gp/your-account/order-details"
+            f"?_encoding=UTF8&orderID={self.order_id}"
         )
 
 
