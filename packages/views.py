@@ -6,6 +6,7 @@ from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.formats import date_format
 
 from reviews.models import Review
 
@@ -22,6 +23,9 @@ VIEW_WEEKS = {"week": 1, "fortnight": 2}
 #   ordered            — order placed ("Pedido" email). Hollow dot, no box.
 #   shipped             — shipping notice ("Enviado"). Filled dot, no box.
 #   estimated           — tentative arrival ("Llega el lunes"). Dashed box; gone once it lands.
+#                         Never sits in the past: an estimate Amazon missed
+#                         rides on today until the package really arrives
+#                         (see _effective_estimate), with a note saying why.
 #   deadline_estimated,
 #   leaves_estimated    — forecast of the last-safe/"antes del" days, from the
 #                         estimated arrival plus the pickup point's observed
@@ -81,15 +85,88 @@ _PREVIEW_GRACE_DAYS = {
 }
 
 
-def _preview_leaves_day(pkg):
+def _effective_estimate(pkg, today):
+    """The day an in-transit package's arrival is *currently* expected: the
+    estimate the email gave, or today once that day has come and gone.
+
+    An estimate is a promise, not a fact, and it slips — Amazon missed the
+    single day it named, or the "Pedido" gave a window ("Llegada entre el 24
+    de julio y el 28 de julio", fixture 023) whose first day passed with
+    nothing at the point. The package is still on its way either way, so the
+    mark rides on today instead of sitting in the past: a stale estimate on a
+    past day is both a claim we know to be false and effectively invisible,
+    since the board is read forwards. Same grammar as "leaves", which already
+    rides on today once the deadline passes unconfirmed.
+
+    Only in_transit packages get this — an arrival that actually happened is a
+    fact with its own date."""
+    if not pkg.estimated_arrival:
+        return None
+    return max(pkg.estimated_arrival, today)
+
+
+def _estimate_note(pkg, today):
+    """The parenthetical on an "Estimado" chip that has moved onto today, so
+    it can't be read as a promise that the package lands today — the mistake
+    that would send the user on a wasted trip. Empty while the estimate still
+    sits where the email put it."""
+    if not pkg.estimated_arrival or today <= pkg.estimated_arrival:
+        return ""
+    end = pkg.estimated_arrival_end
+    if end and today <= end:
+        return f"hasta el {_short_day(end)}"
+    return "con retraso"
+
+
+def _preview_leaves_day(pkg, today):
     """The forecasted "antes del" day for an in-transit package at a pickup
     point with a known grace window, or None. A guess from the estimated
     arrival — never a substitute for the real deadline once it's read from
-    the "Entregado" email."""
+    the "Entregado" email.
+
+    Hangs off the *effective* estimate, so it moves with it: a forecast built
+    on an arrival day we no longer believe would put red dashed boxes in the
+    past, which is the same incongruence one step further down the chain."""
     grace = _PREVIEW_GRACE_DAYS.get(pkg.pickup_point.kind)
-    if not (pkg.estimated_arrival and grace):
+    arrival = _effective_estimate(pkg, today)
+    if not (arrival and grace):
         return None
-    return pkg.estimated_arrival + timedelta(days=grace)
+    return arrival + timedelta(days=grace)
+
+
+def _short_day(day):
+    """"28 jul" — a chip-sized day. The month is never dropped: a window can
+    cross into the next one, and "hasta el 2" for a 28-July-to-2-August window
+    reads as a day already past."""
+    return date_format(day, r"j b")
+
+
+def _long_day(day):
+    """"viernes 24 de julio" — the card's spelling, weekday included: the user
+    plans a trip by day of the week. Month always spelled out, on both ends of
+    a window, for the same reason _short_day keeps it."""
+    return date_format(day, r"l j \d\e F")
+
+
+def _estimate_line(pkg, today):
+    """The card's "Llegada estimada" value, or "" when there's nothing to say.
+
+    Four readings of the same two fields, so the sentence never claims more
+    than the email did: a single named day, a window still ahead, a window
+    already running ("entre hoy y el…"), and either of them overrun, where it
+    switches to the past tense and admits the delay."""
+    start, end = pkg.estimated_arrival, pkg.estimated_arrival_end
+    if not start:
+        return ""
+    if end and today > end:
+        return f"se esperaba entre el {_long_day(start)} y el {_long_day(end)} · con retraso"
+    if end and today > start:
+        return f"entre hoy y el {_long_day(end)}"
+    if end:
+        return f"entre el {_long_day(start)} y el {_long_day(end)}"
+    if today > start:
+        return f"se esperaba el {_long_day(start)} · con retraso"
+    return _long_day(start)
 
 _STATE_LABELS = {
     Package.State.IN_TRANSIT: "En camino",
@@ -157,18 +234,22 @@ def _marks(pkg, today):
         elif pkg.ordered_on:
             fact_day, fact_kind = pkg.ordered_on, "ordered"
         marks = []
+        est_day = _effective_estimate(pkg, today)
         # Ship and estimated arrival on the *same* day ("Enviado hoy, llega
         # hoy", the rare same-day delivery): one chip that says both, so the
         # arrival still shows where the user looks for it instead of vanishing.
-        if pkg.estimated_arrival and pkg.estimated_arrival == fact_day:
+        # Only while the estimate still sits where the email put it
+        # (`est_day == pkg.estimated_arrival`): one that slipped onto today is
+        # a different, weaker statement and keeps its own chip to say so.
+        if est_day and est_day == pkg.estimated_arrival == fact_day:
             note = "llega hoy" if fact_day == today else "llega el mismo día"
             marks.append((fact_day, fact_kind, note))
         else:
             if fact_kind:
                 marks.append((fact_day, fact_kind, ""))
-            if pkg.estimated_arrival:
-                marks.append((pkg.estimated_arrival, "estimated", ""))
-        leaves_day = _preview_leaves_day(pkg)
+            if est_day:
+                marks.append((est_day, "estimated", _estimate_note(pkg, today)))
+        leaves_day = _preview_leaves_day(pkg, today)
         if leaves_day:
             marks.append((leaves_day - timedelta(days=1), "deadline_estimated", "estimado"))
             marks.append((leaves_day, "leaves_estimated", "estimado"))
@@ -410,6 +491,8 @@ def _package_card(request, pkg, back_day):
     """Renders the package card. Shared by the tapped chip and by the manual
     pickup confirmation, which lands back on the very same card."""
     point = pkg.pickup_point
+    today = timezone.localdate()
+    in_transit = pkg.state == Package.State.IN_TRANSIT
     return render(request, "packages/_package_detail.html", {
         "package": pkg,
         "label": _label(pkg),
@@ -417,10 +500,14 @@ def _package_card(request, pkg, back_day):
         "source": ("store" if point.kind == PickupPoint.Kind.ALT_STORE
                    else "amazon"),
         "state_label": _state_label(pkg),
+        # The card is where the delivery window gets spelled out in full: the
+        # chip only has room to say "Estimado", so this is the one place the
+        # user can see what Amazon actually promised.
+        "estimate_line": _estimate_line(pkg, today) if in_transit else "",
         # Only meaningful while in_transit: once the real "Entregado" email
         # sets pkg.deadline, that's what the card shows instead.
-        "preview_leaves_day": (_preview_leaves_day(pkg)
-                                if pkg.state == Package.State.IN_TRANSIT else None),
+        "preview_leaves_day": (_preview_leaves_day(pkg, today)
+                                if in_transit else None),
         "can_confirm_pickup": _can_confirm_pickup(pkg),
         # Set when the card was opened from a day modal: draws the ‹ control
         # that swaps that day back in.

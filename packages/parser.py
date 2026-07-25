@@ -26,7 +26,7 @@ day before; deriving it is the calendar's job, not the parser's.
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from email import message_from_bytes, policy
 from email.utils import parsedate_to_datetime
@@ -93,6 +93,9 @@ class ParsedEmail:
     total: Decimal | None = None  # order total as printed; 0.00 ⇒ Vine (weak
     # signal: a paid order settled with gift balance also prints 0.00)
     estimated_arrival: date | None = None
+    estimated_arrival_end: date | None = None  # set only when the email gave a
+    # window ("Llegada entre el 24 y el 28 de julio"): estimated_arrival is its
+    # start, this its end. None on the usual single-day estimate.
     pickup_before: date | None = None  # the "antes del" day itself
     pickup_code: str | None = None
     barcode_url: str | None = None  # static image scanned at the counter
@@ -183,9 +186,11 @@ _REVIEW_ID = re.compile(r"/review/(R[A-Z0-9]+)")
 _TOTAL = re.compile(r"Total\s+(\d+[.,]\d{2})\s*€")
 _ARRIVES = re.compile(r"^Llega (.+)$")
 # A delivery-window variant of the arrival line: "Llegada entre el 24 de julio
-# y el 28 de julio". We keep only the first (earliest) date as the estimate;
-# the later Enviado email replaces it with a single firm day.
-_ARRIVES_RANGE = re.compile(r"^Llegada entre el (.+?) y el .+$")
+# y el 28 de julio". The start is the estimate proper (that's the day the
+# calendar marks); the end is kept alongside it so the card can word the window
+# honestly instead of pretending Amazon promised the first day. The later
+# Enviado email replaces both with a single firm day.
+_ARRIVES_RANGE = re.compile(r"^Llegada entre el (.+?) y el (.+)$")
 _BEFORE = re.compile(r"antes del (.+)$")
 _PICKED = re.compile(r"^Recogido (.+)$")
 # Searched over the joined text: the value may sit in its own tag (own line).
@@ -211,9 +216,16 @@ def _text_lines(html):
 
 
 def _resolve_date(phrase, base):
-    """'el lunes' / 'hoy' / '13 de julio' → date, relative to base (forward)."""
+    """'el lunes' / 'hoy' / '13 de julio' → date, relative to base (forward).
+
+    `base` is normally the email's send time, but may be a plain date: the end
+    of a delivery window resolves against the *start* of that window rather
+    than against the email, so "entre el 30 de diciembre y el 3 de enero"
+    can't land its end in the year the window began."""
     if base is None:
         return None
+    if not isinstance(base, datetime):
+        base = datetime.combine(base, time.min)
     phrase = re.sub(r"^el\s+", "", phrase.strip(), flags=re.IGNORECASE)
     parsed = dateparser.parse(
         phrase,
@@ -223,12 +235,17 @@ def _resolve_date(phrase, base):
     return parsed.date() if parsed else None
 
 
-def _first_line_match(pattern, lines):
+def _first_line_search(pattern, lines):
     for line in lines:
         match = pattern.search(line)
         if match:
-            return match.group(1)
+            return match
     return None
+
+
+def _first_line_match(pattern, lines):
+    match = _first_line_search(pattern, lines)
+    return match.group(1) if match else None
 
 
 def _pickup_location(lines):
@@ -348,13 +365,28 @@ def parse_email(raw):
     shipment_ids = frozenset(_SHIPMENT_ID.findall(urls))
     total_raw = _TOTAL.search(haystack)
 
-    arrives = _first_line_match(_ARRIVES, lines) or _first_line_match(_ARRIVES_RANGE, lines)
+    arrives = _first_line_match(_ARRIVES, lines)
+    window = None if arrives else _first_line_search(_ARRIVES_RANGE, lines)
+    if window:
+        arrives = window.group(1)
     before = _first_line_match(_BEFORE, lines)
     if before is None and (match := _BEFORE.search(subject)):
         before = match.group(1)
     picked = _first_line_match(_PICKED, lines)
     review_headline, review_excerpt = _review_headline_and_excerpt(lines)
     star_match = _STAR_RATING.search(html)
+
+    # A window's end is resolved against its own start, not against the email:
+    # anchored to the send time, "entre el 30 de diciembre y el 3 de enero"
+    # would resolve the end before the start. Dropped unless it really is
+    # later, so a layout change can only cost us the wording, never invert it.
+    estimated_arrival = _resolve_date(arrives, sent_at) if arrives else None
+    estimated_arrival_end = (
+        _resolve_date(window.group(2), estimated_arrival)
+        if window and estimated_arrival else None
+    )
+    if estimated_arrival_end and estimated_arrival_end <= estimated_arrival:
+        estimated_arrival_end = None
 
     parsed = ParsedEmail(
         kind=kind,
@@ -368,7 +400,8 @@ def parse_email(raw):
         items=_items(soup),
         pickup_location=_pickup_location(lines),
         total=Decimal(total_raw.group(1).replace(",", ".")) if total_raw else None,
-        estimated_arrival=_resolve_date(arrives, sent_at) if arrives else None,
+        estimated_arrival=estimated_arrival,
+        estimated_arrival_end=estimated_arrival_end,
         pickup_before=_resolve_date(before, sent_at) if before else None,
         pickup_code=match.group(1) if (match := _PICKUP_CODE.search(haystack)) else None,
         barcode_url=_barcode_url(soup),

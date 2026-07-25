@@ -7,7 +7,7 @@ broke — keep one fixture per template, and add one whenever a new template
 shows up.
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from email.message import EmailMessage
 from pathlib import Path
@@ -15,12 +15,14 @@ from pathlib import Path
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.formats import date_format
 
 from reviews.models import Review
 
 from .ingest import backfill_reviews, process_message, reprocess_failures, scan_inbox
 from .models import Package, PickupPoint, RawEmail
-from .parser import EmailKind, ParseError, parse_email
+from .parser import EmailKind, ParseError, _resolve_date, parse_email
+from .views import _estimate_line, _estimate_note
 
 FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 
@@ -174,8 +176,9 @@ class ParseEmailTests(SimpleTestCase):
 
     def test_ordered_arrival_window(self):
         # Newer Pedido template gives a delivery window instead of a single
-        # day: "Llegada entre el 24 de julio y el 28 de julio". We keep the
-        # first (earliest) date as the estimate; the later Enviado replaces it.
+        # day: "Llegada entre el 24 de julio y el 28 de julio". The start is
+        # the estimate proper; the end rides alongside it so the card can word
+        # the window instead of pretending the first day was a promise.
         parsed = parse_email(
             fixture("023-fwd-pedido-veebmys-correa-movil-llegada-entre-fechas.eml")
         )
@@ -183,8 +186,26 @@ class ParseEmailTests(SimpleTestCase):
         self.assertEqual(parsed.order_id, "404-4372144-5150738")
         self.assertEqual(parsed.sent_at.date(), date(2026, 7, 20))
         self.assertEqual(parsed.estimated_arrival, date(2026, 7, 24))
+        self.assertEqual(parsed.estimated_arrival_end, date(2026, 7, 28))
         self.assertTrue(
             parsed.pickup_location.startswith("Amazon Counter - Les Mesures")
+        )
+
+    def test_single_day_arrival_has_no_window(self):
+        # The common template names one day: nothing to word as a range, so
+        # the end stays None rather than echoing the start.
+        parsed = parse_email(fixture("006-fwd-pedido-cargador-inalambrico.eml"))
+        self.assertEqual(parsed.estimated_arrival, date(2026, 7, 6))
+        self.assertIsNone(parsed.estimated_arrival_end)
+
+    def test_arrival_window_end_resolves_against_its_start(self):
+        # A window may cross a month — or the new year. Resolving its end
+        # against the email's send time would put "3 de enero" back in the
+        # year the window began; anchoring it to the start can't.
+        sent = datetime(2026, 12, 28, 9, 0)
+        self.assertEqual(_resolve_date("30 de diciembre", sent), date(2026, 12, 30))
+        self.assertEqual(
+            _resolve_date("3 de enero", date(2026, 12, 30)), date(2027, 1, 3)
         )
 
     def test_ready_for_pickup_locker_consolidated(self):
@@ -362,6 +383,36 @@ class IngestTests(TestCase):
         # The "Se ha recogido" email is treated as final truth: the pickup
         # got confirmed without any manual step.
         self.assertEqual(pkg.pickup_point.kind, PickupPoint.Kind.AMAZON_COUNTER)
+
+    def test_ordered_window_stores_both_ends(self):
+        record, _ = process_message(
+            fixture("023-fwd-pedido-veebmys-correa-movil-llegada-entre-fechas.eml")
+        )
+        self.assertTrue(record.processed, record.parse_error)
+        pkg = Package.objects.get()
+        self.assertEqual(pkg.estimated_arrival, date(2026, 7, 24))
+        self.assertEqual(pkg.estimated_arrival_end, date(2026, 7, 28))
+
+    def test_shipping_notice_clears_a_delivery_window(self):
+        # A "Pedido" that gave a window, then the "Enviado", which always
+        # names one firm day. The window has to go with it: left behind, the
+        # card would keep offering a range the newer date contradicts.
+        point = PickupPoint.objects.create(
+            name="Amazon Counter - Les Mesures", kind=PickupPoint.Kind.AMAZON_COUNTER
+        )
+        Package.objects.create(
+            pickup_point=point, order_id="407-2023163-0562738",
+            state=Package.State.IN_TRANSIT, description="EHEYCIGA Escalera",
+            estimated_arrival=date(2026, 7, 16),
+            estimated_arrival_end=date(2026, 7, 20),
+        )
+        record, _ = process_message(
+            fixture("046-enviado-eheyciga-escalera-perros-4.eml")
+        )
+        self.assertTrue(record.processed, record.parse_error)
+        pkg = Package.objects.get()
+        self.assertEqual(pkg.estimated_arrival, date(2026, 7, 18))
+        self.assertIsNone(pkg.estimated_arrival_end)
 
     def test_idempotent_by_message_id(self):
         raw = fixture("006-fwd-pedido-cargador-inalambrico.eml")
@@ -1101,6 +1152,70 @@ class ScanInboxTests(TestCase):
         self.assertEqual(fake.stored, [])  # nothing moved or flagged
 
 
+class EstimateWordingTests(SimpleTestCase):
+    """The card's "Llegada estimada" sentence and the chip's parenthetical,
+    pinned at fixed dates so the actual Spanish is under test.
+
+    Both read the same two fields (the estimate and, when the email gave a
+    window, its end) against today, and neither may ever claim more than the
+    email did — the whole point is that the user doesn't drive to a counter on
+    the strength of a date Amazon already missed."""
+
+    START, END = date(2026, 7, 24), date(2026, 7, 28)
+
+    def _pkg(self, start=START, end=None):
+        return Package(estimated_arrival=start, estimated_arrival_end=end)
+
+    def test_single_day_still_ahead(self):
+        line = _estimate_line(self._pkg(), date(2026, 7, 22))
+        self.assertEqual(line, "viernes 24 de julio")
+        self.assertEqual(_estimate_note(self._pkg(), date(2026, 7, 22)), "")
+
+    def test_single_day_missed(self):
+        today = date(2026, 7, 25)
+        self.assertEqual(_estimate_line(self._pkg(), today),
+                         "se esperaba el viernes 24 de julio · con retraso")
+        self.assertEqual(_estimate_note(self._pkg(), today), "con retraso")
+
+    def test_window_still_ahead_names_both_ends(self):
+        pkg = self._pkg(end=self.END)
+        self.assertEqual(
+            _estimate_line(pkg, date(2026, 7, 22)),
+            "entre el viernes 24 de julio y el martes 28 de julio",
+        )
+        # On the first day of the window it's still a promise, not a delay.
+        self.assertEqual(_estimate_line(pkg, self.START),
+                         "entre el viernes 24 de julio y el martes 28 de julio")
+        self.assertEqual(_estimate_note(pkg, self.START), "")
+
+    def test_window_already_running_counts_from_today(self):
+        pkg = self._pkg(end=self.END)
+        today = date(2026, 7, 25)
+        self.assertEqual(_estimate_line(pkg, today), "entre hoy y el martes 28 de julio")
+        self.assertEqual(_estimate_note(pkg, today), "hasta el 28 jul")
+
+    def test_window_overrun_switches_to_the_past_tense(self):
+        pkg = self._pkg(end=self.END)
+        today = date(2026, 7, 29)
+        self.assertEqual(
+            _estimate_line(pkg, today),
+            "se esperaba entre el viernes 24 de julio y el martes 28 de julio · con retraso",
+        )
+        self.assertEqual(_estimate_note(pkg, today), "con retraso")
+
+    def test_window_across_two_months_keeps_the_month_on_both_ends(self):
+        # "entre el 28 y el 2" would read as a day already gone: the month is
+        # never dropped, in the sentence or in the chip's parenthetical.
+        pkg = self._pkg(date(2026, 7, 28), date(2026, 8, 2))
+        today = date(2026, 7, 30)
+        self.assertEqual(_estimate_line(pkg, today), "entre hoy y el domingo 2 de agosto")
+        self.assertEqual(_estimate_note(pkg, today), "hasta el 2 ago")
+
+    def test_no_estimate_says_nothing(self):
+        self.assertEqual(_estimate_line(Package(), date(2026, 7, 25)), "")
+        self.assertEqual(_estimate_note(Package(), date(2026, 7, 25)), "")
+
+
 class CalendarViewTests(TestCase):
     """The calendar's rendering rules: the unknown-item placeholder and the one
     consolidated chip that stands in for a day's whole pickup haul."""
@@ -1280,6 +1395,94 @@ class CalendarViewTests(TestCase):
         html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
         self.assertEqual(html.count(b'is-shipped"'), 1)
         self.assertEqual(html.count(b'is-estimated"'), 1)
+
+    def test_missed_estimate_rides_on_today(self):
+        # Amazon named a day and missed it. The package is still on its way,
+        # so the dashed box moves to today instead of sitting in the past,
+        # where it would be both false and out of sight (the board is read
+        # forwards). The note keeps it from reading as "llega hoy".
+        today = timezone.localdate()
+        home = self._point("Rosa - Can Salgot", PickupPoint.Kind.HOME)
+        promised = today - timedelta(days=2)
+        Package.objects.create(
+            pickup_point=home, state=Package.State.IN_TRANSIT,
+            description="Veebmys Correa", estimated_arrival=promised,
+        )
+        stale = self.client.get(
+            reverse("day_detail", args=[promised.isoformat()])).content
+        self.assertNotIn(b"is-estimated", stale)
+
+        html = self.client.get(
+            reverse("day_detail", args=[today.isoformat()])).content
+        self.assertIn(b"is-estimated", html)
+        self.assertIn("(con retraso)".encode(), html)
+
+    def test_running_window_rides_on_today_with_its_end(self):
+        # Inside a delivery window: the chip is on today, but says how much
+        # slack is left, so a trip isn't planned on the strength of it.
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER)
+        end = today + timedelta(days=3)
+        Package.objects.create(
+            pickup_point=counter, state=Package.State.IN_TRANSIT,
+            description="Veebmys Correa", estimated_arrival=today - timedelta(days=1),
+            estimated_arrival_end=end,
+        )
+        html = self.client.get(
+            reverse("day_detail", args=[today.isoformat()])).content.decode()
+        self.assertIn("is-estimated", html)
+        self.assertIn(f"(hasta el {date_format(end, 'j b')})", html)
+
+    def test_deadline_preview_moves_with_a_missed_estimate(self):
+        # The forecast hangs off the arrival day we currently believe. Left on
+        # the missed estimate it would paint red dashed boxes in the past —
+        # the same incongruence, one step down the chain.
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER)
+        Package.objects.create(
+            pickup_point=counter, state=Package.State.IN_TRANSIT,
+            description="Veebmys Correa", estimated_arrival=today - timedelta(days=10),
+        )
+        stale = self.client.get(reverse(
+            "day_detail", args=[(today - timedelta(days=3)).isoformat()])).content
+        self.assertNotIn(b"is-leaves_estimated", stale)
+
+        html = self.client.get(reverse(
+            "day_detail", args=[(today + timedelta(days=7)).isoformat()])).content
+        self.assertIn(b"is-leaves_estimated", html)
+
+    def test_shipped_today_with_a_missed_estimate_keeps_two_chips(self):
+        # The "Enviado (llega hoy)" merge is about a promise landing on the
+        # day it shipped. An estimate that only reached today by slipping is a
+        # weaker statement and keeps its own chip to say so.
+        today = timezone.localdate()
+        home = self._point("Rosa - Can Salgot", PickupPoint.Kind.HOME)
+        Package.objects.create(
+            pickup_point=home, state=Package.State.IN_TRANSIT,
+            description="Colchón", shipped_on=today,
+            estimated_arrival=today - timedelta(days=1),
+        )
+        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+        self.assertEqual(html.count(b'is-shipped"'), 1)
+        self.assertEqual(html.count(b'is-estimated"'), 1)
+        self.assertNotIn("(llega hoy)".encode(), html)
+
+    def test_package_detail_spells_out_the_delivery_window(self):
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER)
+        pkg = Package.objects.create(
+            pickup_point=counter, state=Package.State.IN_TRANSIT,
+            description="Veebmys Correa", estimated_arrival=today + timedelta(days=1),
+            estimated_arrival_end=today + timedelta(days=5),
+        )
+        html = self.client.get(
+            reverse("package_detail", args=[pkg.pk])).content.decode()
+        self.assertIn("Llegada estimada", html)
+        self.assertIn(f"y el {date_format(today + timedelta(days=5), r'l j \d\e F')}",
+                      html)
 
     def test_in_transit_counter_previews_deadline_and_leaves(self):
         # Before the real "Entregado" email, an in-transit Counter package

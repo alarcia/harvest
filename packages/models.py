@@ -105,6 +105,13 @@ class Package(models.Model):
     # deadline -> red border. The deadline is read from the email, never
     # calculated, and is null for the alt store (no deadline).
     estimated_arrival = models.DateField(null=True, blank=True)
+    # Some "Pedido" emails give a delivery *window* ("Llegada entre el 24 de
+    # julio y el 28 de julio") instead of a single day. estimated_arrival holds
+    # the start of that window, this the end; null means a single-day estimate,
+    # which is the common case. Only the wording ever reads it — the chip rides
+    # on the start (and then on today, see views._effective_estimate). Cleared
+    # by any later email carrying a firm single date, the "Enviado" above all.
+    estimated_arrival_end = models.DateField(null=True, blank=True)
     actual_arrival = models.DateField(null=True, blank=True)
     deadline = models.DateField(null=True, blank=True)
 

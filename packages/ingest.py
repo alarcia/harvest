@@ -187,6 +187,12 @@ def _fill(pkg, parsed):
         pkg.image_url = parsed.image_url
     if parsed.estimated_arrival:
         pkg.estimated_arrival = parsed.estimated_arrival
+        # A delivery window only lives between "Pedido" and "Enviado" — the
+        # shipping notice always narrows it to one firm day. Assigning it
+        # unconditionally alongside the start is what clears it: a stored
+        # window that outlived the email it came from would keep contradicting
+        # the date right next to it.
+        pkg.estimated_arrival_end = parsed.estimated_arrival_end
 
 
 def _apply_cost(pkg, parsed, *, authoritative):
