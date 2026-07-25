@@ -301,6 +301,38 @@
     }
     .modal-barcode { display: inline-block; margin-top: .85rem; font-size: .9rem; }
 
+    /* Manual "ya lo he recogido": an action, not a link, so it reads as one
+       — but quiet (outlined, not filled), since it's the exception path for
+       the pickups no email closes, not the card's main business. */
+    .modal-action {
+      width: 100%;
+      margin-top: 1rem;
+      padding: .6rem;
+      border: 1px solid var(--success);
+      border-radius: 8px;
+      background: none;
+      color: var(--success);
+      font-size: .85rem;
+      font-weight: 600;
+    }
+    .modal-action:active { transform: scale(.98); }
+    .confirm-item { margin: 0 0 .15rem; font-size: .88rem; font-weight: 600; }
+    .confirm-label {
+      display: block;
+      margin: .9rem 0 .35rem;
+      font-size: .8rem;
+      color: var(--muted);
+    }
+    .confirm-error { margin: .5rem 0 0; color: var(--danger); font-size: .78rem; }
+    .confirm-actions { display: flex; gap: .6rem; margin-top: 1rem; }
+    .confirm-actions button { flex: 1; margin: 0; font-size: .85rem; }
+    .confirm-actions .btn-ghost {
+      border: 1px solid var(--border);
+      background: none;
+      color: var(--muted);
+    }
+    .confirm-actions .btn-go { background: var(--success); color: var(--card); }
+
     @keyframes row-in { from { opacity: 0; transform: translateY(8px); } }
 
     @media (prefers-reduced-motion: reduce) {

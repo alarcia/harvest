@@ -6,6 +6,7 @@ urlpatterns = [
     path("", views.home, name="home"),
     path("packages/new/", views.add_package, name="add_package"),
     path("packages/<int:pk>/", views.package_detail, name="package_detail"),
+    path("packages/<int:pk>/recogido/", views.confirm_pickup, name="confirm_pickup"),
     path("picked/<str:day>/", views.picked_detail, name="picked_detail"),
     path("delivered/<str:day>/<int:point_id>/", views.delivered_detail, name="delivered_detail"),
     path("day/<str:day>/", views.day_detail, name="day_detail"),

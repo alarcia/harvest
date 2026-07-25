@@ -10,6 +10,7 @@ from django.utils import timezone
 from reviews.models import Review
 
 from .forms import PackageForm
+from .ingest import set_review_due
 from .models import Package, PickupPoint, RawEmail
 
 # Weeks shown per view. Month is special-cased: its length depends on the anchor.
@@ -366,6 +367,9 @@ def home(request):
             "prev": _nav(view, prev_anchor, "prev"),
             "next": _nav(view, next_anchor, "next"),
             "today": _nav(view, today),
+            # Where the calendar is right now: what it refetches when a
+            # package changes under it (the manual pickup confirmation).
+            "current": _nav(view, anchor),
             # Switching views recenters on today: the calendar is about the
             # coming weeks, not about wandering off into other periods.
             "views": [(v, label, _nav(v, today)) for v, label in
@@ -391,9 +395,20 @@ def day_detail(request, day):
     })
 
 
-def package_detail(request, pk):
-    """Minimal product card for a tapped chip, swapped into the modal slot."""
-    pkg = get_object_or_404(Package.objects.select_related("pickup_point"), pk=pk)
+def _can_confirm_pickup(pkg):
+    """Whether the card offers the manual "ya lo he recogido" (see
+    confirm_pickup). Only a package waiting at a carrier's office: that's the
+    one lifecycle Amazon abandons mid-way, so it's the one that would other-
+    wise never close. Everything else keeps closing itself from email, and
+    the alt store — the other no-email case — stays admin-only on purpose
+    (user, 2026-07-25)."""
+    return (pkg.state == Package.State.AWAITING_PICKUP
+            and pkg.pickup_point.kind == PickupPoint.Kind.CARRIER)
+
+
+def _package_card(request, pkg, back_day):
+    """Renders the package card. Shared by the tapped chip and by the manual
+    pickup confirmation, which lands back on the very same card."""
     point = pkg.pickup_point
     return render(request, "packages/_package_detail.html", {
         "package": pkg,
@@ -406,9 +421,86 @@ def package_detail(request, pk):
         # sets pkg.deadline, that's what the card shows instead.
         "preview_leaves_day": (_preview_leaves_day(pkg)
                                 if pkg.state == Package.State.IN_TRANSIT else None),
+        "can_confirm_pickup": _can_confirm_pickup(pkg),
         # Set when the card was opened from a day modal: draws the ‹ control
         # that swaps that day back in.
-        "back_day": _parse_anchor(request.GET.get("from_day"), None),
+        "back_day": back_day,
+    })
+
+
+def package_detail(request, pk):
+    """Minimal product card for a tapped chip, swapped into the modal slot."""
+    pkg = get_object_or_404(Package.objects.select_related("pickup_point"), pk=pk)
+    return _package_card(request, pkg, _parse_anchor(request.GET.get("from_day"), None))
+
+
+def confirm_pickup(request, pk):
+    """Manual "ya lo he recogido", for the one pickup no email ever confirms.
+
+    Pickups close themselves — the "Se ha recogido" email is final truth (see
+    CLAUDE.md) — except after a failed home delivery: a package diverted to a
+    carrier's office (PickupPoint.Kind.CARRIER, the "Intento de entrega"
+    email) leaves Amazon's lifecycle for good. Their status reads "Entregado"
+    and nothing else ever arrives, so without this the row would sit
+    `awaiting_pickup` on the board forever, under a red ⚠ chip. Scoped to
+    exactly that case (user, 2026-07-25): every other package still gets its
+    state from email, and a manual button on those would only invite closing
+    a package the email would have closed correctly anyway.
+
+    GET renders a confirmation step rather than acting on the tap: the day is
+    the whole point of the dialog. Marking it "today" when the trip was
+    yesterday would file the pickup on the wrong calendar day *and* start the
+    review clock a day late, so the date is asked for, defaulted to today,
+    and validated — never in the future, never before the package was at the
+    point.
+
+    Unlike an email pickup, this confirms **only this package**: the sweep of
+    the whole point exists because the email is unreliable about its own
+    scope, while a tap on one card is not.
+    """
+    pkg = get_object_or_404(Package.objects.select_related("pickup_point"), pk=pk)
+    if not _can_confirm_pickup(pkg):
+        raise Http404("Not a carrier pickup awaiting confirmation")
+
+    today = timezone.localdate()
+    back_day = _parse_anchor(request.GET.get("from_day")
+                              or request.POST.get("from_day"), None)
+    error, day = None, today
+
+    if request.method == "POST":
+        day = _parse_anchor(request.POST.get("picked_up_on"), None)
+        if day is None:
+            error = "Fecha no válida."
+        elif day > today:
+            error = "No puedes recoger un paquete en el futuro."
+        elif pkg.actual_arrival and day < pkg.actual_arrival:
+            error = "Ese día el paquete todavía no estaba en el punto."
+        if error is None:
+            pkg.state = Package.State.PICKED_UP
+            pkg.picked_up_on = day
+            pkg.save(update_fields=["state", "picked_up_on", "updated_at"])
+            # A pickup is a pickup: the review clock starts the same way it
+            # would have from the email.
+            set_review_due(pkg, day)
+            response = _package_card(request, pkg, back_day)
+            # The chip behind the modal is now stale (it still says "Listo" on
+            # the wrong day), so the calendar refetches itself — see the
+            # hx-trigger on #app-view.
+            response["HX-Trigger"] = "package-updated"
+            return response
+        day = day or today
+
+    return render(request, "packages/_confirm_pickup.html", {
+        "package": pkg,
+        "label": _label(pkg),
+        "point_label": _point_label(pkg.pickup_point),
+        "source": ("store" if pkg.pickup_point.kind == PickupPoint.Kind.ALT_STORE
+                   else "amazon"),
+        "day": day,
+        "today": today,
+        "min_day": pkg.actual_arrival,
+        "error": error,
+        "back_day": back_day,
     })
 
 

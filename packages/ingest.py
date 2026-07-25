@@ -234,10 +234,14 @@ def _sync_review_for_vine(pkg):
     return ""
 
 
-def _set_review_due(pkg, picked_up_on):
+def set_review_due(pkg, picked_up_on):
     """Pickup starts the use/testing window: the hard reminder is pickup +
     30 days, the default the model promises — set once here and never
-    overwritten again (due_on stays user-editable after that)."""
+    overwritten again (due_on stays user-editable after that).
+
+    Public because the manual "ya lo he recogido" confirmation (views.py)
+    must start the same clock: a pickup is a pickup, whether an email or the
+    user reported it."""
     review = getattr(pkg, "review", None)
     if review is not None and review.status == Review.Status.PENDING and not review.due_on:
         review.due_on = picked_up_on + timedelta(days=30)
@@ -436,14 +440,14 @@ def _apply(parsed):
             )
             _fill(pkg, parsed)
             pkg.save()
-            _set_review_due(pkg, picked_day)
+            set_review_due(pkg, picked_day)
             return pkg, ""
         for pkg in targets:
             pkg.state = Package.State.PICKED_UP
             pkg.picked_up_on = picked_day
             _fill(pkg, parsed)
             pkg.save()
-            _set_review_due(pkg, picked_day)
+            set_review_due(pkg, picked_day)
         extra = len(targets) - len(matched_pks)
         note = "" if extra <= 0 else f"Recogida en bloque: +{extra} paquete(s) del mismo punto"
         return targets[0], note
@@ -591,7 +595,7 @@ def backfill_reviews():
 
     1. Every already-Vine package with no Review yet gets one (mirroring
        `_sync_review_for_vine`), `due_on` backfilled too if it's already
-       past pickup (`_set_review_due`'s rule, applied retroactively).
+       past pickup (`set_review_due`'s rule, applied retroactively).
     2. Every stored `review_published` RawEmail that parsed without error
        gets replayed through `_apply` — `_apply_review_published`'s
        `review_id` guard keeps a second run from ever duplicating one.

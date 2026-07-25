@@ -58,5 +58,13 @@
         Ver oficina en el localizador de {{ package.carrier }} ↗
       </a>
     {% endif %}
+    {% if can_confirm_pickup %}
+      {% comment %}Manual close for the pickups no email ever confirms (alt
+      store, carrier office). Opens a confirmation step instead of acting on
+      the tap — the day is what's being asked, not just the fact.{% endcomment %}
+      <button type="button" class="modal-action"
+              hx-get="{% url 'confirm_pickup' package.pk %}{% if back_day %}?from_day={{ back_day|date:'Y-m-d' }}{% endif %}"
+              hx-target="#modal" hx-swap="innerHTML">Ya lo he recogido</button>
+    {% endif %}
   </div>
 </div>

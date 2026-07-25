@@ -1,5 +1,10 @@
 {# Swapped whole by HTMX on every navigation, so title, controls and grid never drift apart. #}
-<section id="app-view" class="cal {{ anim }} view-{{ view }}" hx-target="#app-view" hx-swap="outerHTML">
+{% comment %}The `package-updated` trigger is fired by a view that changed a
+package from inside the modal (the manual pickup confirmation): the grid
+refetches itself in place — same view, same anchor, no URL change — so the
+chip behind the open card stops lying.{% endcomment %}
+<section id="app-view" class="cal {{ anim }} view-{{ view }}" hx-target="#app-view" hx-swap="outerHTML"
+         hx-get="{{ nav.current.get }}" hx-trigger="package-updated from:body">
   {% comment %}Styles travel with the fragment (not the full-page template's
   head) so they're present whether this section was rendered on a full load
   or swapped in from the reviews page.{% endcomment %}

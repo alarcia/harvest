@@ -1433,3 +1433,127 @@ class CalendarViewTests(TestCase):
             HTTP_HX_HISTORY_RESTORE_REQUEST="true").content
         self.assertIn(b"<!doctype html>", restored)
         self.assertIn(b"app-topbar", restored)
+
+
+class ManualPickupTests(TestCase):
+    """The manual "ya lo he recogido" confirmation: the way out for the one
+    pickup no email ever closes — a home delivery that failed and got
+    diverted to a carrier's office, which leaves Amazon's lifecycle for good
+    ("Entregado" on their side, nothing more ever sent)."""
+
+    def setUp(self):
+        self.today = timezone.localdate()
+        self.carrier = PickupPoint.objects.create(
+            name="UPS", kind=PickupPoint.Kind.CARRIER)
+        self.pkg = Package.objects.create(
+            pickup_point=self.carrier, state=Package.State.AWAITING_PICKUP,
+            description="ONES Funda Magnética", carrier="UPS",
+            actual_arrival=self.today - timedelta(days=3),
+        )
+
+    def _elsewhere(self, kind):
+        point = PickupPoint.objects.create(name=f"Punto {kind}", kind=kind)
+        return Package.objects.create(
+            pickup_point=point, state=Package.State.AWAITING_PICKUP,
+            description="Otro paquete")
+
+    def test_carrier_pickup_offers_the_button(self):
+        html = self.client.get(
+            reverse("package_detail", args=[self.pkg.pk])).content
+        self.assertIn(reverse("confirm_pickup", args=[self.pkg.pk]).encode(), html)
+
+    def test_every_other_pickup_stays_email_driven(self):
+        # Scoped to the carrier case on purpose (user, 2026-07-25): an Amazon
+        # locker/counter closes itself from the "Se ha recogido" email, and
+        # the alt store stays admin-only.
+        for kind in (PickupPoint.Kind.AMAZON_LOCKER,
+                     PickupPoint.Kind.AMAZON_COUNTER,
+                     PickupPoint.Kind.ALT_STORE):
+            other = self._elsewhere(kind)
+            url = reverse("confirm_pickup", args=[other.pk])
+            html = self.client.get(
+                reverse("package_detail", args=[other.pk])).content
+            self.assertNotIn(url.encode(), html, kind)
+            self.assertEqual(self.client.get(url).status_code, 404, kind)
+
+    def test_terminal_package_offers_nothing_to_confirm(self):
+        self.pkg.state = Package.State.PICKED_UP
+        self.pkg.save()
+        html = self.client.get(
+            reverse("package_detail", args=[self.pkg.pk])).content
+        self.assertNotIn(reverse("confirm_pickup", args=[self.pkg.pk]).encode(), html)
+        # And the URL itself is closed, not just hidden.
+        self.assertEqual(
+            self.client.get(reverse("confirm_pickup", args=[self.pkg.pk])).status_code,
+            404)
+
+    def test_get_asks_for_the_day_without_changing_anything(self):
+        html = self.client.get(
+            reverse("confirm_pickup", args=[self.pkg.pk])).content
+        self.assertIn(b'name="picked_up_on"', html)
+        self.assertIn(f'value="{self.today.isoformat()}"'.encode(), html)
+        # Bounded by the input too: never the future, never before it arrived.
+        self.assertIn(f'max="{self.today.isoformat()}"'.encode(), html)
+        self.assertIn(f'min="{self.pkg.actual_arrival.isoformat()}"'.encode(), html)
+        self.pkg.refresh_from_db()
+        self.assertEqual(self.pkg.state, Package.State.AWAITING_PICKUP)
+
+    def test_confirming_a_past_day_files_the_pickup_on_that_day(self):
+        # The whole point of the dialog: picked up yesterday, confirmed today.
+        yesterday = self.today - timedelta(days=1)
+        response = self.client.post(
+            reverse("confirm_pickup", args=[self.pkg.pk]),
+            {"picked_up_on": yesterday.isoformat()})
+        self.assertEqual(response.status_code, 200)
+        self.pkg.refresh_from_db()
+        self.assertEqual(self.pkg.state, Package.State.PICKED_UP)
+        self.assertEqual(self.pkg.picked_up_on, yesterday)
+        # The card comes back updated, and the stale chip behind it refreshes.
+        self.assertIn(b"Recogido", response.content)
+        self.assertEqual(response["HX-Trigger"], "package-updated")
+
+        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+        self.assertIn(b'is-picked"', html)
+        self.assertNotIn(b'is-action_needed"', html)
+
+    def test_a_future_day_is_refused(self):
+        response = self.client.post(
+            reverse("confirm_pickup", args=[self.pkg.pk]),
+            {"picked_up_on": (self.today + timedelta(days=1)).isoformat()})
+        self.assertIn("futuro".encode(), response.content)
+        self.assertNotIn("HX-Trigger", response)
+        self.pkg.refresh_from_db()
+        self.assertEqual(self.pkg.state, Package.State.AWAITING_PICKUP)
+
+    def test_a_day_before_it_arrived_is_refused(self):
+        response = self.client.post(
+            reverse("confirm_pickup", args=[self.pkg.pk]),
+            {"picked_up_on": (self.pkg.actual_arrival - timedelta(days=1)).isoformat()})
+        self.assertIn("todavía no estaba".encode(), response.content)
+        self.pkg.refresh_from_db()
+        self.assertEqual(self.pkg.state, Package.State.AWAITING_PICKUP)
+
+    def test_confirming_starts_the_review_clock(self):
+        # A Vine pickup owes a review 30 days later, whether the email or the
+        # user reported it (see ingest.set_review_due).
+        self.pkg.is_vine = True
+        self.pkg.save()
+        Review.objects.create(package=self.pkg, product_title=self.pkg.description)
+        self.client.post(reverse("confirm_pickup", args=[self.pkg.pk]),
+                         {"picked_up_on": self.today.isoformat()})
+        review = Review.objects.get(package=self.pkg)
+        self.assertEqual(review.due_on, self.today + timedelta(days=30))
+
+    def test_confirming_one_package_never_sweeps_the_point(self):
+        # Unlike the email pickup, which sweeps the whole point because the
+        # email is unreliable about its own scope: a tap on one card is not.
+        # It matters most here: a CARRIER point dedups by carrier name, so two
+        # failed deliveries share one "UPS" row while sitting in two different
+        # physical offices (see PickupPoint.Kind.CARRIER).
+        other = Package.objects.create(
+            pickup_point=self.carrier, state=Package.State.AWAITING_PICKUP,
+            description="Otro intento fallido", carrier="UPS")
+        self.client.post(reverse("confirm_pickup", args=[self.pkg.pk]),
+                         {"picked_up_on": self.today.isoformat()})
+        other.refresh_from_db()
+        self.assertEqual(other.state, Package.State.AWAITING_PICKUP)
