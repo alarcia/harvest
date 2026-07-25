@@ -307,6 +307,24 @@
     }
     .modal-barcode { display: inline-block; margin-top: .85rem; font-size: .9rem; }
 
+    /* A standing fact about the place, not about this package: the shop's
+       closing days. Quiet by default; boxed in danger on the day it actually
+       bites, so it can't be skimmed past on the way to the pickup button. */
+    .modal-note {
+      margin: .8rem 0 0;
+      font-size: .78rem;
+      line-height: 1.4;
+      color: var(--muted);
+    }
+    .modal-note.warn {
+      padding: .5rem .65rem;
+      border: 1px solid var(--danger);
+      border-radius: .5rem;
+      background: color-mix(in srgb, var(--danger) 8%, transparent);
+      color: var(--danger);
+      font-weight: 600;
+    }
+
     /* Manual "ya lo he recogido": an action, not a link, so it reads as one
        — but quiet (outlined, not filled), since it's the exception path for
        the pickups no email closes, not the card's main business. */

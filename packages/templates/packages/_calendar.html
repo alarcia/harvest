@@ -239,6 +239,11 @@ chip behind the open card stops lying.{% endcomment %}
        same passive "Listo" as a normal wait. */
     .pkg.is-action_needed { color: var(--bg); background: var(--danger); }
     .pkg.is-action_needed::before { content: '⚠ '; }
+    /* Ready, but the point is shut today (Pepe y Dalda closes Mondays). The
+       chip keeps its own colour — the package really is waiting, nothing has
+       gone wrong — and only picks up the ⚠, because what changed is whether
+       driving there today is worth it, not the package's state. */
+    .pkg.pkg-closed::before { content: '⚠ '; }
     /* Picked up: fades out of the picture. */
     .pkg.is-picked {
       color: var(--muted);
@@ -524,7 +529,7 @@ chip behind the open card stops lying.{% endcomment %}
           {% if day.chips %}
             <div class="chips">
               {% for c in day.chips %}
-                <button class="pkg src-{{ c.source }} is-{{ c.kind }}" title="{{ c.tag }}{% if c.note %} ({{ c.note }}){% endif %} · {{ c.label }}"
+                <button class="pkg src-{{ c.source }} is-{{ c.kind }}{% if c.closed %} pkg-closed{% endif %}" title="{{ c.tag }}{% if c.note %} ({{ c.note }}){% endif %} · {{ c.label }}"
                         hx-get="{{ c.detail_url }}" hx-trigger="click consume"
                         hx-target="#modal" hx-swap="innerHTML"><b>{{ c.tag }}{% if c.note %} ({{ c.note }}){% endif %}</b> · {{ c.label }}</button>
               {% endfor %}

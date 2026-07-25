@@ -11,6 +11,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from email.message import EmailMessage
 from pathlib import Path
+from unittest.mock import patch
 
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
@@ -1490,6 +1491,83 @@ class CalendarViewTests(TestCase):
         html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
         self.assertIn(b"src-pepe", html)
         self.assertNotIn(b"d\xc3\xadas)", html)
+
+    def _pepe_waiting(self, arrived_days_ago=2):
+        shop = self._point("Juguetes Pepe y Dalda · c/Regència d'Urgell, 17",
+                           PickupPoint.Kind.PEPE_Y_DALDA)
+        return Package.objects.create(
+            pickup_point=shop, state=Package.State.AWAITING_PICKUP,
+            description="Carta para Marina", recipient="Marina",
+            item_kind=Package.ItemKind.LETTER,
+            actual_arrival=timezone.localdate() - timedelta(days=arrived_days_ago),
+        )
+
+    def _on_monday(self, view="month"):
+        """The board as it looks on a Monday. The Pepe chip always rides on
+        today, so the shop's closing day is reached by moving "today", not by
+        navigating the calendar."""
+        monday = timezone.localdate()
+        monday += timedelta(days=(7 - monday.weekday()) % 7 or 7)
+        return monday
+
+    def test_pepe_y_dalda_chip_warns_on_the_monday_it_is_shut(self):
+        # The trap day (user, 2026-07-25): the chip still says "Listo", so
+        # without a mark on it the calendar plans a trip to a shuttered door.
+        # The day count gives way — how long it's waited is a nudge, "you
+        # can't fetch it today" is a fact, and only one fits on a chip.
+        pkg = self._pepe_waiting()
+        monday = self._on_monday()
+        with patch("packages.views.timezone.localdate", return_value=monday):
+            html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+            card = self.client.get(
+                reverse("package_detail", args=[pkg.pk])).content
+        # The chip's own class, not the stylesheet that travels with it.
+        self.assertIn(b"is-waiting pkg-closed", html)
+        self.assertIn(b"Listo (cerrado hoy)", html)
+        self.assertNotIn(b"d\xc3\xadas)", html)  # the count stepped aside
+        self.assertIn("⚠ Hoy es lunes: Pepe y Dalda está cerrado.".encode(), card)
+
+    def test_pepe_y_dalda_chip_is_calm_the_rest_of_the_week(self):
+        pkg = self._pepe_waiting()
+        tuesday = self._on_monday() + timedelta(days=1)
+        with patch("packages.views.timezone.localdate", return_value=tuesday):
+            html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+            card = self.client.get(
+                reverse("package_detail", args=[pkg.pk])).content
+        self.assertNotIn(b"is-waiting pkg-closed", html)
+        self.assertNotIn(b"cerrado hoy", html)
+        # The card still says when the shop shuts — quietly, no warning box.
+        self.assertIn("Pepe y Dalda cierra los domingos y los lunes.".encode(), card)
+        self.assertNotIn(b'class="modal-note warn"', card)
+
+    def test_a_collected_package_gets_no_closing_warning(self):
+        # Nothing left to plan: the shop's hours are trivia on a done row.
+        shop = self._point("Juguetes Pepe y Dalda", PickupPoint.Kind.PEPE_Y_DALDA)
+        monday = self._on_monday()
+        pkg = Package.objects.create(
+            pickup_point=shop, state=Package.State.PICKED_UP,
+            description="Carta para Marina", picked_up_on=monday)
+        with patch("packages.views.timezone.localdate", return_value=monday):
+            html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+            card = self.client.get(
+                reverse("package_detail", args=[pkg.pk])).content
+        self.assertNotIn(b"is-waiting pkg-closed", html)
+        self.assertNotIn(b"cerrado", card)
+
+    def test_a_monday_never_warns_about_any_other_point(self):
+        # The closing day belongs to one shop, not to the calendar.
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER)
+        store = self._point("Otra tienda", PickupPoint.Kind.ALT_STORE)
+        monday = self._on_monday()
+        for point in (counter, store):
+            Package.objects.create(
+                pickup_point=point, state=Package.State.AWAITING_PICKUP,
+                description="Algo", actual_arrival=monday - timedelta(days=1))
+        with patch("packages.views.timezone.localdate", return_value=monday):
+            html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+        self.assertNotIn(b"is-waiting pkg-closed", html)
+        self.assertIn(b"Listo (1 d\xc3\xada)", html)
 
     def test_pepe_y_dalda_card_names_the_type_and_the_recipient(self):
         # The two things the notice carries that nothing else does — and the

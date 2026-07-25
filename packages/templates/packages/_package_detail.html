@@ -51,6 +51,17 @@
         <span><b>Transportista</b> {{ package.carrier }}{% if package.carrier_tracking_number %} · {{ package.carrier_tracking_number }}{% endif %}</span>
       {% endif %}
     </div>
+    {% comment %}Pepe y Dalda shuts on Mondays, which is the one closing day
+    that catches the user out — the chip still says "Listo" and the trip is
+    wasted. Loud on the day itself, a quiet reminder the rest of the week.
+    {% endcomment %}
+    {% if closed_days %}
+      {% if closed_today %}
+        <p class="modal-note warn">⚠ Hoy es lunes: Pepe y Dalda está cerrado.</p>
+      {% else %}
+        <p class="modal-note">Pepe y Dalda cierra {{ closed_days }}.</p>
+      {% endif %}
+    {% endif %}
     {% if package.barcode_url %}
       <a class="modal-barcode" href="{{ package.barcode_url }}" target="_blank" rel="noopener">
         Ver código de barras de recogida ↗

@@ -118,13 +118,35 @@ def _estimate_note(pkg, today):
     return "con retraso"
 
 
+# Pepe y Dalda's shutters, printed at the foot of every email they send
+# ("Lunes cerrado. Martes a sábado de 10:30 a 13:30 y de 17 a 20 h. Domingo
+# cerrado"). Only **Monday** raises a warning on the board (user,
+# 2026-07-25): a shop shut on a Sunday surprises nobody, but a Monday chip
+# still reading "Listo" is exactly how a wasted trip gets planned. Both days
+# are named on the card, which has room to be complete.
+_PEPE_CLOSED_WEEKDAYS = "los domingos y los lunes"
+_PEPE_WARN_WEEKDAY = 0  # Monday, per date.weekday()
+
+
+def _shop_closed_on(point, day):
+    """Is this a day the point is shut *and* worth warning about?"""
+    return (point.kind == PickupPoint.Kind.PEPE_Y_DALDA
+            and day.weekday() == _PEPE_WARN_WEEKDAY)
+
+
 def _waiting_note(pkg, today):
     """"3 días" — how long a deadline-less package has been on the counter.
 
     Only for the points that never expire: their chip is redrawn on today
     every day, so without this it reads exactly the same on day one and on
     day nine. Empty on the day it arrives, when the chip's position already
-    says everything."""
+    says everything.
+
+    A closing day displaces the count: how long it's been waiting is a
+    nudge, "you cannot fetch it today" is a fact, and only one of them fits
+    on a chip."""
+    if _shop_closed_on(pkg.pickup_point, today):
+        return "cerrado hoy"
     if not pkg.actual_arrival:
         return ""
     days = (today - pkg.actual_arrival).days
@@ -337,7 +359,12 @@ def _chips(start, end, today):
         chips.extend(
             {"date": day, "kind": kind, "tag": STATE_TAGS[kind], "note": note,
              "label": label, "source": source, "detail_url": detail_url,
-             "point_id": pkg.pickup_point_id}
+             "point_id": pkg.pickup_point_id,
+             # Drawn on a day the shop is shut: earns a ⚠ on the chip itself,
+             # since the grid gets read without opening anything. Only marks
+             # a chip you'd act on — a pickup already made needs no warning.
+             "closed": (kind == "waiting"
+                        and _shop_closed_on(pkg.pickup_point, day))}
             for day, kind, note in _marks(pkg, today) if start <= day <= end
         )
     return chips
@@ -362,8 +389,13 @@ def _day_chips(chips, day):
             "tag": STATE_TAGS["picked"],
             "note": "",
             "label": f"{len(picked)} productos",
-            "source": "amazon" if any(c["source"] == "amazon" for c in picked) else "store",
+            # Amazon wins a mixed trip (it's the bulk of any haul); a day of
+            # pickups from one other source keeps that source's own colour
+            # rather than falling back to the "Otros" grape.
+            "source": ("amazon" if any(c["source"] == "amazon" for c in picked)
+                       else picked[0]["source"]),
             "detail_url": reverse("picked_detail", args=[day.isoformat()]),
+            "closed": False,  # a pickup already made: nothing to warn about
         }]
 
     delivered_by_point = defaultdict(list)
@@ -384,6 +416,7 @@ def _day_chips(chips, day):
                     "source": group[0]["source"],
                     "point_id": point_id,
                     "detail_url": reverse("delivered_detail", args=[day.isoformat(), point_id]),
+                    "closed": False,
                 })
             else:
                 collapsed.extend(group)
@@ -554,6 +587,15 @@ def _package_card(request, pkg, back_day):
         # Parcel-or-letter is only ever a real question at Pepe y Dalda;
         # everywhere else the row would just say "Paquete" on every card.
         "show_item_kind": point.kind == PickupPoint.Kind.PEPE_Y_DALDA,
+        # The shop's closing days, but only while there's still a trip to
+        # plan: on a package already collected it's trivia. Loud on a
+        # Monday, when the "Listo para recoger" line above would otherwise
+        # send the user out to a shuttered door; a quiet reminder otherwise.
+        "closed_days": (_PEPE_CLOSED_WEEKDAYS
+                        if (point.kind == PickupPoint.Kind.PEPE_Y_DALDA
+                            and pkg.state == Package.State.AWAITING_PICKUP)
+                        else ""),
+        "closed_today": _shop_closed_on(point, today),
         # Set when the card was opened from a day modal: draws the ‹ control
         # that swaps that day back in.
         "back_day": back_day,
