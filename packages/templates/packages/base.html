@@ -16,6 +16,10 @@
       --danger: #b3402e;
       --amazon: #33658a;
       --store: #7d4a94;
+      /* Pepe y Dalda: its own category, so its own hue — teal is the one
+         family not already spoken for (blue Amazon, grape Otros, orange
+         accent, red deadline, muted grey done). */
+      --pepe: #146b5c;
       --success: #4a7c59;
     }
     @media (prefers-color-scheme: dark) {
@@ -29,6 +33,7 @@
         --danger: #e0705a;
         --amazon: #85b0d1;
         --store: #bb93cf;
+        --pepe: #6fc9b4;
         --success: #7fb88f;
       }
     }
@@ -282,6 +287,7 @@
     .modal-point { margin: 0 0 .65rem; font-size: .8rem; font-weight: 600; }
     .modal-point.amazon { color: var(--amazon); }
     .modal-point.store { color: var(--store); }
+    .modal-point.pepe { color: var(--pepe); }
     .modal-rows { display: grid; gap: .3rem; font-size: .82rem; }
     .modal-rows b { font-weight: 600; color: var(--muted); }
     .vine-badge {

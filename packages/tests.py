@@ -31,6 +31,49 @@ def fixture(name):
     return (FIXTURES / name).read_bytes()
 
 
+_PEPE_SIGNATURE = ("Juguetes Pepe y Dalda // c/Regència d'Urgell, 17 "
+                   "// La Seu d'Urgell")
+
+
+def _pepe_email(subject, body_line, *, forwarded=True,
+                to="Javier Alarcia <jabogood@gmail.com>",
+                signature=_PEPE_SIGNATURE):
+    """A Pepe y Dalda notice, shaped like the real one (fixture 142).
+
+    Only one real sample exists so far — a letter, hand-forwarded, addressed
+    with "para ti" — so the variations the user says are coming (parcels,
+    ones for his wife) and the automatic-forward shape are synthesized from
+    that template rather than guessed at when they arrive. `forwarded` draws
+    the Gmail quote block a hand-forward carries; without it the message is
+    what the automatic forwarding delivers: original headers, no block.
+    """
+    msg = EmailMessage()
+    msg["Subject"] = f"Fwd: {subject}" if forwarded else subject
+    msg["Message-ID"] = f"<pepe-{abs(hash((subject, body_line, to)))}@example.com>"
+    msg["To"] = "Viner Harvest <viner2552@gmail.com>" if forwarded else to
+    # The forward's own date: two days after the shop sent it, which is
+    # exactly why the block below has to win over this header.
+    msg["Date"] = ("Sat, 25 Jul 2026 15:35:08 +0200" if forwarded
+                   else "Thu, 23 Jul 2026 17:46:00 +0200")
+    block = (
+        "<div>---------- Forwarded message ---------</div>"
+        "<div class='gmail_attr'>De: <strong>Pepe y Dalda</strong> "
+        "&lt;pepeydalda@gmail.com&gt;<br>"
+        "Date: jue, 23 jul 2026 a las 17:46<br>"
+        f"Subject: {subject}<br>"
+        f"To: {to.replace('<', '&lt;').replace('>', '&gt;')}<br></div>"
+    ) if forwarded else ""
+    msg.set_content(
+        f"<div>{block}<div><div>{body_line}</div>"
+        "<div>(Os recordamos el PAGO EN EFECTIVO al recoger los paquetes)</div>"
+        f"<div><b>{signature.split('//')[0].strip()}</b>"
+        f"<font> // {' // '.join(signature.split('//')[1:]).strip()}</font></div>"
+        "<div>Horario:</div><div>Lunes cerrado.</div></div></div>",
+        subtype="html",
+    )
+    return msg.as_bytes()
+
+
 class FakeIMAP:
     """Enough of imaplib.IMAP4_SSL to drive scan_inbox in tests. Records
     STORE calls so a test can assert exactly which UIDs were trashed."""
@@ -335,6 +378,80 @@ class ParseEmailTests(SimpleTestCase):
         with self.assertRaisesMessage(ParseError, "Unrecognized email type"):
             parse_email(msg.as_bytes())
 
+    def test_store_reception_letter(self):
+        # Pepe y Dalda, the toy shop that doubles as a delivery address: one
+        # email, sent when the thing is already on the counter. No order id,
+        # no product, no deadline — what it does carry is parcel-or-letter,
+        # who to ask for, and the day, which is the whole calendar entry.
+        parsed = parse_email(fixture("142-fwd-recepcion-carta.eml"))
+        self.assertEqual(parsed.kind, EmailKind.STORE_RECEPTION)
+        self.assertEqual(parsed.item_kind, "letter")
+        self.assertEqual(parsed.item_count, 1)
+        self.assertEqual(parsed.recipient, "Javier")
+        self.assertIn("Pepe y Dalda", parsed.pickup_location)
+        self.assertIn("Regència d'Urgell", parsed.pickup_location)
+        self.assertIsNone(parsed.order_id)
+        self.assertIsNone(parsed.pickup_before)
+        # The shop embeds no tracking token, so the send time is recovered
+        # from the forwarding block — the Date header is the forward's own,
+        # two days late, and would file the whole entry on the wrong day.
+        self.assertEqual(parsed.sent_at.date(), date(2026, 7, 23))
+
+    def test_store_reception_parcel_for_someone_else(self):
+        # No fixture yet — every real one so far is a letter addressed with
+        # "para ti" (user, 2026-07-25: parcels and ones for his wife are
+        # coming). Synthesized from the real template's wording so the two
+        # unseen variations are covered before they land: the plural count,
+        # and a recipient the email names outright instead of "ti".
+        parsed = parse_email(_pepe_email(
+            "Recepción de paquete",
+            "Hola: Hemos recibido 2 paquetes para Marina.",
+        ))
+        self.assertEqual(parsed.kind, EmailKind.STORE_RECEPTION)
+        self.assertEqual(parsed.item_kind, "package")
+        self.assertEqual(parsed.item_count, 2)
+        self.assertEqual(parsed.recipient, "Marina")
+
+    def test_store_reception_falls_back_to_the_addressee(self):
+        # "para ti" names nobody, so the person to ask for at the counter is
+        # whoever the shop emailed — read off the To: header when there's no
+        # forwarding block to read it from (i.e. an automatic forward).
+        parsed = parse_email(_pepe_email(
+            "Recepción carta",
+            "Hola: Hemos recibido 1 carta para ti.",
+            forwarded=False,
+            to="Marina Alarcia <marina@example.com>",
+        ))
+        self.assertEqual(parsed.recipient, "Marina")
+        self.assertEqual(parsed.sent_at.date(), date(2026, 7, 23))
+
+    def test_store_reception_without_a_name_leaves_the_recipient_empty(self):
+        # A bare address is not a name: better an empty field (editable, and
+        # the card simply drops the row) than asking for "Jabogood" at the
+        # counter.
+        parsed = parse_email(_pepe_email(
+            "Recepción carta",
+            "Hola: Hemos recibido 1 carta para ti.",
+            forwarded=False,
+            to="jabogood@example.com",
+        ))
+        self.assertIsNone(parsed.recipient)
+        self.assertEqual(parsed.item_kind, "letter")
+
+    def test_reception_lookalike_from_another_sender_fails_loudly(self):
+        # The reception phrase alone doesn't prove it's that shop. Another
+        # store wording it the same way must trip the banner rather than be
+        # filed under Pepe y Dalda — same one-sender-at-a-time rule as the
+        # UPS delivery attempt.
+        with self.assertRaisesMessage(ParseError, "missing") as ctx:
+            parse_email(_pepe_email(
+                "Recepción de paquete",
+                "Hola: Hemos recibido 1 paquete para ti.",
+                forwarded=False,
+                signature="Papelería Vilaró // c/Mayor, 3",
+            ))
+        self.assertIn("pickup_location", str(ctx.exception))
+
     def test_unknown_template_fails_loudly(self):
         msg = EmailMessage()
         msg["Subject"] = "Oferta especial solo hoy"
@@ -445,6 +562,42 @@ class IngestTests(TestCase):
         self.assertEqual(pkg.pickup_point.kind, PickupPoint.Kind.AMAZON_LOCKER)
         self.assertIn("Bonsenkitchen", pkg.description)
         self.assertIn("XOKUWU", pkg.description)  # both bundled items named
+
+    def test_store_reception_creates_an_awaiting_package(self):
+        # Pepe y Dalda's whole lifecycle in one email: it's already on the
+        # counter, so the row starts (and stays) in awaiting_pickup, with no
+        # deadline — the shop just holds it, charging a little more as the
+        # days pass, which Harvest deliberately doesn't model.
+        record, _ = process_message(fixture("142-fwd-recepcion-carta.eml"))
+        self.assertTrue(record.processed, record.parse_error)
+        pkg = Package.objects.get()
+        self.assertEqual(pkg.state, Package.State.AWAITING_PICKUP)
+        self.assertEqual(pkg.pickup_point.kind, PickupPoint.Kind.PEPE_Y_DALDA)
+        self.assertEqual(pkg.actual_arrival, date(2026, 7, 23))
+        self.assertIsNone(pkg.deadline)
+        self.assertEqual(pkg.item_kind, Package.ItemKind.LETTER)
+        self.assertEqual(pkg.recipient, "Javier")
+        self.assertEqual(pkg.description, "Carta para Javier")
+        # No order number to build one from, so no Amazon link on the card.
+        self.assertEqual(pkg.amazon_tracking_url, "")
+
+    def test_store_receptions_are_separate_packages_at_one_point(self):
+        # Nothing in these emails identifies a delivery, so each notice is
+        # its own row — one thing to go and fetch — but they all share the
+        # single shop row, which dedups by kind and survives a reworded
+        # signature.
+        process_message(fixture("142-fwd-recepcion-carta.eml"))
+        process_message(_pepe_email(
+            "Recepción de paquete",
+            "Hola: Hemos recibido 2 paquetes para Marina.",
+            signature="Pepe y Dalda // Regència d'Urgell 17",
+        ))
+        self.assertEqual(Package.objects.count(), 2)
+        point = PickupPoint.objects.get(kind=PickupPoint.Kind.PEPE_Y_DALDA)
+        self.assertEqual(point.packages.count(), 2)
+        parcel = Package.objects.get(item_kind=Package.ItemKind.PACKAGE)
+        self.assertEqual(parcel.description, "2 paquetes para Marina")
+        self.assertEqual(parcel.recipient, "Marina")
 
     def test_delivery_attempt_transitions_existing_home_package(self):
         # Real 2026-07-23 case: a home delivery already tracked in_transit
@@ -1299,6 +1452,76 @@ class CalendarViewTests(TestCase):
         self.assertIn(b'is-waiting"', html)
         self.assertNotIn(b'is-action_needed"', html)
 
+    def test_pepe_y_dalda_chip_walks_forward_in_its_own_colour(self):
+        # No deadline to go red about, so the urgency is the chip itself:
+        # redrawn on today every day it isn't collected, with a note saying
+        # how long it's been sitting there (user, 2026-07-25). And its own
+        # source colour — Pepe y Dalda is a category beside Amazon and
+        # "Otros", not a flavour of either.
+        today = timezone.localdate()
+        shop = self._point("Juguetes Pepe y Dalda · c/Regència d'Urgell, 17",
+                           PickupPoint.Kind.PEPE_Y_DALDA)
+        Package.objects.create(
+            pickup_point=shop, state=Package.State.AWAITING_PICKUP,
+            description="Carta para Marina", recipient="Marina",
+            item_kind=Package.ItemKind.LETTER,
+            actual_arrival=today - timedelta(days=3),
+        )
+        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+        # The chip itself, not just the stylesheet that travels with it: its
+        # own hue, and not the "Otros" bucket's.
+        self.assertIn(b'class="pkg src-pepe is-waiting"', html)
+        self.assertNotIn(b'class="pkg src-store', html)
+        self.assertIn(b"Listo (3 d\xc3\xadas)", html)
+        # Drawn on today, not on the day it arrived three days ago.
+        day = self.client.get(
+            reverse("day_detail", args=[today.isoformat()])).content
+        self.assertIn("Carta para Marina".encode(), day)
+
+    def test_freshly_arrived_deadline_less_package_says_no_days(self):
+        # Day one: the chip's own position says everything, so the note stays
+        # out of the way until there's something to nag about.
+        today = timezone.localdate()
+        shop = self._point("Pepe y Dalda", PickupPoint.Kind.PEPE_Y_DALDA)
+        Package.objects.create(
+            pickup_point=shop, state=Package.State.AWAITING_PICKUP,
+            description="Paquete para Javier", actual_arrival=today,
+        )
+        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+        self.assertIn(b"src-pepe", html)
+        self.assertNotIn(b"d\xc3\xadas)", html)
+
+    def test_pepe_y_dalda_card_names_the_type_and_the_recipient(self):
+        # The two things the notice carries that nothing else does — and the
+        # recipient is what has to be said out loud at the counter.
+        shop = self._point("Juguetes Pepe y Dalda · c/Regència d'Urgell, 17",
+                           PickupPoint.Kind.PEPE_Y_DALDA)
+        pkg = Package.objects.create(
+            pickup_point=shop, state=Package.State.AWAITING_PICKUP,
+            description="Carta para Marina", recipient="Marina",
+            item_kind=Package.ItemKind.LETTER,
+        )
+        html = self.client.get(
+            reverse("package_detail", args=[pkg.pk])).content
+        self.assertIn(b"Tipo", html)
+        self.assertIn(b"Carta", html)
+        self.assertIn(b"Destinatario", html)
+        self.assertIn(b"Marina", html)
+        # The shop's own signature is the point label, address included.
+        self.assertIn("Regència".encode(), html)
+
+    def test_amazon_card_never_asks_parcel_or_letter(self):
+        # Every non-Pepe row would answer "Paquete", which is noise.
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER)
+        pkg = Package.objects.create(
+            pickup_point=counter, state=Package.State.AWAITING_PICKUP,
+            description="Funda de móvil",
+        )
+        html = self.client.get(
+            reverse("package_detail", args=[pkg.pk])).content
+        self.assertNotIn(b"<b>Tipo</b>", html)
+
     def test_same_day_pickups_collapse_into_one_chip(self):
         # Two things picked up the same day, at different points: the month view
         # has no room for a chip each, so they become one "N productos" recap
@@ -1735,8 +1958,29 @@ class ManualPickupTests(TestCase):
             reverse("package_detail", args=[self.pkg.pk])).content
         self.assertIn(reverse("confirm_pickup", args=[self.pkg.pk]).encode(), html)
 
+    def test_pepe_y_dalda_pickup_offers_the_button(self):
+        # The shop's other no-email half: it says when something arrives and
+        # never again, so the row only closes when the user says so.
+        shop = PickupPoint.objects.create(
+            name="Juguetes Pepe y Dalda", kind=PickupPoint.Kind.PEPE_Y_DALDA)
+        pkg = Package.objects.create(
+            pickup_point=shop, state=Package.State.AWAITING_PICKUP,
+            description="Carta para Marina",
+            actual_arrival=self.today - timedelta(days=2))
+        html = self.client.get(reverse("package_detail", args=[pkg.pk])).content
+        self.assertIn(reverse("confirm_pickup", args=[pkg.pk]).encode(), html)
+
+        response = self.client.post(
+            reverse("confirm_pickup", args=[pkg.pk]),
+            {"picked_up_on": (self.today - timedelta(days=1)).isoformat()})
+        pkg.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(pkg.state, Package.State.PICKED_UP)
+        self.assertEqual(pkg.picked_up_on, self.today - timedelta(days=1))
+
     def test_every_other_pickup_stays_email_driven(self):
-        # Scoped to the carrier case on purpose (user, 2026-07-25): an Amazon
+        # Scoped to the two no-email cases on purpose (user, 2026-07-25 —
+        # the carrier's office, and Pepe y Dalda above): an Amazon
         # locker/counter closes itself from the "Se ha recogido" email, and
         # the alt store stays admin-only.
         for kind in (PickupPoint.Kind.AMAZON_LOCKER,

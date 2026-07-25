@@ -71,6 +71,23 @@ class PickupPoint(models.Model):
         # after a missed handoff). The email never names the specific office,
         # only the carrier, so this dedups by carrier name, not a real address.
         CARRIER = "carrier", "Transportista"
+        # The toy shop that doubles as a delivery address: the user types the
+        # store's street address into any e-commerce checkout and the shop
+        # emails once the parcel (or letter) is at the counter. Its own
+        # category, not the ALT_STORE bucket (user, 2026-07-25): it has its
+        # own email lifecycle, its own colour and enough volume to be worth
+        # recognizing at a glance. Only ever one row — it's one shop — so
+        # ingestion dedups it by kind alone, not by name.
+        PEPE_Y_DALDA = "pepe_y_dalda", "Pepe y Dalda"
+
+    # Points that are the far end of an Amazon delivery, whatever shape it
+    # takes (a locker, a counter, a relative's door, the carrier's office
+    # after a failed handoff). Spelled as a positive list on purpose: the old
+    # "anything that isn't the alt store" reading silently swallowed every new
+    # non-Amazon kind the moment one was added.
+    AMAZON_KINDS = frozenset({
+        Kind.AMAZON_LOCKER, Kind.AMAZON_COUNTER, Kind.HOME, Kind.CARRIER,
+    })
 
     name = models.CharField(max_length=120)
     kind = models.CharField(max_length=20, choices=Kind.choices)
@@ -91,7 +108,7 @@ class PickupPoint(models.Model):
 
     @property
     def is_amazon(self):
-        return self.kind != self.Kind.ALT_STORE
+        return self.kind in self.AMAZON_KINDS
 
     @property
     def is_home(self):
@@ -114,11 +131,27 @@ class Package(models.Model):
         DELIVERED = "delivered", "Delivered"
         RETURNED = "returned", "Returned"
 
+    class ItemKind(models.TextChoices):
+        """What is actually waiting at the counter. Only Pepe y Dalda makes
+        the distinction — their notice is either "Recepción paquete" or
+        "Recepción carta" — and it changes what the user goes to fetch, so
+        the card says which. Everything else is a parcel, hence the default."""
+
+        PACKAGE = "package", "Paquete"
+        LETTER = "letter", "Carta"
+
     pickup_point = models.ForeignKey(
         PickupPoint, on_delete=models.PROTECT, related_name="packages"
     )
     description = models.CharField(max_length=255, blank=True)
     pickup_code = models.CharField(max_length=20, blank=True)
+    item_kind = models.CharField(
+        max_length=10, choices=ItemKind.choices, default=ItemKind.PACKAGE
+    )
+    # Who the delivery is addressed to. Blank everywhere except Pepe y Dalda,
+    # where it's the one thing the user has to say out loud at the counter to
+    # be handed the right parcel — most are for his wife, some are his.
+    recipient = models.CharField(max_length=60, blank=True)
 
     # Set when a home delivery is diverted to a carrier's office (see
     # PickupPoint.Kind.CARRIER). The delivery-attempt email never carries the

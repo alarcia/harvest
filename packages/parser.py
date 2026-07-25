@@ -1,4 +1,7 @@
-"""Parse Amazon.es notification emails into structured data.
+"""Parse the notification emails Harvest lives on into structured data.
+
+Amazon.es sends all but one of them; the exception is Pepe y Dalda, the toy
+shop that doubles as a delivery address (see EmailKind.STORE_RECEPTION).
 
 Pure function: bytes in, ParsedEmail out. No database, no IMAP. Ingestion
 maps the result onto the Package/RawEmail models and the calendar's chip
@@ -13,8 +16,10 @@ Built for the day Amazon changes a template — fail loudly, never guess:
   tweaks better than human text.
 - Every relative date ("Llega el lunes", "Recogido hoy") is resolved against
   the *original* send time, recovered from the `urn:rtn:msg:<timestamp>`
-  token Amazon embeds in every link. The Date header is only a fallback: on
-  hand-forwarded mail it holds the forward time, days after the fact.
+  token Amazon embeds in every link, or — for senders that embed no such
+  token — from the "Date:" line of a Gmail forwarding block. The Date header
+  is only the last fallback: on hand-forwarded mail it holds the forward
+  time, days after the fact.
 - Each kind declares required fields; anything missing raises ParseError
   naming the gap instead of returning half-parsed data.
 
@@ -58,6 +63,11 @@ class EmailKind(Enum):
     NO_LONGER_AVAILABLE = "no_longer_available"
     PICKUP_REMINDER = "pickup_reminder"  # "sigue en espera": a nag, no new info
     REVIEW_PUBLISHED = "review_published"
+    # The only non-Amazon template: Pepe y Dalda's "Recepción paquete" /
+    # "Recepción carta". One email per delivery, sent when it's already on
+    # the counter — there is no order/shipped/estimated half of the story —
+    # so it lands straight on `awaiting_pickup` with no deadline.
+    STORE_RECEPTION = "store_reception"
 
 
 class ParseError(ValueError):
@@ -103,6 +113,13 @@ class ParsedEmail:
     barcode_url: str | None = None  # static image scanned at the counter
     temp_password: str | None = None  # home-delivery one-time password
     picked_up_on: date | None = None
+    # Pepe y Dalda only. `item_kind` mirrors Package.ItemKind's values
+    # ("package"/"letter") so ingestion can assign it straight across;
+    # `item_count` is the "Hemos recibido N …" figure (one email is still one
+    # trip, so it only ever colours the description).
+    item_kind: str | None = None
+    item_count: int | None = None
+    recipient: str | None = None  # who to name at the counter
     review_id: str | None = None
     review_headline: str | None = None  # the review's own title
     review_rating: int | None = None  # 1-5, decoded from the star image name
@@ -146,6 +163,16 @@ _KIND_PATTERNS = [
     (EmailKind.OUT_FOR_DELIVERY, r"paquete está en reparto"),
     (EmailKind.SHIPPED, r"paquete se ha enviado"),
     (EmailKind.ORDERED, r"gracias por tu pedido"),
+    # Pepe y Dalda writes both of these by hand, so match either the subject
+    # ("Recepción carta", "Recepción de paquete") or the body line ("Hemos
+    # recibido 1 carta para ti"). The phrase alone doesn't prove it's *that*
+    # shop, but pickup_location is required for this kind and only the shop's
+    # own signature ever fills it, so a lookalike from somewhere else fails
+    # loudly into the banner — same rule as DELIVERY_ATTEMPT above, one
+    # sender at a time.
+    (EmailKind.STORE_RECEPTION,
+     r"recepci[oó]n\s+(?:de\s+)?(?:paquete|carta)"
+     r"|hemos recibido\s+\d+\s+(?:paquete|carta)"),
 ]
 
 # Fields that must come out of each kind, or the parse fails loudly.
@@ -167,6 +194,13 @@ _REQUIRED = {
     # item_title/review_id are the matching keys the reviews module needs
     # (audited against fixture 010: both are always present).
     EmailKind.REVIEW_PUBLISHED: ("item_title", "review_id"),
+    # No order id, no item, no deadline — this shop's notice carries none of
+    # that. `pickup_location` is the shop's own signature block, which is
+    # what proves the sender (see _KIND_PATTERNS); `sent_at` is the day it
+    # landed on the counter, i.e. the whole calendar entry; `item_kind` says
+    # parcel or letter. `recipient` is deliberately optional: the wording
+    # ("para ti") doesn't always name anyone.
+    EmailKind.STORE_RECEPTION: ("sent_at", "pickup_location", "item_kind"),
 }
 
 # Bidi embeddings (Amazon wraps order numbers in RTL marks), zero-widths,
@@ -195,6 +229,24 @@ _PICKED = re.compile(r"^Recogido (.+)$")
 _PICKUP_CODE = re.compile(r"código de recogida es\s+(\w+)")
 _TEMP_PASSWORD = re.compile(r"contraseña temporal es\s+(\w+)")
 _ORDER_LINE = re.compile(r"^Pedido n")
+# Pepe y Dalda's one informative line: "Hemos recibido 1 carta para ti."
+_RECEPTION = re.compile(
+    r"hemos recibido\s+(\d+)\s+(paquete|carta)s?(?:\s+para\s+([^.,;]+))?",
+    re.IGNORECASE,
+)
+# …and the fallback when they reword it: the subject still says which it is.
+_RECEPTION_SUBJECT = re.compile(r"recepci[oó]n\s+(?:de\s+)?(paquete|carta)",
+                                re.IGNORECASE)
+_ITEM_KINDS = {"paquete": "package", "carta": "letter"}
+# "para ti" names nobody: the addressee is whoever the shop emailed, so the
+# name comes from the To: line instead (see _addressee).
+_PRONOUNS = {"ti", "tí", "vos", "usted", "ustedes", "vosotros", "vosotras",
+             "ustedes dos", "vosotros dos"}
+_STORE_NAME = "Pepe y Dalda"
+# A Gmail forwarding block's own header lines ("Date: jue, 23 jul 2026 a las
+# 17:46", "To: Javier Alarcia <"). Present on hand-forwards, absent on the
+# automatic ones — which is fine, those keep the original headers intact.
+_FWD_HEADER = re.compile(r"^(Date|To|Fecha|Para):\s*(.*)$", re.IGNORECASE)
 # Noise between the pickup-point line and "Pedido n.º": opening hours.
 _NOISE_LINE = re.compile(r"^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$|^[\w\sñáéíóúü-]+:$",
                          re.IGNORECASE)
@@ -259,6 +311,60 @@ def _pickup_location(lines):
         # that shape means the layout moved — better missing than wrong.
         return line if (" - " in line or "," in line) else None
     return None
+
+
+def _forwarded_header(lines, name):
+    """The value of one header line inside a Gmail forwarding block.
+
+    Only the first few lines of a forward are that block, and Amazon's own
+    body never opens with "Date:"/"To:", so the search is capped instead of
+    trying to delimit the block precisely. Returns "" when this isn't a
+    hand-forward, which is the normal case in production."""
+    for line in lines[:12]:
+        match = _FWD_HEADER.match(line)
+        if match and match.group(1).lower() == name.lower():
+            return match.group(2).strip()
+    return ""
+
+
+def _addressee(msg, lines):
+    """First name of whoever the original email was addressed to.
+
+    Needed because Pepe y Dalda writes "para ti", naming nobody: the person
+    to ask for at the counter is the addressee. On a hand-forward the To:
+    header is the Harvest mailbox, so the forwarding block's own To: line
+    wins; automatic forwards keep the real one. Returns "" rather than a
+    guess when all that's there is a bare address (the field stays editable,
+    and a wrong name at the counter is worse than none)."""
+    raw = _forwarded_header(lines, "To") or msg.get("To", "")
+    # Hand-forwards split "To: Javier Alarcia <jabogood@gmail.com>" across
+    # lines: the display name arrives with a dangling "<".
+    display = raw.split("<")[0].strip().strip('"')
+    if not display or "@" in display:
+        return ""
+    return display.split()[0]
+
+
+def _store_signature(lines):
+    """Pepe y Dalda's sign-off, which doubles as the shop's address:
+
+        Juguetes Pepe y Dalda
+        // c/Regència d'Urgell, 17 // La Seu d'Urgell
+
+    Taken from the *last* line naming the shop — the first one is the "De:"
+    sender of a forwarding block — and joined with the address line that
+    follows it, since the shop's markup splits the two. Returns None when the
+    shop isn't named at all, which is how a lookalike notice from some other
+    sender fails loudly instead of being filed here (see _KIND_PATTERNS)."""
+    idx = next((i for i in range(len(lines) - 1, -1, -1)
+                if _STORE_NAME.lower() in lines[i].lower()), None)
+    if idx is None:
+        return None
+    parts = [lines[idx]]
+    if idx + 1 < len(lines) and lines[idx + 1].lstrip().startswith("//"):
+        parts.append(lines[idx + 1])
+    signature = " ".join(parts)
+    return re.sub(r"\s*//\s*", " · ", signature).strip(" ·")[:120]
 
 
 def _clean_img_url(src):
@@ -347,8 +453,16 @@ def parse_email(raw):
         raise ParseError(f"Unrecognized email type (subject={subject!r})")
 
     token = _SENT_TOKEN.search(html)
+    forwarded_date = _forwarded_header(lines, "Date")
     if token:
         sent_at = datetime.strptime(token.group(1), "%Y%m%d%H%M%S")
+    elif forwarded_date and (parsed_fwd := dateparser.parse(
+            forwarded_date, languages=["es"])):
+        # A sender that embeds no tracking token (Pepe y Dalda) leaves the
+        # forwarding block as the only record of when the email really went
+        # out — and on a hand-forward the Date header below is the forward's
+        # own, days late. Getting this wrong dates the whole calendar entry.
+        sent_at = parsed_fwd.replace(tzinfo=None)
     elif msg.get("Date"):
         sent_at = parsedate_to_datetime(msg["Date"]).replace(tzinfo=None)
     else:
@@ -386,6 +500,24 @@ def parse_email(raw):
     if estimated_arrival_end and estimated_arrival_end <= estimated_arrival:
         estimated_arrival_end = None
 
+    item_kind, item_count, recipient = None, None, None
+    pickup_location = _pickup_location(lines)
+    if kind is EmailKind.STORE_RECEPTION:
+        # A different shape of email entirely: no "Pedido n.º" to hang the
+        # venue line off, and the destination is the shop's own signature.
+        pickup_location = _store_signature(lines)
+        reception = _RECEPTION.search(haystack)
+        subject_kind = _RECEPTION_SUBJECT.search(subject) or _RECEPTION_SUBJECT.search(haystack)
+        if reception:
+            item_count = int(reception.group(1))
+            item_kind = _ITEM_KINDS[reception.group(2).lower()]
+            named = (reception.group(3) or "").strip()
+            recipient = "" if named.lower() in _PRONOUNS else named[:60]
+        elif subject_kind:
+            item_kind = _ITEM_KINDS[subject_kind.group(1).lower()]
+        if not recipient:
+            recipient = _addressee(msg, lines)
+
     parsed = ParsedEmail(
         kind=kind,
         message_id=message_id,
@@ -396,7 +528,7 @@ def parse_email(raw):
         shipment_id=shipment_id,
         shipment_ids=shipment_ids,
         items=_items(soup),
-        pickup_location=_pickup_location(lines),
+        pickup_location=pickup_location,
         total=Decimal(total_raw.group(1).replace(",", ".")) if total_raw else None,
         estimated_arrival=estimated_arrival,
         estimated_arrival_end=estimated_arrival_end,
@@ -405,6 +537,9 @@ def parse_email(raw):
         barcode_url=_barcode_url(soup),
         temp_password=match.group(1) if (match := _TEMP_PASSWORD.search(haystack)) else None,
         picked_up_on=_resolve_date(picked, sent_at) if picked else None,
+        item_kind=item_kind,
+        item_count=item_count,
+        recipient=recipient or None,
         review_id=match.group(1) if (match := _REVIEW_ID.search(urls)) else None,
         review_headline=review_headline,
         review_rating=int(star_match.group(1)) if star_match else None,

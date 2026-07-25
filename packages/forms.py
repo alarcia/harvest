@@ -9,6 +9,8 @@ class PackageForm(forms.ModelForm):
         fields = [
             "pickup_point",
             "description",
+            "item_kind",
+            "recipient",
             "pickup_code",
             "is_vine",
             "cost",

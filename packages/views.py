@@ -118,6 +118,21 @@ def _estimate_note(pkg, today):
     return "con retraso"
 
 
+def _waiting_note(pkg, today):
+    """"3 días" — how long a deadline-less package has been on the counter.
+
+    Only for the points that never expire: their chip is redrawn on today
+    every day, so without this it reads exactly the same on day one and on
+    day nine. Empty on the day it arrives, when the chip's position already
+    says everything."""
+    if not pkg.actual_arrival:
+        return ""
+    days = (today - pkg.actual_arrival).days
+    if days < 1:
+        return ""
+    return "1 día" if days == 1 else f"{days} días"
+
+
 def _preview_leaves_day(pkg, today):
     """The forecasted "antes del" day for an in-transit package at a pickup
     point with a known grace window, or None. A guess from the estimated
@@ -217,7 +232,22 @@ def _point_label(point):
         return f"Otros · {point.name}"
     if point.kind == PickupPoint.Kind.CARRIER:
         return f"Recogida en transportista · {point.name}"
+    # Pepe y Dalda names itself, address included (the signature its emails
+    # sign off with), so it needs no prefix — same as an Amazon venue.
     return point.name
+
+
+# Which colour family a chip belongs to. Three sources, not two: Pepe y
+# Dalda is its own category beside Amazon and the "Otros" bucket (user,
+# 2026-07-25), so it gets its own hue rather than borrowing the alt store's.
+_SOURCES = {
+    PickupPoint.Kind.ALT_STORE: "store",
+    PickupPoint.Kind.PEPE_Y_DALDA: "pepe",
+}
+
+
+def _source(point):
+    return _SOURCES.get(point.kind, "amazon")
 
 
 def _marks(pkg, today):
@@ -261,8 +291,14 @@ def _marks(pkg, today):
             # isn't mild — a failed delivery needs an active trip today, so it
             # gets its own louder mark instead of falling into "waiting" below.
             return [(today, "action_needed", "")]
-        if not pkg.deadline:  # alt store never expires: today's cell only
-            return [(today, "waiting", "")]
+        if not pkg.deadline:
+            # Nothing ever expires here (the alt store and Pepe y Dalda both
+            # just hold it), so the mark rides on today, walking one cell
+            # forward every day it isn't collected — that walk *is* the
+            # urgency, in the absence of a deadline to go red about. The note
+            # says how long it's been sitting there, since a chip that keeps
+            # moving otherwise erases the one fact that makes it pressing.
+            return [(today, "waiting", _waiting_note(pkg, today))]
         last_safe = pkg.deadline - timedelta(days=1)
         if today > pkg.deadline:
             # Past the deadline, not confirmed picked: per the misleading
@@ -295,8 +331,7 @@ def _chips(start, end, today):
                 .exclude(state=Package.State.RETURNED)
                 .select_related("pickup_point"))
     for pkg in packages:
-        source = ("store" if pkg.pickup_point.kind == PickupPoint.Kind.ALT_STORE
-                  else "amazon")
+        source = _source(pkg.pickup_point)
         label = _label(pkg)
         detail_url = reverse("package_detail", args=[pkg.pk])
         chips.extend(
@@ -476,15 +511,23 @@ def day_detail(request, day):
     })
 
 
+# Points whose pickups no email will ever confirm, so the user closes them
+# by hand from the card: a carrier's office (Amazon abandons that lifecycle
+# the moment the delivery fails) and Pepe y Dalda (the shop sends exactly one
+# email, when it arrives, and nothing afterwards). The alt store stays out —
+# it has no emails at all, so it's manual end to end and lives in the admin.
+_MANUAL_PICKUP_KINDS = frozenset({
+    PickupPoint.Kind.CARRIER, PickupPoint.Kind.PEPE_Y_DALDA,
+})
+
+
 def _can_confirm_pickup(pkg):
     """Whether the card offers the manual "ya lo he recogido" (see
-    confirm_pickup). Only a package waiting at a carrier's office: that's the
-    one lifecycle Amazon abandons mid-way, so it's the one that would other-
-    wise never close. Everything else keeps closing itself from email, and
-    the alt store — the other no-email case — stays admin-only on purpose
-    (user, 2026-07-25)."""
+    confirm_pickup). Only for the points above: everything else keeps closing
+    itself from email, and a manual button there would only invite closing a
+    package the email would have closed correctly anyway."""
     return (pkg.state == Package.State.AWAITING_PICKUP
-            and pkg.pickup_point.kind == PickupPoint.Kind.CARRIER)
+            and pkg.pickup_point.kind in _MANUAL_PICKUP_KINDS)
 
 
 def _package_card(request, pkg, back_day):
@@ -497,8 +540,7 @@ def _package_card(request, pkg, back_day):
         "package": pkg,
         "label": _label(pkg),
         "point_label": _point_label(point),
-        "source": ("store" if point.kind == PickupPoint.Kind.ALT_STORE
-                   else "amazon"),
+        "source": _source(point),
         "state_label": _state_label(pkg),
         # The card is where the delivery window gets spelled out in full: the
         # chip only has room to say "Estimado", so this is the one place the
@@ -509,6 +551,9 @@ def _package_card(request, pkg, back_day):
         "preview_leaves_day": (_preview_leaves_day(pkg, today)
                                 if in_transit else None),
         "can_confirm_pickup": _can_confirm_pickup(pkg),
+        # Parcel-or-letter is only ever a real question at Pepe y Dalda;
+        # everywhere else the row would just say "Paquete" on every card.
+        "show_item_kind": point.kind == PickupPoint.Kind.PEPE_Y_DALDA,
         # Set when the card was opened from a day modal: draws the ‹ control
         # that swaps that day back in.
         "back_day": back_day,
@@ -522,17 +567,16 @@ def package_detail(request, pk):
 
 
 def confirm_pickup(request, pk):
-    """Manual "ya lo he recogido", for the one pickup no email ever confirms.
+    """Manual "ya lo he recogido", for the pickups no email ever confirms.
 
-    Pickups close themselves — the "Se ha recogido" email is final truth (see
-    CLAUDE.md) — except after a failed home delivery: a package diverted to a
-    carrier's office (PickupPoint.Kind.CARRIER, the "Intento de entrega"
-    email) leaves Amazon's lifecycle for good. Their status reads "Entregado"
-    and nothing else ever arrives, so without this the row would sit
-    `awaiting_pickup` on the board forever, under a red ⚠ chip. Scoped to
-    exactly that case (user, 2026-07-25): every other package still gets its
-    state from email, and a manual button on those would only invite closing
-    a package the email would have closed correctly anyway.
+    Amazon pickups close themselves — the "Se ha recogido" email is final
+    truth (see CLAUDE.md). Two cases never get that email (see
+    _MANUAL_PICKUP_KINDS): a package diverted to a carrier's office after a
+    failed home delivery, which leaves Amazon's lifecycle for good (their
+    status reads "Entregado" and nothing else ever arrives), and anything at
+    Pepe y Dalda, whose single "Recepción…" notice is the whole
+    correspondence. Without this both would sit `awaiting_pickup` on the
+    board forever.
 
     GET renders a confirmation step rather than acting on the tap: the day is
     the whole point of the dialog. Marking it "today" when the trip was
@@ -581,8 +625,7 @@ def confirm_pickup(request, pk):
         "package": pkg,
         "label": _label(pkg),
         "point_label": _point_label(pkg.pickup_point),
-        "source": ("store" if pkg.pickup_point.kind == PickupPoint.Kind.ALT_STORE
-                   else "amazon"),
+        "source": _source(pkg.pickup_point),
         "day": day,
         "today": today,
         "min_day": pkg.actual_arrival,
@@ -606,8 +649,7 @@ def picked_detail(request, day):
         "package": pkg,
         "label": _label(pkg),
         "point_label": _point_label(pkg.pickup_point),
-        "source": ("store" if pkg.pickup_point.kind == PickupPoint.Kind.ALT_STORE
-                   else "amazon"),
+        "source": _source(pkg.pickup_point),
     } for pkg in packages]
     return render(request, "packages/_picked_detail.html", {
         "day": picked_day,

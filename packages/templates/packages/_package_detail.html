@@ -17,6 +17,14 @@
     <p class="modal-point {{ source }}">{{ point_label }}</p>
     <div class="modal-rows">
       <span><b>Estado</b> {{ state_label }}{% if package.is_vine %} · <i class="vine-badge">Vine</i>{% endif %}</span>
+      {% comment %}Parcel-or-letter and the name to say at the counter: the two
+      things a Pepe y Dalda notice carries and nothing else does.{% endcomment %}
+      {% if show_item_kind %}
+        <span><b>Tipo</b> {{ package.get_item_kind_display }}</span>
+      {% endif %}
+      {% if package.recipient %}
+        <span><b>Destinatario</b> {{ package.recipient }}</span>
+      {% endif %}
       {% if estimate_line %}
         <span><b>Llegada estimada</b> {{ estimate_line }}</span>
       {% endif %}

@@ -20,6 +20,10 @@ Rules that matter:
 - Home deliveries (location is not an Amazon Locker/Counter) create no rows:
   the calendar tracks trips to pickup points. The raw email stays stored, so
   the decision is reversible by reprocessing.
+- Pepe y Dalda (the one non-Amazon sender) has a one-email lifecycle: the
+  notice arrives when the thing is already on the counter, so it creates a
+  row straight in `awaiting_pickup` with no deadline, and only the user can
+  close it (the shop sends nothing else, ever).
 - Once GMAIL_TRASH_PROCESSED is on, successfully-processed emails are moved to
   Gmail's Trash (30-day grace). Parse failures are left in the inbox so an
   unhandled email is doubly visible (inbox + red banner). The whole run is
@@ -96,6 +100,37 @@ def _pickup_point(location):
         name=location[:120], defaults={"kind": kind},
     )
     return point
+
+
+def _store_point(parsed):
+    """The one Pepe y Dalda row, created on first sighting.
+
+    Deduped by kind alone, unlike every other point: there is exactly one
+    such shop, and its name is a hand-written signature line that may well be
+    reworded between emails — matching on it would quietly split the shop in
+    two, which is the bug `location_key` was introduced to kill for Amazon
+    venues (see _pickup_point)."""
+    point, _ = PickupPoint.objects.get_or_create(
+        kind=PickupPoint.Kind.PEPE_Y_DALDA,
+        defaults={"name": (parsed.pickup_location or "Pepe y Dalda")[:120]},
+    )
+    return point
+
+
+def _reception_description(parsed):
+    """"Carta para Marina", "2 paquetes para Javier" — the chip's whole label.
+
+    This shop's notice names no product (it has no idea what's inside), so
+    what the calendar can usefully say is what it is and who it's for. The
+    recipient rides in the description on purpose: it's the one thing that
+    has to be said out loud at the counter, so it belongs where it can be
+    read without opening the card."""
+    count = parsed.item_count or 1
+    noun = "carta" if parsed.item_kind == Package.ItemKind.LETTER else "paquete"
+    label = noun.capitalize() if count == 1 else f"{count} {noun}s"
+    if parsed.recipient:
+        label += f" para {parsed.recipient}"
+    return label[:255]
 
 
 _COUNT_ONLY = re.compile(r"^\d+\s+productos?$", re.IGNORECASE)
@@ -325,6 +360,27 @@ def _apply(parsed):
     """
     sent_on = parsed.sent_at.date() if parsed.sent_at else None
     kind = parsed.kind
+
+    if kind == EmailKind.STORE_RECEPTION:
+        # Pepe y Dalda's single email *is* the arrival: there is no ordered
+        # or shipped half to match against, and no id of any kind to match
+        # *with*, so every notice is a new row — one email, one thing to go
+        # and fetch. Straight to awaiting_pickup with no deadline: the shop
+        # holds it indefinitely (it only gets pricier), so the urgency comes
+        # from the chip walking forward day after day, not from a red date.
+        # Handled before _pickup_point below, which would read this shop's
+        # signature as a home address.
+        pkg = Package(
+            pickup_point=_store_point(parsed),
+            state=Package.State.AWAITING_PICKUP,
+            actual_arrival=sent_on,
+            description=_reception_description(parsed),
+            item_kind=parsed.item_kind or Package.ItemKind.PACKAGE,
+            recipient=parsed.recipient or "",
+        )
+        pkg.save()
+        return pkg, f"Recepción en Pepe y Dalda: {pkg.description}"
+
     point = _pickup_point(parsed.pickup_location)
 
     if kind in (EmailKind.ORDERED, EmailKind.SHIPPED, EmailKind.OUT_FOR_DELIVERY):
