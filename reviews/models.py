@@ -3,6 +3,7 @@ from datetime import timedelta
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models import Exists, OuterRef, Q
+from django.db.models.functions import Coalesce, TruncDate
 from django.utils import timezone
 
 
@@ -12,20 +13,46 @@ def _six_months_later(d):
     return d.replace(year=year, month=month % 12 + 1)
 
 
+def _cycle_date():
+    """The date a review is filed under when browsing by cycle.
+
+    Normally the package's `ordered_on`: a Vine cycle evaluates the items
+    *received* in it, so the order date is what binds a review to a period.
+    Written reviews with no package at all fall back to when they were
+    written — the pre-Harvest historical import, and the rows the "Gracias
+    por tu reseña" email creates on its own, carry no order date, and
+    shelving those by the only date we do have beats making the whole corpus
+    unreachable from every cycle. Pending reviews get no such fallback (see
+    `reviews_list`): there the cycle drives nagging, and a guess would nag in
+    the wrong period.
+    """
+    return Coalesce(
+        "package__ordered_on", "published_on", "approved_on", TruncDate("created_at"),
+    )
+
+
 class VineCycle(models.Model):
-    """One Vine evaluation period (~6 months, e.g. 27 Jan → 26 Jul).
+    """One Vine evaluation period (~6 months, e.g. 26 Jul → 24 Jan).
 
     Reviews only count toward the cycle their *order* falls in: when a new
     cycle starts, the previous backlog stops being urgent (clean slate) but
     stays workable — an old product can still be reviewed and its
     confirmation email still closes it, just outside the current cycle.
 
-    History back to 2020 and forward to 2031 was bulk-seeded once by
-    migration 0002. Beyond that range, `current()` creates whatever cycle is
-    missing on demand (see `_ensure_through`) — the 27th boundary is fixed
-    forever, so there's nothing to decide, only the right moment to do it:
-    the first time anything asks what "today" belongs to and finds a gap.
-    Still editable in the admin if a boundary ever turns out wrong.
+    **The boundary is not fixed and cannot be computed.** Migration 0002
+    seeded a decade of rows believing it sat forever on the 27th of January
+    and July; migration 0004 corrected that against Amazon's own data, which
+    drifts a day earlier each period. Only the periods Amazon has actually
+    published are trustworthy: the JSON behind the Vine page carries them as
+    exact midnights UTC, so a cut lands at 01:00/02:00 Madrid time and the
+    boundary *day* belongs to the incoming cycle. `_ensure_through` still
+    tops the table up on demand so no date ever falls outside a cycle, but
+    what it writes is a **guess** at a six-month step — correct it in the
+    admin (or in a migration) once the real date shows up.
+
+    Membership is by date, not by instant: an order placed on a boundary day
+    before ~02:00 belongs to the outgoing cycle and Harvest will file it in
+    the incoming one. Two hours, twice a year, in a window nobody shops in.
     """
 
     starts_on = models.DateField(unique=True)
@@ -51,7 +78,12 @@ class VineCycle(models.Model):
         it only ever creates rows the first time `today` outruns the last
         one on record, which in practice is twice a year. Does nothing on a
         table with no rows at all: that's an unmigrated/empty DB, not a gap
-        to backfill from here."""
+        to backfill from here.
+
+        What it writes is a **placeholder**, not a fact — the real boundary
+        drifts (see the class docstring), so a generated row exists only to
+        keep every date inside *some* cycle until Amazon publishes the
+        actual period."""
         latest = cls.objects.order_by("-starts_on").first()
         if latest is None:
             return
@@ -65,21 +97,31 @@ class VineCycle(models.Model):
     @classmethod
     def navigable(cls, current=None):
         """The cycles the reviews paginator is allowed to land on: every
-        cycle that actually contains a review (placed by its package's
-        `ordered_on`), plus the current cycle even when empty.
+        cycle that has something to show — a pending review placed by its
+        package's `ordered_on`, or a written one placed by `_cycle_date` —
+        plus the current cycle even when empty.
 
-        The point: migration 0002 seeds all 22 half-year boundaries from
-        2020 to 2031 whether or not anything ever happened in them, so a
-        naive prev/next lets you page back through a decade of empty
-        placeholder rows — which reads to the user as "travelling to cycles
-        that don't exist". Only cycles with something in them (and today's)
-        are real destinations; everything else is invisible to navigation
-        and redirects to the current cycle if reached by a hand-typed URL."""
-        reviewed = Review.objects.filter(
+        The point: the table holds half-year boundaries whether or not
+        anything ever happened in them (migration 0002 seeded a decade of
+        them, `_ensure_through` keeps adding), so a naive prev/next lets you
+        page back through empty placeholder rows — which reads to the user
+        as "travelling to cycles that don't exist". Only cycles with
+        something in them (and today's) are real destinations; everything
+        else is invisible to navigation and redirects to the current cycle
+        if reached by a hand-typed URL.
+
+        The two halves mirror the two lists `reviews_list` renders, exactly:
+        a pending review with no order date is hidden there, so it must not
+        make a cycle navigable here either — it would land you on an empty
+        page, which is the very thing this method exists to prevent."""
+        ordered_in = Review.objects.filter(
             package__ordered_on__gte=OuterRef("starts_on"),
             package__ordered_on__lte=OuterRef("ends_on"),
         )
-        condition = Exists(reviewed)
+        written_in = Review.objects.written().in_cycle(
+            OuterRef("starts_on"), OuterRef("ends_on"),
+        )
+        condition = Exists(ordered_in) | Exists(written_in)
         if current is not None:
             condition |= Q(pk=current.pk)
         return cls.objects.filter(condition)
@@ -93,6 +135,18 @@ class ReviewQuerySet(models.QuerySet):
         if include_non_vine:
             return self
         return self.filter(Q(package__isnull=True) | Q(package__is_vine=True))
+
+    def written(self):
+        """The ones that exist as text — the "Reseñas escritas" history."""
+        return self.filter(status__in=[Review.Status.APPROVED, Review.Status.PUBLISHED])
+
+    def in_cycle(self, starts_on, ends_on):
+        """Filed inside the given period, by `_cycle_date`. Takes plain dates
+        or query expressions, so `VineCycle.navigable` can hand it OuterRefs
+        and get the same rule the page renders."""
+        return self.annotate(cycle_date=_cycle_date()).filter(
+            cycle_date__gte=starts_on, cycle_date__lte=ends_on,
+        )
 
     def vencidas(self, today=None, cycle=None):
         """Pending, overdue, and ordered inside the given (default: current)

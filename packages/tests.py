@@ -1471,9 +1471,13 @@ class CalendarViewTests(TestCase):
         html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
         # The chip itself, not just the stylesheet that travels with it: its
         # own hue, and not the "Otros" bucket's.
-        self.assertIn(b'class="pkg src-pepe is-waiting"', html)
+        self.assertIn(b'class="pkg src-pepe is-waiting', html)
         self.assertNotIn(b'class="pkg src-store', html)
-        self.assertIn(b"Listo (3 d\xc3\xadas)", html)
+        # The day count — except on a Monday, when the shop is shut and the
+        # note says so instead (its own test, below). Reading `today` and
+        # then asserting a fixed note made this fail every Monday.
+        self.assertIn(b"Listo (cerrado hoy)" if today.weekday() == 0
+                       else b"Listo (3 d\xc3\xadas)", html)
         # Drawn on today, not on the day it arrived three days ago.
         day = self.client.get(
             reverse("day_detail", args=[today.isoformat()])).content

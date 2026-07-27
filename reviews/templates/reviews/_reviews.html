@@ -271,12 +271,15 @@ swapped in from the calendar page.{% endcomment %}
       {% endif %}
     </section>
 
-    {% if confirmed %}
-      {% comment %}Collapsed by default — the written reviews are history, not
-      the daily task; the user opens them only when he wants to look
-      (native <details>, no JS, travels fine inside the HTMX fragment).{% endcomment %}
-      <details class="rev-group confirmed">
-        <summary><span>Reseñas escritas</span> <span class="rev-count">{{ confirmed|length }}</span></summary>
+    {% comment %}Collapsed by default — the written reviews are history, not
+    the daily task; the user opens them only when he wants to look
+    (native <details>, no JS, travels fine inside the HTMX fragment).
+    Always rendered, even at zero: the count *is* the reading ("nothing
+    written yet this cycle"), and a section that appears and vanishes as you
+    page through cycles makes the layout jump.{% endcomment %}
+    <details class="rev-group confirmed">
+      <summary><span>Reseñas escritas</span> <span class="rev-count">{{ confirmed|length }}</span></summary>
+      {% if confirmed %}
         <ul>
           {% for r in confirmed %}
             <li>
@@ -296,7 +299,9 @@ swapped in from the calendar page.{% endcomment %}
             </li>
           {% endfor %}
         </ul>
-      </details>
-    {% endif %}
+      {% else %}
+        <p class="rev-empty">Nada escrito todavía en este ciclo.</p>
+      {% endif %}
+    </details>
   </div>
 </section>

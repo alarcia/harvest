@@ -49,7 +49,8 @@ def _find_cycle(raw):
 def reviews_list(request):
     """The reviews module's landing page: the *current* Vine cycle's backlog
     by default — urgent first, then the plain backlog (oldest order first) —
-    with written reviews at the bottom. A past cycle is reachable via
+    with the reviews written *in that same cycle* at the bottom. A past cycle
+    is reachable via
     ?cycle=<starts_on>, deliberately out of the way (this is rare, "hacer
     reseñas pasadas" territory): its backlog shows too, just never as
     urgent — urgency is a current-cycle concept. Full page normally, bare
@@ -116,8 +117,15 @@ def reviews_list(request):
         vencidas = []
         pendientes = sorted(pending, key=lambda r: _ordered_on(r, date.max))
 
+    # Written reviews belong to a cycle too — the history section is "what I
+    # wrote for this period", not an ever-growing pile repeated on every
+    # page. Filed by order date like the backlog, except that a package-less
+    # row (historical import, or one the "Gracias por tu reseña" email
+    # created on its own) falls back to when it was written; see
+    # `_cycle_date`. No fallback for pending above, on purpose: there the
+    # cycle drives nagging.
     confirmed = sorted(
-        base.filter(status__in=[Review.Status.APPROVED, Review.Status.PUBLISHED]),
+        base.written().in_cycle(cycle.starts_on, cycle.ends_on) if cycle else base.none(),
         key=_confirmed_on, reverse=True,
     )
 

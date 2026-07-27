@@ -8,6 +8,7 @@ from datetime import date, timedelta
 
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from packages.models import Package, PickupPoint
 
@@ -35,13 +36,30 @@ def _review_in_cycle(cycle, status=Review.Status.PENDING, **kwargs):
                                  status=status, **kwargs)
 
 
+def _published(product_title, ordered_on=None, **kwargs):
+    """A written review, with or without a package behind it — the two ways
+    it gets filed into a cycle."""
+    return Review.objects.create(
+        package=_package(ordered_on=ordered_on) if ordered_on else None,
+        product_title=product_title, status=Review.Status.PUBLISHED, **kwargs,
+    )
+
+
 class ReviewsListViewTests(TestCase):
     def setUp(self):
-        # Sanity: the 2020-2031 seed migration must cover "today" for these
-        # tests (all hardcoded around the 2026-07-23 sandbox date) to mean
-        # anything.
-        self.current_cycle = VineCycle.current(date(2026, 7, 23))
+        # Anchored to whatever cycle is running *now*, never to a literal
+        # date: the view reads the real `timezone.localdate()`, so a
+        # hardcoded "today" quietly rots into a different cycle the moment a
+        # boundary passes — which is exactly what happened on 2026-07-26,
+        # taking six of these tests down with it. Everything below places
+        # its dates relative to the cycle instead.
+        self.today = timezone.localdate()
+        self.current_cycle = VineCycle.current(self.today)
         self.assertIsNotNone(self.current_cycle)
+
+    def _in_current(self, offset=0):
+        """A date inside the running cycle, `offset` days after its start."""
+        return self.current_cycle.starts_on + timedelta(days=offset)
 
     def _get(self, url=None, **params):
         # HX-Request avoids the full page (which pulls in the topbar's
@@ -69,17 +87,17 @@ class ReviewsListViewTests(TestCase):
         self.assertNotContains(response, "Sin paquete conocido")
 
     def test_pending_review_with_order_date_in_current_cycle_shows(self):
-        pkg = _package(ordered_on=date(2026, 2, 1))
+        pkg = _package(ordered_on=self._in_current())
         review = Review.objects.create(package=pkg, product_title=pkg.description,
                                         status=Review.Status.PENDING)
         response = self._get()
         self.assertIn(review, response.context["pendientes"])
 
     def test_overdue_review_is_urgent_only_on_current_cycle(self):
-        pkg = _package(ordered_on=date(2026, 2, 1), picked_up_on=date(2026, 5, 1))
+        pkg = _package(ordered_on=self._in_current(), picked_up_on=self._in_current())
         review = Review.objects.create(
             package=pkg, product_title=pkg.description, status=Review.Status.PENDING,
-            due_on=date(2026, 6, 1),  # well before "today" (2026-07-23)
+            due_on=self.today,  # the day it comes due is already overdue
         )
         response = self._get()
         self.assertIn(review, response.context["vencidas"])
@@ -198,7 +216,7 @@ class ReviewsListViewTests(TestCase):
         # The bug this guards: the card must lead with what the product
         # *is*, not the review's own headline ("Cumple con su función" reads
         # like nonsense without knowing what it's reviewing).
-        pkg = _package(ordered_on=date(2026, 2, 1))
+        pkg = _package(ordered_on=self._in_current())
         Review.objects.create(
             package=pkg, product_title="Nombre real del producto",
             status=Review.Status.PUBLISHED, title="Cumple con su función", rating=4,
@@ -206,6 +224,36 @@ class ReviewsListViewTests(TestCase):
         response = self._get()
         self.assertContains(response, "Nombre real del producto")
         self.assertContains(response, "Cumple con su función")  # still shown, just secondary
+
+    def test_written_reviews_are_filed_in_their_own_cycle(self):
+        # The history section is "what I wrote for this period", not an
+        # ever-growing pile repeated identically on every cycle's page.
+        prev_cycle = (VineCycle.objects.filter(starts_on__lt=self.current_cycle.starts_on)
+                      .order_by("-starts_on").first())
+        _published("Del ciclo pasado", ordered_on=prev_cycle.starts_on + timedelta(days=5))
+        _published("De este ciclo", ordered_on=self._in_current())
+
+        response = self._get()
+        self.assertEqual([r.product_title for r in response.context["confirmed"]],
+                          ["De este ciclo"])
+
+        # And a written review is enough to make its cycle a real
+        # destination, with nothing pending in it.
+        past = self._get(cycle=prev_cycle.starts_on.isoformat())
+        self.assertEqual(past.status_code, 200)
+        self.assertEqual([r.product_title for r in past.context["confirmed"]],
+                          ["Del ciclo pasado"])
+
+    def test_written_review_without_a_package_is_filed_by_when_it_was_written(self):
+        # The pre-Harvest import and the rows "Gracias por tu reseña" creates
+        # on its own carry no order date at all. Shelving them by the only
+        # date we have beats hiding the whole corpus from every cycle.
+        _published("Escrita en este ciclo", published_on=self._in_current())
+        _published("Escrita hace años", published_on=date(2025, 3, 1))
+
+        response = self._get()
+        self.assertEqual([r.product_title for r in response.context["confirmed"]],
+                          ["Escrita en este ciclo"])
 
 
 class ReviewDetailViewTests(TestCase):
@@ -220,42 +268,76 @@ class ReviewDetailViewTests(TestCase):
         self.assertContains(response, "Titular de la reseña")
 
 
+class VineCycleBoundaryTests(TestCase):
+    """The boundaries Amazon actually published, as corrected by migration
+    0004. It drifts a day earlier each period, so these are facts read off
+    the Vine page's own data — not a rule anything can recompute."""
+
+    def test_boundary_day_belongs_to_the_incoming_cycle(self):
+        # The cut falls at 01:00/02:00 Madrid time, so the whole day is the
+        # new period's — the two orders of 2026-07-26 were seven hours into
+        # it. The rule holds at both ends of the same cycle, which is why it
+        # closes on the 24th and not on the re-evaluation day.
+        self.assertEqual(VineCycle.current(date(2026, 7, 25)).starts_on, date(2026, 1, 27))
+
+        cycle = VineCycle.current(date(2026, 7, 26))
+        self.assertEqual((cycle.starts_on, cycle.ends_on), (date(2026, 7, 26), date(2027, 1, 24)))
+
+        self.assertEqual(VineCycle.current(date(2027, 1, 25)).starts_on, date(2027, 1, 25))
+
+    def test_seeded_tail_past_the_last_known_boundary_is_gone(self):
+        # Every row 0002 wrote beyond it came from the wrong constant, so it
+        # was deleted rather than shifted — `_ensure_through` regenerates.
+        self.assertFalse(VineCycle.objects.filter(starts_on__gt=date(2027, 1, 25)).exists())
+
+    def test_no_date_falls_outside_a_cycle(self):
+        # The hole this guards: shifting the known cycles while leaving the
+        # seeded tail in place left 25-26 July 2027 in no cycle at all, where
+        # `current()` returns None and nothing is ever urgent.
+        for day in [date(2026, 7, 25), date(2026, 7, 26), date(2027, 1, 24),
+                     date(2027, 1, 25), date(2027, 7, 24), date(2027, 7, 25),
+                     date(2027, 7, 26)]:
+            self.assertIsNotNone(VineCycle.current(day), day)
+
+
 class VineCycleAutoCreationTests(TestCase):
     """`VineCycle.current()` self-heals forward instead of depending forever
-    on migration 0002's 2020–2031 bulk seed: the next cycle is created the
-    first time something asks for a date past the latest row on record."""
+    on the rows a migration wrote: the next cycle is created the first time
+    something asks for a date past the latest one on record. What it creates
+    is a placeholder on a six-month step — the real boundary drifts, so it
+    gets corrected once Amazon publishes it."""
 
     def test_current_creates_the_missing_cycle_on_demand(self):
         latest_before = VineCycle.objects.order_by("-starts_on").first()
-        self.assertEqual(latest_before.starts_on, date(2030, 7, 27))
+        self.assertEqual(latest_before.starts_on, date(2027, 1, 25))
 
-        beyond_seed = date(2031, 3, 1)  # past the seed's last row (ends 2031-01-26)
-        cycle = VineCycle.current(beyond_seed)
+        beyond_known = date(2027, 9, 1)  # past the last known row (ends 2027-07-24)
+        cycle = VineCycle.current(beyond_known)
 
         self.assertIsNotNone(cycle)
-        self.assertEqual((cycle.starts_on, cycle.ends_on), (date(2031, 1, 27), date(2031, 7, 26)))
+        self.assertEqual((cycle.starts_on, cycle.ends_on), (date(2027, 7, 25), date(2028, 1, 24)))
 
     def test_current_backfills_every_skipped_cycle_not_just_the_last(self):
         # Simulate the app having been off (or the DB copy being stale) across
         # more than one boundary: every intermediate cycle must still exist,
         # not just the one covering `today` — history stays contiguous.
         count_before = VineCycle.objects.count()
-        far_future = date(2032, 3, 1)  # three cycles past the 2020-2031 seed's last row
+        far_future = date(2028, 9, 1)  # three cycles past the last known row
         VineCycle.current(far_future)
 
         self.assertEqual(VineCycle.objects.count(), count_before + 3)
         for starts_on, ends_on in [
-            (date(2031, 1, 27), date(2031, 7, 26)),
-            (date(2031, 7, 27), date(2032, 1, 26)),
-            (date(2032, 1, 27), date(2032, 7, 26)),
+            (date(2027, 7, 25), date(2028, 1, 24)),
+            (date(2028, 1, 25), date(2028, 7, 24)),
+            (date(2028, 7, 25), date(2029, 1, 24)),
         ]:
             self.assertTrue(VineCycle.objects.filter(starts_on=starts_on, ends_on=ends_on).exists())
 
     def test_current_is_idempotent(self):
-        beyond_seed = date(2031, 3, 1)
-        VineCycle.current(beyond_seed)
+        beyond_known = date(2027, 9, 1)
+        VineCycle.current(beyond_known)
         count_after_first = VineCycle.objects.count()
-        VineCycle.current(beyond_seed)
+        VineCycle.current(beyond_known)
         self.assertEqual(VineCycle.objects.count(), count_after_first)
 
     def test_empty_table_does_not_crash(self):
