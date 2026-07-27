@@ -22,7 +22,9 @@ swapped in from the calendar page.{% endcomment %}
     .rev-toolbar { flex: none; padding: .5rem .9rem .1rem; }
     .rev-title { margin: 0; font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; }
     .rev-cyclenav { display: flex; align-items: center; gap: .4rem; margin-top: .35rem; }
-    .rev-cyclenav button {
+    /* The round pills are the ‹ › arrows only — the reset is a text link and
+       must not inherit their border, size or fixed square. */
+    .rev-cyclenav button:not(.rev-cycle-reset) {
       display: grid;
       place-items: center;
       height: 1.7rem;
@@ -37,14 +39,16 @@ swapped in from the calendar page.{% endcomment %}
     .rev-cyclenav button:not(:disabled):active { transform: scale(.94); }
     .rev-cycle { font-size: .75rem; color: var(--muted); white-space: nowrap; }
     .rev-cycle .current-tag { color: var(--accent); font-weight: 600; }
-    .rev-cycle-reset {
+    /* Scoped under .rev-cyclenav so the colour beats `.rev button`'s reset. */
+    .rev-cyclenav .rev-cycle-reset {
       font-size: .68rem;
       font-weight: 600;
       color: var(--accent);
       text-decoration: none;
       white-space: nowrap;
+      padding: .2rem .1rem;
     }
-    .rev-cycle-reset:hover { text-decoration: underline; }
+    .rev-cyclenav .rev-cycle-reset:hover { text-decoration: underline; }
 
     .rev-subbar { flex: none; display: flex; justify-content: flex-end; padding: .4rem .9rem .6rem; }
     .rev-toggle {
