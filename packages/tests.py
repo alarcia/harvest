@@ -1926,16 +1926,14 @@ class CalendarViewTests(TestCase):
             reverse("package_detail", args=[pkg.pk])).content.decode()
         self.assertIn("previsión", html)
 
-    def test_phone_defaults_to_fortnight_desktop_to_month(self):
-        # No explicit view: a phone UA ("Mobi", per MDN) opens the fortnight
-        # agenda — this week's trip and the next one's — while anything else
-        # keeps the month overview. An explicit choice beats the sniff.
+    def test_defaults_to_fortnight_view(self):
+        # No explicit view: defaults to fortnight agenda for both desktop and phone.
         phone = self.client.get(
             reverse("home"), HTTP_HX_REQUEST="true",
             HTTP_USER_AGENT="Mozilla/5.0 (Linux; Android 16; SM-S936B) Mobile Safari")
         self.assertIn(b"view-fortnight", phone.content)
         desktop = self.client.get(reverse("home"), HTTP_HX_REQUEST="true")
-        self.assertIn(b"view-month", desktop.content)
+        self.assertIn(b"view-fortnight", desktop.content)
         explicit = self.client.get(reverse("home") + "?view=month",
                                    HTTP_HX_REQUEST="true", HTTP_USER_AGENT="Mobile")
         self.assertIn(b"view-month", explicit.content)

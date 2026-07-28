@@ -457,11 +457,9 @@ def wants_fragment(request):
 def home(request):
     """The calendar. Full page normally, bare fragment for HTMX swaps."""
     today = timezone.localdate()
-    # Phones open on the fortnight agenda — this week's trip and the next
-    # one's — with the month grid one tap away as the overview. MDN's
-    # recommended sniff: every phone UA carries "Mobi".
-    fallback = ("fortnight" if "Mobi" in request.META.get("HTTP_USER_AGENT", "")
-                else "month")
+    # Default to the fortnight agenda — this week's trip and the next
+    # one's — with the month grid one tap away as the overview.
+    fallback = "fortnight"
     view = request.GET.get("view", fallback)
     if view not in ("month", "week", "fortnight"):
         view = fallback

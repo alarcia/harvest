@@ -46,7 +46,7 @@ Three kinds of destination are handled distinctly:
 - **Calendar** — a month / fortnight / week view built from server-rendered templates and HTMX
   fragment swaps, with no JavaScript build step. Each parcel is a chip on the days that matter;
   tapping a day opens it enlarged in a modal, and each chip a card with the product name, photo,
-  destination, and a link to the pickup barcode. On phones the fortnight — the default there —
+  destination, and a link to the pickup barcode. Fortnight is the default view; on phones it
   renders as a vertical agenda and the month as a dot map, so chips stay readable and tappable.
 - **Manual entry** — handled by the Django admin, which doubles as the data-repair safety net.
 
