@@ -22,5 +22,20 @@ Lives outside #app-view, so switching sections never re-fetches this.{% endcomme
       <span class="ico">🪄</span><span class="label">Admin</span>
     </a>
   </span>
-  <a class="add" href="{% url 'add_package' %}" aria-label="Añadir paquete">+</a>
+  <span class="right">
+    {% comment %}Where a manual sweep's answer lands ("2 correos nuevos"): next to
+    the button in the markup, drawn as a toast at the foot of the screen (see
+    .ingest-status), so no message length can ever squeeze the nav pills.{% endcomment %}
+    <span id="ingest-status" class="ingest-status" role="status" aria-live="polite"></span>
+    {% comment %}Force an inbox sweep now: the worker already polls every 10 minutes,
+    this is for the email that just landed. Idempotent, so a double press is
+    harmless — hx-disabled-elt only keeps it from being pointless.{% endcomment %}
+    <button type="button" class="sync"
+            hx-post="{% url 'ingest_now' %}"
+            hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+            hx-target="#ingest-status" hx-swap="innerHTML"
+            hx-disabled-elt="this"
+            aria-label="Procesar correos ahora" title="Procesar correos ahora"><span class="ico">⟳</span></button>
+    <a class="add" href="{% url 'add_package' %}" aria-label="Añadir paquete">+</a>
+  </span>
 </header>

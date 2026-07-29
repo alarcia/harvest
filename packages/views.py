@@ -1,18 +1,25 @@
+import logging
 import re
 from collections import defaultdict
 from datetime import date, timedelta
 
+from django.conf import settings
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.formats import date_format
+from django.views.decorators.http import require_POST
 
 from reviews.models import Review
 
 from .forms import PackageForm
-from .ingest import set_review_due
+from .ingest import scan_now, set_review_due
 from .models import Package, PickupPoint, RawEmail
+
+# Same logger the worker writes its audit trail with, so a manual sweep reads
+# identically — just in the web container's log (`docker logs harvest-web`).
+logger = logging.getLogger("packages.ingest")
 
 # Weeks shown per view. Month is special-cased: its length depends on the anchor.
 VIEW_WEEKS = {"week": 1, "fortnight": 2}
@@ -720,6 +727,59 @@ def delivered_detail(request, day, point_id):
         "items": items,
         "back_day": _parse_anchor(request.GET.get("from_day"), None),
     })
+
+
+def _ingest_pill(request, message, *, error=False):
+    """The one-line answer a manual sweep leaves under the topbar button."""
+    return render(request, "packages/_ingest_result.html",
+                  {"message": message, "error": error})
+
+
+@require_POST
+def ingest_now(request):
+    """The topbar's ⟳: sweep the inbox right now instead of waiting for the
+    worker's next cycle.
+
+    The `ingest` worker polls every 10 minutes and remains the audit trail
+    (see CLAUDE.md); this covers the minutes in between, when an email has
+    just landed and the user wants it on the board *before* planning the trip.
+    It's the same `scan_inbox`, idempotent by Message-ID, so pressing it twice
+    — or pressing it while the worker is mid-sweep — costs an IMAP login and
+    nothing else.
+
+    Synchronous on purpose: the inbox self-cleans (processed mail goes to
+    Trash), so a sweep is a handful of messages and a second or two, and
+    answering "2 correos nuevos" outright beats a background job the page
+    would then have to poll. A mailbox that's down is reported on the pill and
+    logged, never raised: the calendar stays exactly as it was.
+    """
+    if not (settings.GMAIL_IMAP_USER and settings.GMAIL_IMAP_APP_PASSWORD):
+        return _ingest_pill(request, "Buzón sin configurar", error=True)
+    try:
+        stats = scan_now()
+    except Exception as exc:
+        logger.warning("Escaneo manual fallido: %s: %s", type(exc).__name__, exc)
+        return _ingest_pill(request, "No se pudo leer el buzón", error=True)
+
+    parts = []
+    if stats["new"]:
+        parts.append("1 correo nuevo" if stats["new"] == 1
+                     else f"{stats['new']} correos nuevos")
+    if stats["failed"]:
+        # The red banner spells these out on the refresh below; the pill only
+        # says there are some, so the user knows to look down.
+        parts.append("1 sin procesar" if stats["failed"] == 1
+                     else f"{stats['failed']} sin procesar")
+    response = _ingest_pill(request, " · ".join(parts) or "Sin correos nuevos",
+                            error=bool(stats["failed"]))
+    if stats["new"] or stats["failed"]:
+        # Something changed under the view (new chips, or a new red banner):
+        # reuse the trigger the manual pickup confirmation already fires, so
+        # the section refetches itself in place — same view, same anchor, no
+        # URL change. The topbar, pill included, sits outside #app-view, so
+        # the refresh never wipes the answer.
+        response["HX-Trigger"] = "package-updated"
+    return response
 
 
 def add_package(request):

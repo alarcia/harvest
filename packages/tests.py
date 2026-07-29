@@ -13,6 +13,7 @@ from email.message import EmailMessage
 from pathlib import Path
 from unittest.mock import patch
 
+from django.db import IntegrityError
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -20,7 +21,14 @@ from django.utils.formats import date_format
 
 from reviews.models import Review
 
-from .ingest import backfill_reviews, process_message, reprocess_failures, scan_inbox
+from .ingest import (
+    MANUAL_SCAN_TIMEOUT,
+    backfill_reviews,
+    process_message,
+    reprocess_failures,
+    scan_inbox,
+    scan_now,
+)
 from .models import Config, Package, PickupPoint, RawEmail
 from .parser import EmailKind, ParseError, _resolve_date, parse_email
 from .views import _estimate_line, _estimate_note
@@ -1343,6 +1351,122 @@ class ScanInboxTests(TestCase):
         self.assertEqual(stats["trashed"], 0)
         self.assertTrue(fake.readonly)
         self.assertEqual(fake.stored, [])  # nothing moved or flagged
+
+    def test_two_sweeps_at_the_same_instant_apply_an_email_once(self):
+        """The web's "procesar ahora" button and the worker's loop can now
+        collide on the very same email. The Message-ID pre-check can't see an
+        insert another connection hasn't committed yet, so the unique
+        constraint is the real guard — and the loser must bail out *before*
+        parsing: a Pepe y Dalda notice matches on nothing and always creates a
+        row, so applying it twice means two packages for one letter."""
+        raw = _pepe_email("Recepción carta", "Hemos recibido 1 carta para ti")
+        real_create = RawEmail.objects.create
+
+        def racing_create(**kwargs):
+            # The other sweep gets there between our pre-check and our insert.
+            real_create(**kwargs)
+            raise IntegrityError("UNIQUE constraint failed: packages_rawemail.message_id")
+
+        with patch.object(RawEmail.objects, "create", side_effect=racing_create):
+            record, created = process_message(raw)
+
+        self.assertFalse(created)  # not ours to parse
+        self.assertEqual(RawEmail.objects.count(), 1)
+        self.assertEqual(record, RawEmail.objects.get())
+        self.assertEqual(Package.objects.count(), 0)  # applied by the winner only
+
+
+@override_settings(
+    GMAIL_IMAP_USER="viner@example.com",
+    GMAIL_IMAP_APP_PASSWORD="app-password",
+    # The two full-page renders below draw the topbar's {% static %} logo,
+    # which needs a collectstatic manifest this environment doesn't have.
+    STORAGES={
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    },
+)
+class ManualIngestTests(TestCase):
+    """The topbar's ⟳ — an inbox sweep on demand, for the email that just
+    landed and shouldn't have to wait for the worker's next cycle.
+
+    The sweep itself is the worker's, already covered by ScanInboxTests. What's
+    under test here is the button: that it's reachable from both sections, that
+    it never runs on a GET, the one-line answer it leaves, and whether it asks
+    the view behind it to refresh."""
+
+    def test_the_calendar_offers_the_button(self):
+        html = self.client.get(reverse("home")).content.decode()
+        self.assertIn(reverse("ingest_now"), html)
+        self.assertIn('id="ingest-status"', html)
+
+    def test_the_reviews_page_offers_it_too(self):
+        # Shared topbar, and an ingest sweep can create or close a review.
+        html = self.client.get(reverse("reviews_list")).content.decode()
+        self.assertIn(reverse("ingest_now"), html)
+
+    def test_a_get_never_sweeps(self):
+        # A sweep talks IMAP and moves mail to Trash, so it stays behind POST:
+        # no prefetch, crawl or stray link ever triggers one.
+        with patch("packages.views.scan_now") as scan:
+            response = self.client.get(reverse("ingest_now"))
+        self.assertEqual(response.status_code, 405)
+        scan.assert_not_called()
+
+    def test_new_mail_is_reported_and_the_view_refreshes(self):
+        stats = {"messages": 3, "new": 2, "failed": 0, "trashed": 2}
+        with patch("packages.views.scan_now", return_value=stats):
+            response = self.client.post(reverse("ingest_now"))
+        self.assertContains(response, "2 correos nuevos")
+        # The grid behind the topbar is now stale: same trigger the manual
+        # pickup fires, so it refetches itself in place.
+        self.assertEqual(response["HX-Trigger"], "package-updated")
+
+    def test_a_single_email_is_counted_in_the_singular(self):
+        stats = {"messages": 1, "new": 1, "failed": 0, "trashed": 1}
+        with patch("packages.views.scan_now", return_value=stats):
+            response = self.client.post(reverse("ingest_now"))
+        self.assertContains(response, "1 correo nuevo")
+
+    def test_nothing_new_says_so_and_leaves_the_view_alone(self):
+        stats = {"messages": 0, "new": 0, "failed": 0, "trashed": 0}
+        with patch("packages.views.scan_now", return_value=stats):
+            response = self.client.post(reverse("ingest_now"))
+        self.assertContains(response, "Sin correos nuevos")
+        self.assertFalse(response.has_header("HX-Trigger"))  # nothing changed
+
+    def test_unparseable_mail_shows_up_on_the_pill_and_refreshes(self):
+        # The red banner spells out what broke; the pill just points at it,
+        # which is why the refresh has to happen for a failure too.
+        stats = {"messages": 2, "new": 1, "failed": 1, "trashed": 1}
+        with patch("packages.views.scan_now", return_value=stats):
+            response = self.client.post(reverse("ingest_now"))
+        self.assertContains(response, "1 correo nuevo · 1 sin procesar")
+        self.assertContains(response, "bad")  # in danger red
+        self.assertEqual(response["HX-Trigger"], "package-updated")
+
+    def test_a_mailbox_that_is_down_never_breaks_the_page(self):
+        with patch("packages.views.scan_now", side_effect=OSError("timed out")):
+            response = self.client.post(reverse("ingest_now"))
+        self.assertContains(response, "No se pudo leer el buzón")
+        self.assertFalse(response.has_header("HX-Trigger"))
+
+    @override_settings(GMAIL_IMAP_USER="", GMAIL_IMAP_APP_PASSWORD="")
+    def test_without_credentials_it_says_so_instead_of_trying(self):
+        with patch("packages.views.scan_now") as scan:
+            response = self.client.post(reverse("ingest_now"))
+        scan.assert_not_called()
+        self.assertContains(response, "Buzón sin configurar")
+
+    def test_scan_now_is_the_worker_sweep_with_a_tighter_timeout(self):
+        # Same scan_inbox, so the same ingestion — only the socket timeout
+        # differs, so a stuck mailbox can't outlive gunicorn's own 30 s.
+        fake = FakeIMAP([(11, fixture("006-fwd-pedido-cargador-inalambrico.eml"))])
+        with patch("packages.ingest.imaplib.IMAP4_SSL", return_value=fake) as imap:
+            stats = scan_now()
+        self.assertEqual(stats["new"], 1)
+        self.assertEqual(Package.objects.count(), 1)
+        self.assertEqual(imap.call_args.kwargs["timeout"], MANUAL_SCAN_TIMEOUT)
+        self.assertLess(MANUAL_SCAN_TIMEOUT, 30)
 
 
 class EstimateWordingTests(SimpleTestCase):

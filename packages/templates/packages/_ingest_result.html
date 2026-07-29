@@ -1,0 +1,5 @@
+{% comment %}The outcome of a manual "procesar ahora" sweep, swapped into the
+topbar's #ingest-status slot: one short line that fades itself out (errors
+linger longer, being worth reading). The details of anything that failed to
+parse are the calendar's red banner's job, not this pill's.{% endcomment %}
+<span class="ingest-pill{% if error %} bad{% endif %}">{{ message }}</span>

@@ -138,6 +138,10 @@ def reviews_list(request):
         "next_cycle_url": _reviews_url(next_cycle, include_non_vine) if next_cycle else None,
         "current_cycle_url": _reviews_url(None, include_non_vine) if not is_current else None,
         "toggle_url": _reviews_url(None if is_current else cycle, not include_non_vine),
+        # This very page: what the section refetches when an ingest sweep
+        # changes something under it (the topbar's "procesar ahora" button,
+        # which can close a review or create a pending one).
+        "self_url": _reviews_url(None if is_current else cycle, include_non_vine),
         "include_non_vine": include_non_vine,
         "vencidas": vencidas,
         "pendientes": pendientes,

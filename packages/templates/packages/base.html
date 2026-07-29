@@ -200,11 +200,81 @@
       text-decoration: none;
     }
     .app-topbar .add:hover { text-decoration: none; }
-    /* Smallest phones (iPhone SE class, ~375px): three pills plus the brand
-       and the + button don't fit with labels. Icons stay tappable with an
-       aria-label; everything from ~400px up keeps reading normally. */
-    @media (max-width: 399.98px) {
+    .app-topbar .right { display: flex; align-items: center; gap: .45rem; }
+    /* Force an inbox sweep now (the ⟳ beside +). Outlined, not filled: the
+       worker polls every 10 minutes on its own, so this is the impatient
+       path, not the topbar's primary action. */
+    .app-topbar .sync {
+      display: grid;
+      place-items: center;
+      width: 2rem;
+      height: 2rem;
+      margin: 0;
+      padding: 0;
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      background: var(--card);
+      color: var(--muted);
+      font-size: 1rem;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .app-topbar .sync:hover { color: var(--accent); border-color: var(--accent); }
+    .app-topbar .sync:active { transform: scale(.94); }
+    /* htmx disables it for the round trip: it spins, and stays visibly busy
+       even where animation is turned off. */
+    .app-topbar .sync[disabled] { color: var(--accent); opacity: .65; cursor: default; }
+    .app-topbar .sync.htmx-request .ico { animation: spin .9s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    /* The sweep's answer: a toast, floated over the bottom of the screen and
+       never a tap target. It lives in the topbar's markup (that's where htmx
+       swaps it in, next to the button that asked) but is taken out of the flow
+       entirely — hung under the ⟳ it collided with the calendar's own
+       Hoy/‹/› controls, which sit directly below it on every width. Above the
+       modal backdrop (z-index 30) so an open card can't bury it, and it
+       removes itself by fading, hence no JS timer. */
+    .app-topbar .ingest-status {
+      position: fixed;
+      left: 50%;
+      bottom: 1.1rem;
+      z-index: 40;
+      transform: translateX(-50%);
+      pointer-events: none;
+    }
+    .app-topbar .ingest-pill {
+      --linger: 6s;
+      display: inline-block;
+      padding: .15rem .55rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--card);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, .12);
+      font-size: .68rem;
+      font-weight: 600;
+      color: var(--muted);
+      white-space: nowrap;
+      animation: pill-in .2s ease-out both,
+                 pill-out .5s ease-in var(--linger) forwards;
+    }
+    .app-topbar .ingest-pill.bad {
+      --linger: 20s;
+      color: var(--danger);
+      border-color: var(--danger);
+    }
+    @keyframes pill-in { from { opacity: 0; transform: translateY(6px); } }
+    @keyframes pill-out { to { opacity: 0; } }
+    /* Phones: the brand, three pills, the ⟳ and the + only fit if the labels
+       give way — every current phone lands in the 390–430px band, where all
+       three labels overflow the row (measured: 27px over at 412px). The
+       *active* pill keeps its label, since knowing which section you're in is
+       worth the width; the others ride on their icon and an aria-label.
+       Everything from ~480px up reads normally. */
+    @media (max-width: 479.98px) {
       .app-topbar .nav-link { padding: .3rem .4rem; }
+      .app-topbar .nav-link:not(.active) .label { display: none; }
+    }
+    /* Smallest phones (iPhone SE class, ~375px): not even one label fits. */
+    @media (max-width: 399.98px) {
       .app-topbar .nav-link .label { display: none; }
     }
 
@@ -361,6 +431,12 @@
 
     @media (prefers-reduced-motion: reduce) {
       .modal-back, .modal-card { animation: none !important; }
+      /* The pill keeps its exit — that's how it goes away — but not the slide
+         in; the ⟳ reports being busy by dimming instead of spinning. */
+      .app-topbar .ingest-pill {
+        animation: pill-out .5s ease-in var(--linger) forwards;
+      }
+      .app-topbar .sync.htmx-request .ico { animation: none; }
     }
   </style>
   <script src="{% static 'packages/htmx.min.js' %}" defer></script>

@@ -16,6 +16,12 @@ services:
       TZ: Europe/Madrid
       GMAIL_IMAP_USER: ${GMAIL_IMAP_USER:-}
       GMAIL_IMAP_APP_PASSWORD: ${GMAIL_IMAP_APP_PASSWORD:-}
+      # The web has its own reason to reach the mailbox: the topbar's ⟳
+      # ("procesar ahora") sweeps it on demand. Same flag as the worker below
+      # so a manual sweep is the *same* sweep, cleanup included — otherwise it
+      # would leave already-processed mail sitting in the inbox until the next
+      # worker cycle came round to trash it.
+      GMAIL_TRASH_PROCESSED: ${GMAIL_TRASH_PROCESSED:-true}
     volumes:
       - ${HOST_DB_PATH}:/app/data
 

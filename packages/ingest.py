@@ -39,7 +39,7 @@ from email import message_from_bytes, policy
 from email.utils import parsedate_to_datetime
 
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from reviews.models import Review
@@ -615,12 +615,25 @@ def process_message(raw):
             pass
         if received_at is not None and timezone.is_naive(received_at):
             received_at = timezone.make_aware(received_at)
-    record = RawEmail.objects.create(  # stored before parsing, always
-        message_id=message_id,
-        subject=(msg.get("Subject") or "")[:255],
-        received_at=received_at,
-        raw=raw.decode("utf-8", "replace"),
-    )
+    try:
+        record = RawEmail.objects.create(  # stored before parsing, always
+            message_id=message_id,
+            subject=(msg.get("Subject") or "")[:255],
+            received_at=received_at,
+            raw=raw.decode("utf-8", "replace"),
+        )
+    except IntegrityError:
+        # Another sweep stored this same Message-ID between the check above
+        # and this insert — two scanners can overlap now that the web has a
+        # "procesar ahora" button (scan_now) beside the worker's loop. The
+        # row belongs to whoever created it: bail out here, *before* parsing,
+        # so the email is never applied twice (a Pepe y Dalda notice, which
+        # matches on nothing and always creates a row, would otherwise
+        # duplicate).
+        existing = RawEmail.objects.filter(message_id=message_id).first()
+        if existing is None:  # not the race, then: a real constraint problem
+            raise
+        return existing, False
     _reparse(record, raw)
     record.save()
     return record, True
@@ -788,3 +801,25 @@ def scan_inbox(connection_factory=_default_connection):
         len(uids), stats["new"], stats["failed"], stats["trashed"],
     )
     return stats
+
+
+# A manual sweep runs inside a web request, so it gets a tighter socket
+# timeout than the worker's 30 s: gunicorn kills a request at 30 s, and a
+# mailbox that won't answer should come back as a "no se pudo leer el buzón"
+# pill in the topbar, not as a killed worker and a 502.
+MANUAL_SCAN_TIMEOUT = 12
+
+
+def scan_now():
+    """One sweep on demand, from the topbar's "procesar ahora" button.
+
+    Exactly the worker's `scan_inbox` — same Trash policy, same idempotency by
+    Message-ID — so pressing the button while the loop happens to be mid-sweep
+    is harmless: whichever gets to an email first stores it, the other skips
+    it (see the IntegrityError guard in process_message for the same-instant
+    case). Only the socket timeout differs, plus the log line that marks who
+    asked: this one lands in `docker logs harvest-web`, not in the worker's.
+    """
+    logger.info("Escaneo manual solicitado desde la web")
+    return scan_inbox(lambda: imaplib.IMAP4_SSL(
+        settings.GMAIL_IMAP_HOST, timeout=MANUAL_SCAN_TIMEOUT))

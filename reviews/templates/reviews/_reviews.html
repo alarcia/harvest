@@ -2,7 +2,12 @@
 everything. Styles travel with the fragment (not the full-page template's
 head) so they're present whether this was rendered on a full load or
 swapped in from the calendar page.{% endcomment %}
-<section id="app-view" class="rev" hx-target="#app-view" hx-swap="outerHTML">
+{% comment %}The `package-updated` trigger is fired by anything that changed data
+under the page from outside it — the topbar's manual ingest sweep, which can
+create or close reviews. Same mechanism the calendar uses: refetch this very
+section in place, no URL change.{% endcomment %}
+<section id="app-view" class="rev" hx-target="#app-view" hx-swap="outerHTML"
+         hx-get="{{ self_url }}" hx-trigger="package-updated from:body">
   <style>
     .rev {
       flex: 1;
