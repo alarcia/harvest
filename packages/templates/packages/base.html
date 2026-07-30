@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Harvest{% endblock %}</title>
   <link rel="icon" type="image/png" href="{% static 'packages/logo.png' %}">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
   <style>
     :root {
       --bg: #f7f6f2;
@@ -187,26 +188,41 @@
       line-height: 1;
     }
     .app-topbar .add {
-      display: grid;
-      place-items: center;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       width: 2rem;
       height: 2rem;
       border-radius: 50%;
       background: var(--accent);
       color: var(--card);
-      font-size: 1.3rem;
-      line-height: 1;
-      font-weight: 600;
+      font-size: .85rem;
       text-decoration: none;
+      transition: transform .2s ease, filter .2s ease;
     }
-    .app-topbar .add:hover { text-decoration: none; }
+    .app-topbar .add .ico {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform .3s ease;
+    }
+    .app-topbar .add:hover {
+      text-decoration: none;
+      transform: scale(1.06);
+      filter: brightness(1.08);
+    }
+    .app-topbar .add:hover .ico {
+      transform: rotate(90deg);
+    }
+    .app-topbar .add:active { transform: scale(.94); }
     .app-topbar .right { display: flex; align-items: center; gap: .45rem; }
     /* Force an inbox sweep now (the ⟳ beside +). Outlined, not filled: the
        worker polls every 10 minutes on its own, so this is the impatient
        path, not the topbar's primary action. */
     .app-topbar .sync {
-      display: grid;
-      place-items: center;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       width: 2rem;
       height: 2rem;
       margin: 0;
@@ -215,11 +231,24 @@
       border-radius: 50%;
       background: var(--card);
       color: var(--muted);
-      font-size: 1rem;
-      line-height: 1;
+      font-size: .85rem;
       cursor: pointer;
+      transition: transform .2s ease, color .2s ease, border-color .2s ease, background-color .2s ease;
     }
-    .app-topbar .sync:hover { color: var(--accent); border-color: var(--accent); }
+    .app-topbar .sync .ico {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform .35s ease;
+    }
+    .app-topbar .sync:hover {
+      color: var(--accent);
+      border-color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 8%, var(--card));
+    }
+    .app-topbar .sync:hover .ico {
+      transform: rotate(30deg) scale(1.1);
+    }
     .app-topbar .sync:active { transform: scale(.94); }
     /* htmx disables it for the round trip: it spins, and stays visibly busy
        even where animation is turned off. */

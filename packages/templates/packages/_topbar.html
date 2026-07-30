@@ -35,7 +35,7 @@ Lives outside #app-view, so switching sections never re-fetches this.{% endcomme
             hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
             hx-target="#ingest-status" hx-swap="innerHTML"
             hx-disabled-elt="this"
-            aria-label="Procesar correos ahora" title="Procesar correos ahora"><span class="ico">⟳</span></button>
-    <a class="add" href="{% url 'add_package' %}" aria-label="Añadir paquete">+</a>
+            aria-label="Procesar correos ahora" title="Procesar correos ahora"><span class="ico"><i class="fa-solid fa-arrows-rotate"></i></span></button>
+    <a class="add" href="{% url 'add_package' %}" aria-label="Añadir paquete" title="Añadir paquete"><span class="ico"><i class="fa-solid fa-plus"></i></span></a>
   </span>
 </header>
