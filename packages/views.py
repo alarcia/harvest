@@ -14,7 +14,7 @@ from django.views.decorators.http import require_POST
 from reviews.models import Review
 
 from .forms import PackageForm
-from .ingest import scan_now, set_review_due
+from .ingest import _sync_review_for_vine, scan_now, set_review_due
 from .models import Package, PickupPoint, RawEmail
 
 # Same logger the worker writes its audit trail with, so a manual sweep reads
@@ -659,6 +659,7 @@ def confirm_pickup(request, pk):
             pkg.save(update_fields=["state", "picked_up_on", "updated_at"])
             # A pickup is a pickup: the review clock starts the same way it
             # would have from the email.
+            _sync_review_for_vine(pkg)
             set_review_due(pkg, day)
             response = _package_card(request, pkg, back_day)
             # The chip behind the modal is now stale (it still says "Listo" on

@@ -254,19 +254,25 @@ def _apply_cost(pkg, parsed, *, authoritative):
 
 def _sync_review_for_vine(pkg):
     """Keep a package's owed review in lockstep with its Vine flag, right
-    after `_apply_cost` decides it. Vine confirmed ⇒ a pending Review exists
-    (created here on first sighting, product title/ASIN copied); Vine
-    *refuted* by the Enviado ⇒ drop the auto-created Review, but only if it's
-    still exactly as ingestion left it — untouched by a human (via admin,
-    until R3's editor exists). Idempotent: called on every Ordered/Enviado/
-    Reparto for the package, it's a no-op once the Review already matches."""
+    after `_apply_cost` decides it or when state changes to picked up/delivered.
+    Vine confirmed AND package received (PICKED_UP or DELIVERED) ⇒ a pending
+    Review exists (created here on first sighting, product title/ASIN copied,
+    due_on set); Vine *refuted* by the Enviado ⇒ drop the auto-created Review,
+    but only if it's still exactly as ingestion left it — untouched by a human
+    (via admin, until R3's editor exists). Idempotent: called on every lifecycle
+    event for the package, it's a no-op once the Review already matches."""
     existing = getattr(pkg, "review", None)
     if pkg.is_vine:
-        if existing is None:
+        is_received = pkg.state in (Package.State.PICKED_UP, Package.State.DELIVERED)
+        if is_received and existing is None:
+            received_on = (pkg.picked_up_on if pkg.state == Package.State.PICKED_UP
+                           else pkg.actual_arrival or pkg.estimated_arrival)
+            due_on = (received_on + timedelta(days=30)) if received_on else None
             Review.objects.create(
                 package=pkg,
                 product_title=pkg.description or f"Paquete #{pkg.pk}",
                 asin=pkg.asin,
+                due_on=due_on,
             )
             return "reseña pendiente creada"
         return ""
@@ -513,6 +519,7 @@ def _apply(parsed):
             )
             _fill(pkg, parsed)
             pkg.save()
+            _sync_review_for_vine(pkg)
             set_review_due(pkg, picked_day)
             return pkg, ""
         for pkg in targets:
@@ -520,6 +527,7 @@ def _apply(parsed):
             pkg.picked_up_on = picked_day
             _fill(pkg, parsed)
             pkg.save()
+            _sync_review_for_vine(pkg)
             set_review_due(pkg, picked_day)
         extra = len(targets) - len(matched_pks)
         note = "" if extra <= 0 else f"Recogida en bloque: +{extra} paquete(s) del mismo punto"
@@ -543,6 +551,8 @@ def _apply(parsed):
                 pkg.pickup_point = point
             _fill(pkg, parsed)
             pkg.save()
+            _sync_review_for_vine(pkg)
+            set_review_due(pkg, delivered_day)
         note = ("" if len(matches) == 1
                 else f"Entrega consolidada: {len(matches)} paquetes actualizados")
         return matches[0], note
@@ -689,15 +699,20 @@ def backfill_reviews():
     Returns {"packages": n, "emails": n} for the command to report.
     """
     backfilled = 0
-    for pkg in Package.objects.filter(is_vine=True, review__isnull=True):
+    for pkg in Package.objects.filter(
+        is_vine=True,
+        review__isnull=True,
+        state__in=[Package.State.PICKED_UP, Package.State.DELIVERED],
+    ):
+        received_on = (pkg.picked_up_on if pkg.state == Package.State.PICKED_UP
+                       else pkg.actual_arrival or pkg.estimated_arrival)
+        due_on = (received_on + timedelta(days=30)) if received_on else None
         review = Review.objects.create(
             package=pkg,
             product_title=pkg.description or f"Paquete #{pkg.pk}",
             asin=pkg.asin,
+            due_on=due_on,
         )
-        if pkg.picked_up_on:
-            review.due_on = pkg.picked_up_on + timedelta(days=30)
-            review.save(update_fields=["due_on"])
         backfilled += 1
         logger.info("BACKFILL reseña pendiente ← %r", pkg.description or f"Paquete #{pkg.pk}")
 
