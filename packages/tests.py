@@ -372,6 +372,43 @@ class ParseEmailTests(SimpleTestCase):
         self.assertTrue(parsed.item_title.startswith("ONES Funda Magnética"))
         self.assertEqual(parsed.asin, "B0GL7ZD86T")
 
+    def test_address_updated(self):
+        # "Dirección de envío actualizada": the user re-routed the order on
+        # Amazon's site before it shipped. Same body as a Pedido bar the
+        # headline — venue line above "Pedido n.º", total, "Llega el …" — and
+        # the destination line is the whole news.
+        parsed = parse_email(
+            fixture("173-direccion-de-envio-actualizada-surphy-correa-cruzada.eml")
+        )
+        self.assertEqual(parsed.kind, EmailKind.ADDRESS_UPDATED)
+        self.assertEqual(parsed.order_id, "404-0161243-5927529")
+        self.assertEqual(parsed.sent_at.date(), date(2026, 7, 31))
+        self.assertEqual(
+            parsed.pickup_location, "Rosa - Can Salgot (lliça D'amunt), Barcelona"
+        )
+        # "Llega el miércoles", sent Friday July 31st -> Wednesday August 5th.
+        self.assertEqual(parsed.estimated_arrival, date(2026, 8, 5))
+        self.assertIsNone(parsed.shipment_id)  # not shipped yet, by definition
+        self.assertEqual(parsed.total, Decimal("0.00"))
+        self.assertTrue(parsed.item_title.startswith("SURPHY Correa Cruzada"))
+
+    def test_address_updated_without_a_destination_fails_loudly(self):
+        # The destination line is the only thing this email exists to say, so
+        # a layout change that hides it must reach the banner, not apply a
+        # silent no-op.
+        msg = EmailMessage()
+        msg["Subject"] = 'Dirección de envío actualizada: "Algún producto..."'
+        msg["Message-ID"] = "<moved@example.com>"
+        msg["Date"] = "Fri, 31 Jul 2026 13:22:54 +0200"
+        msg.set_content(
+            "<p>Dirección de envío actualizada</p>"
+            "<p>Pedido n.º</p><p>404-0161243-5927529</p>",
+            subtype="html",
+        )
+        with self.assertRaisesMessage(ParseError, "missing") as ctx:
+            parse_email(msg.as_bytes())
+        self.assertIn("pickup_location", str(ctx.exception))
+
     def test_delivery_attempt_other_carrier_stays_unrecognized(self):
         # Only UPS is handled for now (user's explicit ask, 2026-07-23): a
         # different carrier's equivalent notice must keep tripping the
@@ -760,6 +797,93 @@ class IngestTests(TestCase):
         self.assertEqual(pkg.pickup_point.kind, PickupPoint.Kind.HOME)
         self.assertEqual(pkg.estimated_arrival, date(2026, 7, 17))  # "Llega el viernes"
         self.assertTrue(pkg.description.startswith("KALVICA"))
+
+    def test_address_change_moves_a_pickup_to_a_home_delivery(self):
+        # The real 2026-07-31 case: an order heading for the Counter, re-routed
+        # to a relative's address. Same row, new destination — and with it, no
+        # trip and no deadline any more, since both hang off the point's kind.
+        counter = PickupPoint.objects.create(
+            name="Amazon Counter - Les Mesures", kind=PickupPoint.Kind.AMAZON_COUNTER,
+            location_key="25700",
+        )
+        pkg = Package.objects.create(
+            pickup_point=counter, order_id="404-0161243-5927529",
+            description="SURPHY Correa Cruzada", state=Package.State.IN_TRANSIT,
+            estimated_arrival=date(2026, 8, 3),
+        )
+        record, _ = process_message(
+            fixture("173-direccion-de-envio-actualizada-surphy-correa-cruzada.eml")
+        )
+        self.assertTrue(record.processed, record.parse_error)
+        self.assertEqual(Package.objects.count(), 1)  # same package
+        pkg.refresh_from_db()
+        self.assertEqual(pkg.pickup_point.kind, PickupPoint.Kind.HOME)
+        self.assertEqual(
+            pkg.pickup_point.name, "Rosa - Can Salgot (lliça D'amunt), Barcelona"
+        )
+        self.assertEqual(pkg.state, Package.State.IN_TRANSIT)  # no state moves
+        # The email reprints a fresher estimate than the one the Pedido gave
+        # for the old address.
+        self.assertEqual(pkg.estimated_arrival, date(2026, 8, 5))
+        self.assertIsNone(pkg.deadline)
+        self.assertIn("Dirección actualizada", record.note)
+
+    def test_address_change_between_two_homes(self):
+        # The other direction the user gets: home → home. Nothing but the
+        # destination row changes; Amazon never re-routes *onto* a locker.
+        old = PickupPoint.objects.create(
+            name="Charo - Torrevieja, Alicante", kind=PickupPoint.Kind.HOME,
+        )
+        pkg = Package.objects.create(
+            pickup_point=old, order_id="404-0161243-5927529",
+            state=Package.State.IN_TRANSIT,
+        )
+        process_message(
+            fixture("173-direccion-de-envio-actualizada-surphy-correa-cruzada.eml")
+        )
+        self.assertEqual(Package.objects.count(), 1)
+        pkg.refresh_from_db()
+        self.assertEqual(
+            pkg.pickup_point.name, "Rosa - Can Salgot (lliça D'amunt), Barcelona"
+        )
+        # The home point is reused, never duplicated, when it's already known.
+        self.assertEqual(
+            PickupPoint.objects.filter(kind=PickupPoint.Kind.HOME).count(), 2
+        )
+
+    def test_address_change_alone_creates_the_package(self):
+        # Out-of-order forwarding: the redirection lands before the "Pedido"
+        # it amends. The template carries the same fields, so the package is
+        # created here rather than lost.
+        record, _ = process_message(
+            fixture("173-direccion-de-envio-actualizada-surphy-correa-cruzada.eml")
+        )
+        self.assertTrue(record.processed, record.parse_error)
+        pkg = Package.objects.get()
+        self.assertEqual(pkg.order_id, "404-0161243-5927529")
+        self.assertEqual(pkg.state, Package.State.IN_TRANSIT)
+        self.assertEqual(pkg.pickup_point.kind, PickupPoint.Kind.HOME)
+        self.assertEqual(pkg.estimated_arrival, date(2026, 8, 5))
+        self.assertTrue(pkg.description.startswith("SURPHY Correa Cruzada"))
+        self.assertTrue(pkg.is_vine)  # 0.00€, assumed until an Enviado refutes it
+
+    def test_address_change_never_redirects_a_resolved_package(self):
+        # A re-forward or a `reprocess` run must not move a package that has
+        # already been picked up: the trip happened, wherever the email says.
+        counter = PickupPoint.objects.create(
+            name="Amazon Counter - Les Mesures", kind=PickupPoint.Kind.AMAZON_COUNTER,
+            location_key="25700",
+        )
+        pkg = Package.objects.create(
+            pickup_point=counter, order_id="404-0161243-5927529",
+            state=Package.State.PICKED_UP, picked_up_on=date(2026, 7, 30),
+        )
+        process_message(
+            fixture("173-direccion-de-envio-actualizada-surphy-correa-cruzada.eml")
+        )
+        pkg.refresh_from_db()
+        self.assertEqual(pkg.pickup_point, counter)
+        self.assertEqual(pkg.state, Package.State.PICKED_UP)
 
     def test_delivered_transitions_existing_home_package(self):
         # A home package already in transit; the real "Entregado" email for

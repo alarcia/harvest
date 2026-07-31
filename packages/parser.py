@@ -46,14 +46,19 @@ class EmailKind(Enum):
     """One value per Amazon template we know. Model states are coarser:
     ORDERED/SHIPPED/OUT_FOR_DELIVERY are all `in_transit`; READY_FOR_PICKUP
     and DELIVERY_ATTEMPT both land on `awaiting_pickup` (the second at a
-    carrier's office instead of an Amazon point); NO_LONGER_AVAILABLE and
-    PICKUP_REMINDER drive *no* transition (the first is misleading, the
-    second is a nag about a package already waiting — both change nothing);
+    carrier's office instead of an Amazon point); NO_LONGER_AVAILABLE,
+    PICKUP_REMINDER and ADDRESS_UPDATED drive *no* transition (the first is
+    misleading, the second is a nag about a package already waiting, the
+    third only moves the destination — none changes state);
     REVIEW_PUBLISHED never touches the calendar, but does drive the
     `reviews` app (see `packages.ingest`)."""
 
     ORDERED = "ordered"
     SHIPPED = "shipped"
+    # The user moved an order to a different destination on Amazon's site
+    # before it shipped. Same template as ORDERED bar the headline, and it
+    # drives no state change — only `pickup_location` matters.
+    ADDRESS_UPDATED = "address_updated"
     OUT_FOR_DELIVERY = "out_for_delivery"
     READY_FOR_PICKUP = "ready_for_pickup"
     DELIVERY_ATTEMPT = "delivery_attempt"  # failed home delivery, UPS only for
@@ -163,6 +168,12 @@ _KIND_PATTERNS = [
     (EmailKind.OUT_FOR_DELIVERY, r"paquete está en reparto"),
     (EmailKind.SHIPPED, r"paquete se ha enviado"),
     (EmailKind.ORDERED, r"gracias por tu pedido"),
+    # "Dirección de envío actualizada" — the destination changed after the
+    # order was placed. The body is the Pedido template with a different
+    # headline (same venue line above "Pedido n.º", same total, same "Llega
+    # el …"), so this must be matched *after* ORDERED to keep an email that
+    # says both from being filed as a redirection.
+    (EmailKind.ADDRESS_UPDATED, r"direcci[oó]n de env[ií]o actualizada"),
     # Pepe y Dalda writes both of these by hand, so match either the subject
     # ("Recepción carta", "Recepción de paquete") or the body line ("Hemos
     # recibido 1 carta para ti"). The phrase alone doesn't prove it's *that*
@@ -180,6 +191,11 @@ _REQUIRED = {
     EmailKind.ORDERED: ("order_id", "sent_at", "item_title", "total",
                         "estimated_arrival", "pickup_location"),
     EmailKind.SHIPPED: ("order_id", "sent_at", "estimated_arrival"),
+    # The destination line *is* the news here, so it's required; without it
+    # the email says nothing and belongs behind the red banner. The arrival
+    # is not: the email reprints it as a courtesy, and losing the redirection
+    # because Amazon dropped a "Llega el …" line would be the worse trade.
+    EmailKind.ADDRESS_UPDATED: ("order_id", "sent_at", "pickup_location"),
     EmailKind.OUT_FOR_DELIVERY: ("order_id", "sent_at", "estimated_arrival"),
     EmailKind.READY_FOR_PICKUP: ("order_id", "sent_at", "pickup_before",
                                  "pickup_code", "pickup_location"),

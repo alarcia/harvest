@@ -17,6 +17,9 @@ Rules that matter:
 - "Ya no está disponible" is misleading (proven repeatedly): it drives no
   state change. "Se ha recogido" is treated as final truth: it confirms
   picked_up, and a pickup empties the whole point.
+- "Dirección de envío actualizada" changes the destination and nothing else:
+  the package keeps its state, its dates come from the same email, and where
+  it lands is whatever the email now says.
 - Home deliveries (location is not an Amazon Locker/Counter) create no rows:
   the calendar tracks trips to pickup points. The raw email stays stored, so
   the decision is reversible by reprocessing.
@@ -435,6 +438,45 @@ def _apply(parsed):
         if review_note:
             notes.append(review_note)
         return pkg, " · ".join(notes)
+
+    if kind == EmailKind.ADDRESS_UPDATED:
+        # The user re-routed the order on Amazon's site before it shipped, and
+        # this email says one useful thing: where it goes now. No state moves —
+        # the package is exactly as far along as it was — so this is a pure
+        # destination overwrite, from whatever the email names.
+        #
+        # Amazon only ever allows the move *towards* an address, never onto a
+        # locker or counter, so in practice this is how a pickup trip drops off
+        # the calendar: the package becomes a home delivery, terminal at
+        # `delivered`, with no deadline and no forecast (both hang off the
+        # point's kind, so they follow on their own). The handler doesn't
+        # encode that rule though — it copies the destination either way, and
+        # a redirection between two homes reads identically.
+        if point is None:
+            return None, "Cambio de dirección sin destino legible: ignorado"
+        matches = _find_packages(parsed)
+        if not matches:
+            # Out-of-order forwarding: the change reached us before the
+            # "Pedido" it amends. This template carries the same fields as
+            # that one, so the package is created here rather than lost; the
+            # later Pedido finds it by order id and fills in the rest.
+            matches = [Package(pickup_point=point, order_id=parsed.order_id or "",
+                               state=Package.State.IN_TRANSIT)]
+        origins = set()
+        for pkg in matches:
+            if _RANK[pkg.state] >= _RANK[Package.State.PICKED_UP]:
+                continue  # already resolved: there's nothing left to redirect
+            if pkg.pk and pkg.pickup_point_id != point.pk:
+                origins.add(pkg.pickup_point.name)
+            pkg.pickup_point = point
+            _fill(pkg, parsed)  # the reprinted "Llega el …" is fresher than
+            # the one the Pedido gave for the *old* address
+            _apply_cost(pkg, parsed, authoritative=False)
+            pkg.save()
+        # Where it came from is the interesting half of the audit line, but a
+        # split order can name several origins and `note` is 255 chars.
+        came_from = f"{origins.pop()} → " if len(origins) == 1 else ""
+        return matches[0], f"Dirección actualizada: {came_from}{point.name}"[:255]
 
     if kind == EmailKind.READY_FOR_PICKUP:
         matches = _find_all_packages(parsed, point)
