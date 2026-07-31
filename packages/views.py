@@ -551,9 +551,11 @@ def day_detail(request, day):
 
 # Points whose pickups no email will ever confirm, so the user closes them
 # by hand from the card: a carrier's office (Amazon abandons that lifecycle
-# the moment the delivery fails) and Pepe y Dalda (the shop sends exactly one
-# email, when it arrives, and nothing afterwards). The alt store stays out —
-# it has no emails at all, so it's manual end to end and lives in the admin.
+# the moment the delivery fails) and Pepe y Dalda — whether the shop's own
+# notice put the package there (that email is the whole correspondence) or an
+# Amazon order was addressed to its counter, which Amazon signs off as
+# "entregado" and then goes quiet. The alt store stays out — it has no emails
+# at all, so it's manual end to end and lives in the admin.
 _MANUAL_PICKUP_KINDS = frozenset({
     PickupPoint.Kind.CARRIER, PickupPoint.Kind.PEPE_Y_DALDA,
 })
@@ -589,9 +591,13 @@ def _package_card(request, pkg, back_day):
         "preview_leaves_day": (_preview_leaves_day(pkg, today)
                                 if in_transit else None),
         "can_confirm_pickup": _can_confirm_pickup(pkg),
-        # Parcel-or-letter is only ever a real question at Pepe y Dalda;
-        # everywhere else the row would just say "Paquete" on every card.
-        "show_item_kind": point.kind == PickupPoint.Kind.PEPE_Y_DALDA,
+        # Parcel-or-letter is only ever a real question in a Pepe y Dalda
+        # notice, which is the one email that says which; everywhere else the
+        # row would just say "Paquete" on every card. Including on an Amazon
+        # order delivered to that same counter — it has the shop's kind but
+        # an Amazon order number, and Amazon never sends letters.
+        "show_item_kind": (point.kind == PickupPoint.Kind.PEPE_Y_DALDA
+                           and not pkg.order_id),
         # The shop's closing days, but only while there's still a trip to
         # plan: on a package already collected it's trivia. Loud on a
         # Monday, when the "Listo para recoger" line above would otherwise

@@ -37,6 +37,11 @@ Rules that matter:
   notice arrives when the thing is already on the counter, so it creates a
   row straight in `awaiting_pickup` with no deadline, and only the user can
   close it (the shop sends nothing else, ever).
+- An Amazon order can be *addressed* to that shop, and then the two worlds
+  meet: Amazon's own three emails drive it, the destination line says it went
+  there (Config.pepe_addresses), and the "Entregado" that would end a home
+  delivery instead parks it in `awaiting_pickup` — it's on the counter, the
+  trip is still owed, and no further email is coming.
 - Once GMAIL_TRASH_PROCESSED is on, successfully-processed emails are moved to
   Gmail's Trash (30-day grace). Parse failures are left in the inbox so an
   unhandled email is doubly visible (inbox + red banner). The whole run is
@@ -88,8 +93,9 @@ _RANK = {
 
 def _pickup_point(location):
     """PickupPoint for a destination line. "Amazon Locker/Counter - …" is a
-    real pickup point; any other named place is a home/relative address (a
-    HOME point, delivered and done, no trip). None only when there's no
+    real pickup point; Pepe y Dalda's street address is the shop (see
+    Config.pepe_addresses); any other named place is a home/relative address
+    (a HOME point, delivered and done, no trip). None only when there's no
     location at all.
 
     Amazon spells the same venue differently depending on the email template
@@ -104,6 +110,10 @@ def _pickup_point(location):
         return None
     match = _LOCATION.match(location)
     if not match:
+        # Checked before the home fallback, and only here: an Amazon Locker
+        # or Counter is never the shop, whatever a marker says.
+        if Config.load().is_pepe_address(location):
+            return _pepe_point()
         point, _ = PickupPoint.objects.get_or_create(
             name=location[:120], defaults={"kind": PickupPoint.Kind.HOME},
         )
@@ -125,17 +135,23 @@ def _pickup_point(location):
     return point
 
 
-def _store_point(parsed):
+def _pepe_point(name=None):
     """The one Pepe y Dalda row, created on first sighting.
 
     Deduped by kind alone, unlike every other point: there is exactly one
     such shop, and its name is a hand-written signature line that may well be
     reworded between emails — matching on it would quietly split the shop in
     two, which is the bug `location_key` was introduced to kill for Amazon
-    venues (see _pickup_point)."""
+    venues (see _pickup_point).
+
+    `name` is the shop's own signature, and only its own notices carry one.
+    An Amazon package landing there names the address the way Amazon renders
+    it, which is not what the calendar should call the shop, so that path
+    passes nothing and takes the plain default — and, the row being shared,
+    the first real notice's signature stands from then on."""
     point, _ = PickupPoint.objects.get_or_create(
         kind=PickupPoint.Kind.PEPE_Y_DALDA,
-        defaults={"name": (parsed.pickup_location or "Pepe y Dalda")[:120]},
+        defaults={"name": (name or "Pepe y Dalda")[:120]},
     )
     return point
 
@@ -400,7 +416,7 @@ def _apply(parsed):
         # Handled before _pickup_point below, which would read this shop's
         # signature as a home address.
         pkg = Package(
-            pickup_point=_store_point(parsed),
+            pickup_point=_pepe_point(parsed.pickup_location),
             state=Package.State.AWAITING_PICKUP,
             actual_arrival=sent_on,
             description=_reception_description(parsed),
@@ -620,6 +636,9 @@ def _apply(parsed):
 
     if kind == EmailKind.DELIVERED:
         # Home delivery reaching its destination: terminal, no pickup trip.
+        # Unless the destination is Pepe y Dalda's counter, where "entregado"
+        # means the opposite — the parcel is now waiting and the trip hasn't
+        # happened yet (see below).
         delivered_day = sent_on  # "Entregado hoy" ≈ the email's send day
         matches = _find_all_packages(parsed, point)
         if not matches:
@@ -627,20 +646,42 @@ def _apply(parsed):
                 return None, "Entregado sin pedido conocido ni destino: ignorado"
             # Default IN_TRANSIT state so the transition below actually runs.
             matches = [Package(pickup_point=point, order_id=parsed.order_id or "")]
+        at_shop = False
         for pkg in matches:
             if _RANK[pkg.state] >= _RANK[Package.State.DELIVERED]:
                 continue  # already terminal; a re-forward must not reopen it
-            pkg.state = Package.State.DELIVERED
-            pkg.actual_arrival = delivered_day
             if point is not None:
                 pkg.pickup_point = point
+            # An Amazon order sent to Pepe y Dalda is a home delivery all the
+            # way up to here, and then stops being one: the courier hands it
+            # over the shop's counter, so what Amazon calls the end of the
+            # story is the start of a pickup. Landing it on `delivered` would
+            # drop it off the board (terminal, muted 🏠) on the very day it
+            # becomes the user's problem — while the shop bills for every day
+            # it sits there. So it goes to `awaiting_pickup` instead, with no
+            # deadline, exactly like one of the shop's own notices: teal chip
+            # walking forward on today with its day count, Monday warning,
+            # and the "Ya lo he recogido" button as the only way to close it
+            # (no further email is coming — Amazon's lifecycle ended here).
+            to_shop = pkg.pickup_point.kind == PickupPoint.Kind.PEPE_Y_DALDA
+            at_shop = at_shop or to_shop
+            pkg.state = (Package.State.AWAITING_PICKUP if to_shop
+                         else Package.State.DELIVERED)
+            pkg.actual_arrival = delivered_day
             _fill(pkg, parsed)
             pkg.save()
+            # No-ops while it waits at the shop (a review is owed once the
+            # package is actually in hand), which is the point: the manual
+            # confirmation starts that clock instead, same as it does for a
+            # carrier pickup.
             _sync_review_for_vine(pkg)
             set_review_due(pkg, delivered_day)
-        note = ("" if len(matches) == 1
-                else f"Entrega consolidada: {len(matches)} paquetes actualizados")
-        return matches[0], note
+        notes = []
+        if at_shop:
+            notes.append("Entregado en Pepe y Dalda: pendiente de recoger")
+        if len(matches) > 1:
+            notes.append(f"Entrega consolidada: {len(matches)} paquetes actualizados")
+        return matches[0], " · ".join(notes)
 
     if kind == EmailKind.NO_LONGER_AVAILABLE:
         # The misleading one: the package usually is still there. Record only.

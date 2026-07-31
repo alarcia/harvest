@@ -85,6 +85,49 @@ def _pepe_email(subject, body_line, *, forwarded=True,
     return msg.as_bytes()
 
 
+def _amazon_email(headline, destination, *, subject=None,
+                  order_id="404-9182736-4501122", arrives="Llega el lunes",
+                  total="0.00", item="ONES Funda Magnética para Galaxy S26",
+                  asin="B0F1PEPE01", sent="Mon, 27 Jul 2026 09:00:00 +0200"):
+    """One Amazon lifecycle email, shaped like the real ones (fixtures
+    006/007/021): the headline that names the template, the arrival line, the
+    destination line right above "Pedido n.º", the item anchor and the total.
+
+    Synthesized rather than dumped because the case it exists for — an order
+    addressed to Pepe y Dalda's counter — has no fixture yet: the destination
+    line is the only thing that says a package went there, and waiting for
+    one to arrive in production is exactly how it would go unnoticed. Every
+    field a real email carries is in the same shape here, so the parser reads
+    it the same way; only the destination varies between tests.
+    """
+    msg = EmailMessage()
+    msg["Subject"] = subject or headline
+    msg["Message-ID"] = f"<amz-{abs(hash((headline, destination, order_id, sent)))}@example.com>"
+    msg["To"] = "Viner Harvest <viner2552@gmail.com>"
+    msg["Date"] = sent
+    body = [f"<div>{headline}</div>"]
+    if arrives:
+        body.append(f"<div>{arrives}</div>")
+    body.append(f"<div>{destination}</div>")
+    body.append(f"<div>Pedido n.º</div><div>{order_id}</div>")
+    body.append(
+        f'<a href="https://www.amazon.es/dp/{asin}/ref=fed_asin_title">'
+        f'<img src="https://m.media-amazon.com/images/I/x.jpg" alt="{item}"></a>'
+    )
+    if total is not None:
+        body.append(f"<div>Total {total} €</div>")
+    msg.set_content(f"<div>{''.join(body)}</div>", subtype="html")
+    return msg.as_bytes()
+
+
+# How Amazon renders a saved address: a label the user chose, then the town
+# and the province ("Rosa - Can Salgot (lliça D'amunt), Barcelona"). The
+# shop's is the same shape with its street in it — the only tell that the
+# parcel is going to a counter and not to somebody's door.
+_PEPE_DESTINATION = "Javier - c/Regència d'Urgell, 17, La Seu d'Urgell"
+_HOME_DESTINATION = "Rosa - Can Salgot (lliça D'amunt), Barcelona"
+
+
 class FakeIMAP:
     """Enough of imaplib.IMAP4_SSL to drive scan_inbox in tests. Records
     STORE calls so a test can assert exactly which UIDs were trashed."""
@@ -1601,6 +1644,216 @@ class IngestTests(TestCase):
         review = Review.objects.get(package=pkg)
         self.assertEqual(review.status, Review.Status.PENDING)
         self.assertEqual(review.due_on, date(2026, 8, 11))  # 12 Jul + 30 days
+
+
+class PepeAddressTests(SimpleTestCase):
+    """`Config.is_pepe_address`: the whole judgement about whether an Amazon
+    destination line is really the shop's counter. Fragment matching, folded,
+    against a list the user owns — because the exact wording Amazon prints
+    for a saved address isn't knowable in advance."""
+
+    def _config(self, addresses="Regència d'Urgell\nPepe y Dalda"):
+        return Config(pepe_addresses=addresses)
+
+    def test_the_street_is_recognized_however_it_is_spelled(self):
+        # Three hands type this address (the user's, Amazon's, the shop's)
+        # and they disagree on every accent and apostrophe in it.
+        for line in ("Javier - c/Regència d'Urgell, 17, La Seu d'Urgell",
+                     "Javier - C/REGENCIA D´URGELL 17, LA SEU D´URGELL",
+                     "Casa - Regencia d’Urgell 17, Lleida",
+                     "Pepe y Dalda - La Seu d'Urgell, Lleida"):
+            self.assertTrue(self._config().is_pepe_address(line), line)
+
+    def test_an_ordinary_home_address_is_not_the_shop(self):
+        for line in ("Rosa - Can Salgot (lliça D'amunt), Barcelona",
+                     "Charo - Torrevieja, Alicante",
+                     # The town the shop is in, and the same apostrophe: near
+                     # miss on purpose, since a relative lives there too.
+                     "Marina - La Seu d'Urgell, Lleida"):
+            self.assertFalse(self._config().is_pepe_address(line), line)
+
+    def test_an_empty_list_matches_nothing(self):
+        # The failure mode worth guarding: a blank (or whitespace-only) marker
+        # is a substring of every line, so it would file every home delivery
+        # as a trip to the shop.
+        for addresses in ("", "   ", "\n\n  \n"):
+            config = self._config(addresses)
+            self.assertFalse(config.is_pepe_address(_HOME_DESTINATION), addresses)
+            self.assertFalse(config.is_pepe_address(_PEPE_DESTINATION), addresses)
+
+    def test_no_destination_at_all_is_not_the_shop(self):
+        self.assertFalse(self._config().is_pepe_address(None))
+        self.assertFalse(self._config().is_pepe_address(""))
+
+
+class AmazonToPepeYDaldaTests(TestCase):
+    """An Amazon order addressed to Pepe y Dalda's counter (user, 2026-07-31).
+
+    The two worlds meet: it's an ordinary Amazon shipment — Pedido, Enviado,
+    Entregado, Vine flag and all — but it lands where the shop's own parcels
+    land, so it's a Pepe y Dalda package from the first email to the trip,
+    and Amazon's "Entregado" is the start of that trip, not the end of the
+    story."""
+
+    ORDERED = "Gracias por tu pedido"
+    SHIPPED = "Tu paquete se ha enviado"
+    DELIVERED = "¡Tu paquete se ha entregado!"
+
+    def _delivered(self, destination=_PEPE_DESTINATION, **kwargs):
+        return _amazon_email(self.DELIVERED, destination, arrives=None,
+                             total=None, **kwargs)
+
+    def test_an_order_to_the_shop_is_a_pepe_package_from_the_first_email(self):
+        record, _ = process_message(_amazon_email(self.ORDERED, _PEPE_DESTINATION))
+        self.assertTrue(record.processed, record.parse_error)
+        pkg = Package.objects.get()
+        self.assertEqual(pkg.pickup_point.kind, PickupPoint.Kind.PEPE_Y_DALDA)
+        self.assertEqual(pkg.state, Package.State.IN_TRANSIT)
+        self.assertEqual(pkg.estimated_arrival, date(2026, 8, 3))  # "Llega el lunes"
+        # Not filed as a relative's door on the way past.
+        self.assertFalse(
+            PickupPoint.objects.filter(kind=PickupPoint.Kind.HOME).exists())
+        # Vine reads exactly as it does anywhere else: 0.00€ on the Pedido is
+        # assumed Vine until an Enviado says otherwise.
+        self.assertTrue(pkg.is_vine)
+
+    def test_the_delivery_email_parks_it_on_the_counter(self):
+        # The whole point: Amazon says "entregado" and means "handed over the
+        # counter", so the trip is still owed. Landing on `delivered` would
+        # mute the package and drop it off the board on the very day it
+        # starts costing the user money.
+        process_message(_amazon_email(self.ORDERED, _PEPE_DESTINATION))
+        process_message(_amazon_email(self.SHIPPED, _PEPE_DESTINATION,
+                                       arrives="Llega el martes"))
+        record, _ = process_message(self._delivered())
+        self.assertTrue(record.processed, record.parse_error)
+        self.assertEqual(Package.objects.count(), 1)  # one row all the way
+        pkg = Package.objects.get()
+        self.assertEqual(pkg.state, Package.State.AWAITING_PICKUP)
+        self.assertEqual(pkg.pickup_point.kind, PickupPoint.Kind.PEPE_Y_DALDA)
+        self.assertEqual(pkg.actual_arrival, date(2026, 7, 27))
+        self.assertIsNone(pkg.deadline)  # the shop just holds it, forever
+        self.assertIn("Pepe y Dalda", record.note)
+
+    def test_a_delivery_anywhere_else_is_still_terminal(self):
+        # Regression guard: the new branch must not touch the ordinary home
+        # delivery, which really does end at the door.
+        record, _ = process_message(self._delivered(_HOME_DESTINATION))
+        self.assertTrue(record.processed, record.parse_error)
+        pkg = Package.objects.get()
+        self.assertEqual(pkg.state, Package.State.DELIVERED)
+        self.assertEqual(pkg.pickup_point.kind, PickupPoint.Kind.HOME)
+        self.assertEqual(record.note, "")
+
+    def test_a_re_forwarded_delivery_never_reopens_a_collected_package(self):
+        process_message(_amazon_email(self.ORDERED, _PEPE_DESTINATION))
+        process_message(self._delivered())
+        pkg = Package.objects.get()
+        pkg.state = Package.State.PICKED_UP
+        pkg.picked_up_on = date(2026, 7, 29)
+        pkg.save()
+
+        RawEmail.objects.all().delete()  # as if the mail came round again
+        process_message(self._delivered())
+        pkg.refresh_from_db()
+        self.assertEqual(pkg.state, Package.State.PICKED_UP)
+        self.assertEqual(pkg.picked_up_on, date(2026, 7, 29))
+
+    def test_it_shares_the_one_shop_row_with_the_shops_own_notices(self):
+        # Both worlds land on the single PEPE_Y_DALDA point, which keeps the
+        # shop's own signature as its name — that's the address the card
+        # shows, and Amazon's rendering of it is not it.
+        process_message(fixture("142-fwd-recepcion-carta.eml"))
+        process_message(_amazon_email(self.ORDERED, _PEPE_DESTINATION))
+        self.assertEqual(
+            PickupPoint.objects.filter(kind=PickupPoint.Kind.PEPE_Y_DALDA).count(), 1)
+        self.assertEqual(Package.objects.count(), 2)  # a letter and an order
+        point = PickupPoint.objects.get(kind=PickupPoint.Kind.PEPE_Y_DALDA)
+        self.assertIn("Regència", point.name)
+        self.assertEqual(point.packages.count(), 2)
+
+    def test_it_keeps_its_amazon_tracking_link(self):
+        # It's an Amazon order wherever it lands, and the tracker is the only
+        # way to see where it actually is. The order id is what proves it —
+        # the shop's own notices carry none, so they still get no link.
+        process_message(_amazon_email(self.ORDERED, _PEPE_DESTINATION))
+        pkg = Package.objects.get()
+        self.assertEqual(
+            pkg.amazon_tracking_url,
+            "https://www.amazon.es/gp/your-account/order-details"
+            "?_encoding=UTF8&orderID=404-9182736-4501122",
+        )
+
+    def test_the_vine_review_waits_for_the_actual_pickup(self):
+        # Delivery to the shop is not receipt: the product is still on a
+        # counter, so nothing can be reviewed yet. The manual confirmation
+        # starts the clock, exactly as a carrier pickup does.
+        process_message(_amazon_email(self.ORDERED, _PEPE_DESTINATION))
+        process_message(self._delivered())
+        self.assertEqual(Review.objects.count(), 0)
+
+        pkg = Package.objects.get()
+        today = timezone.localdate()
+        self.client.post(reverse("confirm_pickup", args=[pkg.pk]),
+                         {"picked_up_on": today.isoformat()})
+        pkg.refresh_from_db()
+        self.assertEqual(pkg.state, Package.State.PICKED_UP)
+        review = Review.objects.get(package=pkg)
+        self.assertEqual(review.due_on, today + timedelta(days=30))
+
+    def test_a_redirection_to_the_shop_reclassifies_the_package(self):
+        # The user re-routes an order to the shop after placing it: same row,
+        # new destination, and with it a new category.
+        process_message(_amazon_email(self.ORDERED, _HOME_DESTINATION))
+        record, _ = process_message(_amazon_email(
+            "Dirección de envío actualizada", _PEPE_DESTINATION,
+            arrives="Llega el miércoles"))
+        self.assertTrue(record.processed, record.parse_error)
+        self.assertEqual(Package.objects.count(), 1)
+        pkg = Package.objects.get()
+        self.assertEqual(pkg.pickup_point.kind, PickupPoint.Kind.PEPE_Y_DALDA)
+        self.assertEqual(pkg.state, Package.State.IN_TRANSIT)
+
+    def test_the_address_list_is_editable_without_a_deploy(self):
+        # The recovery path, and the reason this lives in the database: the
+        # day Amazon words the destination line differently, the fix is one
+        # admin field, not a release.
+        config = Config.load()
+        config.pepe_addresses = "Joguines Pepe & Dalda"
+        config.save()
+        process_message(_amazon_email(
+            self.ORDERED, "Javier - Joguines Pepe & Dalda, La Seu d'Urgell"))
+        self.assertEqual(Package.objects.get().pickup_point.kind,
+                         PickupPoint.Kind.PEPE_Y_DALDA)
+
+    def test_an_empty_address_list_leaves_every_delivery_at_home(self):
+        config = Config.load()
+        config.pepe_addresses = ""
+        config.save()
+        process_message(_amazon_email(self.ORDERED, _PEPE_DESTINATION))
+        self.assertEqual(Package.objects.get().pickup_point.kind,
+                         PickupPoint.Kind.HOME)
+
+    def test_the_board_reads_it_as_a_pepe_y_dalda_pickup(self):
+        # End to end: teal chip walking on today (no deadline to go red
+        # about), the shop's closing days on the card, the manual close — and
+        # no "Tipo" row, since Amazon never sends letters and that question
+        # only makes sense on one of the shop's own notices.
+        process_message(_amazon_email(self.ORDERED, _PEPE_DESTINATION))
+        process_message(self._delivered())
+        pkg = Package.objects.get()
+
+        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+        self.assertIn(b'class="pkg src-pepe is-waiting', html)
+        # No muted 🏠 anywhere: the trailing quote keeps this off the
+        # stylesheet, which names every kind whether it's drawn or not.
+        self.assertNotIn(b'is-delivered"', html)
+
+        card = self.client.get(reverse("package_detail", args=[pkg.pk])).content
+        self.assertIn(reverse("confirm_pickup", args=[pkg.pk]).encode(), card)
+        self.assertIn("Seguimiento en Amazon".encode(), card)
+        self.assertIn(b"Pepe y Dalda", card)
+        self.assertNotIn(b"<b>Tipo</b>", card)
 
 
 class BackfillReviewsTests(TestCase):

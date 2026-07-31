@@ -1,6 +1,28 @@
+import re
+import unicodedata
 from decimal import Decimal
 
 from django.db import models
+
+
+def _fold(text):
+    """Case-, accent- and apostrophe-insensitive form of a place name.
+
+    Address lines are typed by three different hands — the user's into an
+    Amazon checkout, Amazon's into an email template, the shop's into its own
+    signature — and they disagree on exactly the characters Catalan street
+    names are made of: "Regència" / "Regencia", "d'Urgell" / "d´Urgell" /
+    "d’Urgell" (Amazon prints the acute accent, see the Counter venue line).
+    Folding all of it away is what lets one marker match every spelling.
+    """
+    # Apostrophes first: NFKD decomposes a standalone acute accent (Amazon's
+    # "D´URGELL") into a space plus a combining mark, which the next line
+    # would then throw away — turning the word into "D URGELL" and quietly
+    # failing to match anything.
+    text = re.sub(r"[´`'’‘]", "'", text)
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", text).strip().casefold()
 
 
 class Config(models.Model):
@@ -17,10 +39,35 @@ class Config(models.Model):
     # this row rather than a constant.
     eu_import_surcharge = models.DecimalField(
         max_digits=6, decimal_places=2, default=Decimal("3.63"),
+        # Named in Spanish like everything the user reads: the admin is the
+        # only UI this table has, and "Eu import surcharge" is not it.
+        verbose_name="recargo aduanero de la UE",
         help_text="Recargo aduanero de la UE que los vendedores de fuera de la "
                   "Unión repercuten al cliente. Un pedido Vine con recargo "
                   "cuesta exactamente esta cifra en el correo de envío en lugar "
                   "de 0,00€. Ponlo a 0 para desactivar la excepción.",
+    )
+
+    # An Amazon order can be sent to Pepe y Dalda's own street address: the
+    # user types it into the checkout like any other delivery address, and the
+    # parcel ends up on the shop's counter. Amazon's emails say nothing about
+    # that — the destination line is the only tell — so these markers are what
+    # turn "a home delivery" into "a Pepe y Dalda package" (see
+    # ingest._pickup_point). One per line, matched as a fragment of the
+    # destination line, so the street alone catches every way it gets written.
+    # In the database rather than in code for the same reason as the surcharge
+    # above: the exact wording Amazon prints isn't known until it arrives, and
+    # correcting it must not need a deploy.
+    pepe_addresses = models.TextField(
+        blank=True,
+        default="Regència d'Urgell\nPepe y Dalda",
+        verbose_name="direcciones que en realidad son Pepe y Dalda",
+        help_text="Direcciones que en realidad son Pepe y Dalda, una por "
+                  "línea. Un pedido de Amazon enviado a una de ellas se "
+                  "clasifica como Pepe y Dalda en lugar de como entrega a "
+                  "domicilio. Basta un fragmento de la línea de destino del "
+                  "correo (la calle, por ejemplo); no distingue mayúsculas, "
+                  "acentos ni apóstrofos. Déjalo vacío para desactivarlo.",
     )
 
     class Meta:
@@ -53,6 +100,22 @@ class Config(models.Model):
         return total == 0 or (self.eu_import_surcharge > 0
                               and total == self.eu_import_surcharge)
 
+    def is_pepe_address(self, location):
+        """Is this Amazon destination line really Pepe y Dalda's counter?
+
+        The line is Amazon's own rendering of a saved address ("Rosa - Can
+        Salgot (lliça D'amunt), Barcelona"), so nothing in it is guaranteed —
+        which is why the match is a fragment, folded (see `_fold`), against a
+        list the user owns. An empty list, or a marker that is only
+        whitespace, matches nothing: this must never be the rule that
+        swallows every home delivery.
+        """
+        if not location:
+            return False
+        haystack = _fold(location)
+        markers = (marker.strip() for marker in self.pepe_addresses.splitlines())
+        return any(_fold(marker) in haystack for marker in markers if marker)
+
 
 class PickupPoint(models.Model):
     """Where a package ends up: an Amazon locker/counter, the alt store, or a
@@ -78,16 +141,15 @@ class PickupPoint(models.Model):
         # own email lifecycle, its own colour and enough volume to be worth
         # recognizing at a glance. Only ever one row — it's one shop — so
         # ingestion dedups it by kind alone, not by name.
+        #
+        # The checkout it gets typed into is often Amazon's (user,
+        # 2026-07-31), and then the package is an ordinary Amazon shipment
+        # that happens to land here: Amazon's own three emails drive it, and
+        # only the destination line says where it went (see
+        # Config.pepe_addresses). It is a Pepe y Dalda package all the same —
+        # that's where the trip goes — so it gets this kind, this colour and
+        # this shop's closing days, not a home address's.
         PEPE_Y_DALDA = "pepe_y_dalda", "Pepe y Dalda"
-
-    # Points that are the far end of an Amazon delivery, whatever shape it
-    # takes (a locker, a counter, a relative's door, the carrier's office
-    # after a failed handoff). Spelled as a positive list on purpose: the old
-    # "anything that isn't the alt store" reading silently swallowed every new
-    # non-Amazon kind the moment one was added.
-    AMAZON_KINDS = frozenset({
-        Kind.AMAZON_LOCKER, Kind.AMAZON_COUNTER, Kind.HOME, Kind.CARRIER,
-    })
 
     name = models.CharField(max_length=120)
     kind = models.CharField(max_length=20, choices=Kind.choices)
@@ -105,10 +167,6 @@ class PickupPoint(models.Model):
 
     def __str__(self):
         return self.name
-
-    @property
-    def is_amazon(self):
-        return self.kind in self.AMAZON_KINDS
 
     @property
     def is_home(self):
@@ -235,8 +293,14 @@ class Package(models.Model):
         The tracker needs the shipment id to pin the box; the emails that only
         carry an order number (a consolidated "Se ha recogido", a Pedido not
         yet shipped) fall back to the order page, which is one tap away from
-        the same tracking. Alt-store packages have no order id and no link."""
-        if not self.pickup_point.is_amazon or not self.order_id:
+        the same tracking.
+
+        The order id is what makes a package Amazon's, not where it lands
+        (2026-07-31): an Amazon order delivered to Pepe y Dalda's counter is
+        still an Amazon order and still worth tracking. The two ways a row is
+        born without one — the shop's own "Recepción…" notice and manual
+        alt-store entry — are exactly the ones with nothing to link to."""
+        if not self.order_id:
             return ""
         if self.shipment_id:
             return (
