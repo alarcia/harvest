@@ -24,6 +24,12 @@ Rules that matter:
 - "Dirección de envío actualizada" changes the destination and nothing else:
   the package keeps its state, its dates come from the same email, and where
   it lands is whatever the email now says.
+- "Actualización de la estimación de entrega" *is* the "Pedido" email for a
+  Vine item still in versión preliminar: those products have no listing yet
+  when they're requested, so Amazon never sends a "Pedido" and this is where
+  the package enters Harvest — in_transit, with the arrival it prints. It only
+  ever goes out for Vine, so it flags Vine outright, with no total to read it
+  from.
 - Home deliveries (location is not an Amazon Locker/Counter) create no rows:
   the calendar tracks trips to pickup points. The raw email stays stored, so
   the decision is reversible by reprocessing.
@@ -406,7 +412,8 @@ def _apply(parsed):
 
     point = _pickup_point(parsed.pickup_location)
 
-    if kind in (EmailKind.ORDERED, EmailKind.SHIPPED, EmailKind.OUT_FOR_DELIVERY):
+    if kind in (EmailKind.ORDERED, EmailKind.ESTIMATE_UPDATED,
+                EmailKind.SHIPPED, EmailKind.OUT_FOR_DELIVERY):
         matches = _find_packages(parsed)
         pkg = None
         if matches:
@@ -431,6 +438,13 @@ def _apply(parsed):
             pkg.pickup_point = point
         if kind == EmailKind.ORDERED:
             pkg.ordered_on = sent_on
+        elif kind == EmailKind.ESTIMATE_UPDATED:
+            # Not the day the order was placed — nobody ever tells us that one
+            # for a preview item — but it's the only date of the ordered half
+            # of the story we'll ever get, so it stands in as one and the ○
+            # dot has a day to sit on. Never overwrites a real "Pedido", which
+            # may still turn up out of order for a normal re-dated order.
+            pkg.ordered_on = pkg.ordered_on or sent_on
         else:
             pkg.shipped_on = pkg.shipped_on or sent_on
         if parsed.shipment_id:
@@ -438,8 +452,23 @@ def _apply(parsed):
         _fill(pkg, parsed)
         was_vine = pkg.is_vine
         _apply_cost(pkg, parsed, authoritative=(kind == EmailKind.SHIPPED))
+        if kind == EmailKind.ESTIMATE_UPDATED and not pkg.shipped_on:
+            # This template only ever goes out for a Vine item in versión
+            # preliminar (user, 2026-07-31), so it settles the flag by itself:
+            # there is no total to infer it from, only the item's list price,
+            # which says nothing about what was paid. Set after _apply_cost so
+            # it wins if Amazon ever adds a total line. The shipped_on guard is
+            # for the out-of-order case alone — the Enviado stays authoritative
+            # about cost and Vine, as everywhere else.
+            pkg.is_vine = True
+        created = pkg.pk is None
         pkg.save()
         notes = []
+        if kind == EmailKind.ESTIMATE_UPDATED:
+            notes.append("Nueva estimación de entrega")
+            if created:
+                notes.append("alta de un Vine en versión preliminar "
+                             "(nunca hubo correo de pedido)")
         if kind == EmailKind.SHIPPED and parsed.total:
             # A non-zero shipped total is the interesting case: it either
             # refutes Vine (real purchase) or is just the EU import surcharge

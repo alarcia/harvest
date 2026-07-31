@@ -410,6 +410,73 @@ class ParseEmailTests(SimpleTestCase):
             parse_email(msg.as_bytes())
         self.assertIn("pickup_location", str(ctx.exception))
 
+    def test_estimate_updated(self):
+        # "Actualización de la estimación de entrega": how a Vine item ordered
+        # in *versión preliminar* enters Harvest. The product had no Amazon
+        # listing when it was requested, so no "Pedido" email was ever sent —
+        # this one is its equivalent, and it carries everything that matters
+        # bar the total (the "34 99 €" beside the photo is the item's list
+        # price, not what was paid, so there is no "Total …" line to read).
+        parsed = parse_email(
+            fixture("175-actualizacion-estimacion-entrega-braun-depiladora.eml")
+        )
+        self.assertEqual(parsed.kind, EmailKind.ESTIMATE_UPDATED)
+        self.assertEqual(parsed.order_id, "404-5253910-1146762")
+        self.assertEqual(parsed.sent_at.date(), date(2026, 7, 31))
+        # "Llegará el martes, 4 de agosto de 2026" — this template words the
+        # arrival in the future tense and spells the day out in full.
+        self.assertEqual(parsed.estimated_arrival, date(2026, 8, 4))
+        self.assertIsNone(parsed.estimated_arrival_end)
+        self.assertIsNone(parsed.total)  # no order total on this template
+        self.assertIsNone(parsed.shipment_id)  # not shipped yet, by definition
+        self.assertEqual(parsed.pickup_location, "Marina - La Seu d'Urgell, Lleida")
+        self.assertTrue(parsed.item_title.startswith("Braun Mini Depiladora"))
+        self.assertEqual(parsed.asin, "B0H1CWKZ8J")
+
+    def test_estimate_updated_without_the_item_fails_loudly(self):
+        # This email creates the package outright, so a layout change that
+        # hides the item block must reach the banner: the fallback description
+        # would otherwise echo this subject's boilerplate ("Actualización de
+        # la estimación de entrega de tu pedido…") as the product name.
+        msg = EmailMessage()
+        msg["Subject"] = ("Actualización de la estimación de entrega de tu pedido "
+                          "de Amazon.com con número 404-5253910-1146762")
+        msg["Message-ID"] = "<estimate@example.com>"
+        msg["Date"] = "Fri, 31 Jul 2026 01:27:24 +0200"
+        msg.set_content(
+            "<p>Actualización sobre la fecha estimada de entrega</p>"
+            "<p>Llegará el martes, 4 de agosto de 2026</p>"
+            "<p>Marina - La Seu d'Urgell, Lleida</p>"
+            "<p>Pedido n.º</p><p>404-5253910-1146762</p>",
+            subtype="html",
+        )
+        with self.assertRaisesMessage(ParseError, "missing") as ctx:
+            parse_email(msg.as_bytes())
+        self.assertIn("item_title", str(ctx.exception))
+
+    def test_future_tense_arrival_keeps_a_delivery_window_whole(self):
+        # No real sample yet: every window seen so far is worded "Llegada
+        # entre el 24 y el 28 de julio" (fixture 023). Since the arrival line
+        # now also reads "Llegará el …", the two must not collide — a window
+        # in the future tense has to stay a window rather than be swallowed as
+        # one very long single-day phrase.
+        msg = EmailMessage()
+        msg["Subject"] = "Actualización de la estimación de entrega"
+        msg["Message-ID"] = "<estimate-window@example.com>"
+        msg["Date"] = "Fri, 31 Jul 2026 01:27:24 +0200"
+        msg.set_content(
+            "<p>Actualización sobre la fecha estimada de entrega</p>"
+            "<p>Llegará entre el 4 de agosto y el 7 de agosto</p>"
+            "<p>Marina - La Seu d'Urgell, Lleida</p>"
+            "<p>Pedido n.º</p><p>404-5253910-1146762</p>"
+            '<a href="/dp/B0H1CWKZ8J?ref_=fed_asin_title">'
+            '<img alt="Braun Mini Depiladora" src="x.jpg"></a>',
+            subtype="html",
+        )
+        parsed = parse_email(msg.as_bytes())
+        self.assertEqual(parsed.estimated_arrival, date(2026, 8, 4))
+        self.assertEqual(parsed.estimated_arrival_end, date(2026, 8, 7))
+
     def test_delivery_attempt_other_carrier_stays_unrecognized(self):
         # Only UPS is handled for now (user's explicit ask, 2026-07-23): a
         # different carrier's equivalent notice must keep tripping the
@@ -834,6 +901,74 @@ class IngestTests(TestCase):
         self.assertEqual(pkg.pickup_point.kind, PickupPoint.Kind.HOME)
         self.assertEqual(pkg.estimated_arrival, date(2026, 7, 17))  # "Llega el viernes"
         self.assertTrue(pkg.description.startswith("KALVICA"))
+
+    def test_estimate_update_alone_creates_a_vine_package(self):
+        # The real 2026-07-31 case: a Vine item in versión preliminar, which
+        # generates no "Pedido" email at all. This is the package's first and
+        # only word before it ships, so it has to create the row — in transit,
+        # with the arrival it prints — or the package stays invisible.
+        record, _ = process_message(
+            fixture("175-actualizacion-estimacion-entrega-braun-depiladora.eml")
+        )
+        self.assertTrue(record.processed, record.parse_error)
+        pkg = Package.objects.get()
+        self.assertEqual(pkg.order_id, "404-5253910-1146762")
+        self.assertEqual(pkg.state, Package.State.IN_TRANSIT)
+        self.assertEqual(pkg.estimated_arrival, date(2026, 8, 4))
+        # Stands in for the "Pedido" date nobody ever sent, so the ○ dot has a
+        # day to sit on.
+        self.assertEqual(pkg.ordered_on, date(2026, 7, 31))
+        self.assertIsNone(pkg.shipped_on)
+        self.assertTrue(pkg.description.startswith("Braun Mini Depiladora"))
+        self.assertEqual(pkg.pickup_point.kind, PickupPoint.Kind.HOME)
+        # Vine outright: this template only ever goes out for a Vine item, and
+        # it carries no total to work the flag out from.
+        self.assertTrue(pkg.is_vine)
+        self.assertEqual(pkg.cost, 0)
+        # …but the review is still owed only once it's actually received.
+        self.assertEqual(Review.objects.count(), 0)
+        self.assertIn("Vine en versión preliminar", record.note)
+
+    def test_estimate_update_refreshes_a_known_order(self):
+        # The same template also re-dates an ordinary order. Then it's an
+        # update, not a birth: one row, a fresher arrival, and the real
+        # "Pedido" day left alone.
+        point = PickupPoint.objects.create(
+            name="Marina - La Seu d'Urgell, Lleida", kind=PickupPoint.Kind.HOME,
+        )
+        pkg = Package.objects.create(
+            pickup_point=point, order_id="404-5253910-1146762",
+            description="Braun Mini Depiladora", state=Package.State.IN_TRANSIT,
+            ordered_on=date(2026, 7, 25), estimated_arrival=date(2026, 7, 30),
+        )
+        process_message(
+            fixture("175-actualizacion-estimacion-entrega-braun-depiladora.eml")
+        )
+        self.assertEqual(Package.objects.count(), 1)  # same package
+        pkg.refresh_from_db()
+        self.assertEqual(pkg.estimated_arrival, date(2026, 8, 4))
+        self.assertEqual(pkg.ordered_on, date(2026, 7, 25))  # the real one wins
+        self.assertEqual(pkg.state, Package.State.IN_TRANSIT)
+
+    def test_estimate_update_never_undoes_a_shipped_price(self):
+        # Out-of-order forwarding, the one case where the Vine rule could do
+        # damage: the "Enviado" already priced this package at 19.98€ and
+        # unmarked it. The shipped total stays authoritative, here as
+        # everywhere else — the flag is only ever assumed *before* shipping.
+        point = PickupPoint.objects.create(
+            name="Marina - La Seu d'Urgell, Lleida", kind=PickupPoint.Kind.HOME,
+        )
+        pkg = Package.objects.create(
+            pickup_point=point, order_id="404-5253910-1146762",
+            state=Package.State.IN_TRANSIT, shipped_on=date(2026, 7, 30),
+            cost=Decimal("19.98"), is_vine=False,
+        )
+        process_message(
+            fixture("175-actualizacion-estimacion-entrega-braun-depiladora.eml")
+        )
+        pkg.refresh_from_db()
+        self.assertFalse(pkg.is_vine)
+        self.assertEqual(pkg.cost, Decimal("19.98"))
 
     def test_address_change_moves_a_pickup_to_a_home_delivery(self):
         # The real 2026-07-31 case: an order heading for the Counter, re-routed

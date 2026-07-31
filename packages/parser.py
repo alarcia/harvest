@@ -44,7 +44,8 @@ from bs4 import BeautifulSoup
 
 class EmailKind(Enum):
     """One value per Amazon template we know. Model states are coarser:
-    ORDERED/SHIPPED/OUT_FOR_DELIVERY are all `in_transit`; READY_FOR_PICKUP
+    ORDERED/ESTIMATE_UPDATED/SHIPPED/OUT_FOR_DELIVERY are all `in_transit`;
+    READY_FOR_PICKUP
     and DELIVERY_ATTEMPT both land on `awaiting_pickup` (the second at a
     carrier's office instead of an Amazon point); NO_LONGER_AVAILABLE,
     PICKUP_REMINDER and ADDRESS_UPDATED drive *no* transition (the first is
@@ -59,6 +60,13 @@ class EmailKind(Enum):
     # before it shipped. Same template as ORDERED bar the headline, and it
     # drives no state change — only `pickup_location` matters.
     ADDRESS_UPDATED = "address_updated"
+    # "Actualización de la estimación de entrega": Amazon re-dating an order
+    # that hasn't shipped. In practice it is how a Vine item ordered in
+    # *versión preliminar* announces itself — the product has no Amazon
+    # listing yet when it's requested, so no "Pedido" email is ever sent and
+    # this is the package's first word. Same Pedido-shaped body bar the total,
+    # so ingestion treats it as one (and as Vine, see `packages.ingest`).
+    ESTIMATE_UPDATED = "estimate_updated"
     OUT_FOR_DELIVERY = "out_for_delivery"
     READY_FOR_PICKUP = "ready_for_pickup"
     DELIVERY_ATTEMPT = "delivery_attempt"  # failed home delivery, UPS only for
@@ -174,6 +182,14 @@ _KIND_PATTERNS = [
     # el …"), so this must be matched *after* ORDERED to keep an email that
     # says both from being filed as a redirection.
     (EmailKind.ADDRESS_UPDATED, r"direcci[oó]n de env[ií]o actualizada"),
+    # "Actualización sobre la fecha estimada de entrega" (body headline; the
+    # subject words it "Actualización de la estimación de entrega de tu pedido
+    # de Amazon.com con número …", and both are matched so a reworded one
+    # still lands). Same reason as ADDRESS_UPDATED for sitting after ORDERED:
+    # the body is the Pedido template with the headline swapped.
+    (EmailKind.ESTIMATE_UPDATED,
+     r"actualizaci[oó]n sobre la fecha estimada de entrega"
+     r"|actualizaci[oó]n de la estimaci[oó]n de entrega"),
     # Pepe y Dalda writes both of these by hand, so match either the subject
     # ("Recepción carta", "Recepción de paquete") or the body line ("Hemos
     # recibido 1 carta para ti"). The phrase alone doesn't prove it's *that*
@@ -196,6 +212,15 @@ _REQUIRED = {
     # is not: the email reprints it as a courtesy, and losing the redirection
     # because Amazon dropped a "Llega el …" line would be the worse trade.
     EmailKind.ADDRESS_UPDATED: ("order_id", "sent_at", "pickup_location"),
+    # The same fields as ORDERED bar the total: this template prints the
+    # item's list price ("34 99 €" beside the photo), never an order total, so
+    # there is no "Total …" line to read and Vine is settled by the kind
+    # itself instead (see `packages.ingest`). `item_title` *is* required, for
+    # the opposite reason to ADDRESS_UPDATED's leniency: this email creates
+    # the package outright, and without the item block the description would
+    # fall back to echoing this subject's boilerplate.
+    EmailKind.ESTIMATE_UPDATED: ("order_id", "sent_at", "item_title",
+                                 "estimated_arrival", "pickup_location"),
     EmailKind.OUT_FOR_DELIVERY: ("order_id", "sent_at", "estimated_arrival"),
     EmailKind.READY_FOR_PICKUP: ("order_id", "sent_at", "pickup_before",
                                  "pickup_code", "pickup_location"),
@@ -232,13 +257,17 @@ _SHIPMENT_ID = re.compile(r"shipmentId=([A-Za-z0-9]+)")
 _ASIN_ANY = re.compile(r"/dp/([A-Z0-9]{10})")
 _REVIEW_ID = re.compile(r"/review/(R[A-Z0-9]+)")
 _TOTAL = re.compile(r"Total\s+(\d+[.,]\d{2})\s*€")
-_ARRIVES = re.compile(r"^Llega (.+)$")
+# "Llega el lunes", and the future tense the estimate-update template uses:
+# "Llegará el martes, 4 de agosto de 2026". "entre" is excluded so the window
+# variant below keeps its own line rather than being read as one long day
+# phrase — dateparser would make nonsense of it.
+_ARRIVES = re.compile(r"^Llega(?:rá)? (?!entre\b)(.+)$")
 # A delivery-window variant of the arrival line: "Llegada entre el 24 de julio
 # y el 28 de julio". The start is the estimate proper (that's the day the
 # calendar marks); the end is kept alongside it so the card can word the window
 # honestly instead of pretending Amazon promised the first day. The later
 # Enviado email replaces both with a single firm day.
-_ARRIVES_RANGE = re.compile(r"^Llegada entre el (.+?) y el (.+)$")
+_ARRIVES_RANGE = re.compile(r"^Llega(?:da|rá) entre el (.+?) y el (.+)$")
 _BEFORE = re.compile(r"antes del (.+)$")
 _PICKED = re.compile(r"^Recogido (.+)$")
 # Searched over the joined text: the value may sit in its own tag (own line).
