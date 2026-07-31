@@ -746,7 +746,9 @@ def ingest_now(request):
     just landed and the user wants it on the board *before* planning the trip.
     It's the same `scan_inbox`, idempotent by Message-ID, so pressing it twice
     — or pressing it while the worker is mid-sweep — costs an IMAP login and
-    nothing else.
+    nothing else. It does pick up stored *failures* though (see
+    `process_message`): pressing ⟳ after deploying a parser fix is enough to
+    clear the red banner, which is what the user reaches for it to do.
 
     Synchronous on purpose: the inbox self-cleans (processed mail goes to
     Trash), so a sweep is a handful of messages and a second or two, and
@@ -766,6 +768,13 @@ def ingest_now(request):
     if stats["new"]:
         parts.append("1 correo nuevo" if stats["new"] == 1
                      else f"{stats['new']} correos nuevos")
+    if stats["fixed"]:
+        # Old mail that had been stuck behind the red banner and parses now
+        # that the parser learned its template. Said out loud because pressing
+        # ⟳ right after a deploy is exactly how the user reaches for it, and
+        # "sin correos nuevos" would read as "nothing happened".
+        parts.append("1 correo reprocesado" if stats["fixed"] == 1
+                     else f"{stats['fixed']} correos reprocesados")
     if stats["failed"]:
         # The red banner spells these out on the refresh below; the pill only
         # says there are some, so the user knows to look down.
@@ -773,7 +782,7 @@ def ingest_now(request):
                      else f"{stats['failed']} sin procesar")
     response = _ingest_pill(request, " · ".join(parts) or "Sin correos nuevos",
                             error=bool(stats["failed"]))
-    if stats["new"] or stats["failed"]:
+    if stats["new"] or stats["fixed"] or stats["failed"]:
         # Something changed under the view (new chips, or a new red banner):
         # reuse the trigger the manual pickup confirmation already fires, so
         # the section refetches itself in place — same view, same anchor, no

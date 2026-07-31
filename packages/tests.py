@@ -23,6 +23,7 @@ from reviews.models import Review
 
 from .ingest import (
     MANUAL_SCAN_TIMEOUT,
+    Outcome,
     _sync_review_for_vine,
     backfill_reviews,
     process_message,
@@ -533,8 +534,8 @@ class IngestTests(TestCase):
             "008-fwd-paquete-listo-para-recogida-recoger-en-amazon-counter-le.eml",
             "009-fwd-se-ha-recogido-cargador-inalambrico-magnetico-25w-con-us.eml",
         ):
-            record, created = process_message(fixture(name))
-            self.assertTrue(created)
+            record, outcome = process_message(fixture(name))
+            self.assertEqual(outcome, Outcome.NEW)
             self.assertTrue(record.processed, record.parse_error)
 
         self.assertEqual(Package.objects.count(), 1)
@@ -590,10 +591,46 @@ class IngestTests(TestCase):
         raw = fixture("006-fwd-pedido-cargador-inalambrico.eml")
         _, first = process_message(raw)
         _, second = process_message(raw)
-        self.assertTrue(first)
-        self.assertFalse(second)
+        self.assertEqual(first, Outcome.NEW)
+        self.assertEqual(second, Outcome.KNOWN)  # applied once, never twice
         self.assertEqual(Package.objects.count(), 1)
         self.assertEqual(RawEmail.objects.count(), 1)
+
+    def test_a_stored_failure_is_reparsed_but_a_success_never_is(self):
+        # Idempotency guards successes, not failures: a failure applied no
+        # state (the ParseError is raised before `_apply` ever runs), so
+        # re-parsing it is applying it for the first time, not twice.
+        raw = fixture("006-fwd-pedido-cargador-inalambrico.eml")
+        with patch("packages.ingest.parse_email",
+                   side_effect=ParseError("Unrecognized email type")):
+            record, outcome = process_message(raw)
+        self.assertEqual(outcome, Outcome.NEW)
+        self.assertFalse(record.processed)
+
+        record, outcome = process_message(raw)
+        self.assertEqual(outcome, Outcome.FIXED)
+        self.assertEqual(record.parse_error, "")
+        self.assertEqual(Package.objects.count(), 1)
+
+        # Now that it *is* applied, it goes back to being untouchable.
+        record, outcome = process_message(raw)
+        self.assertEqual(outcome, Outcome.KNOWN)
+        self.assertEqual(Package.objects.count(), 1)  # never applied twice
+        self.assertEqual(RawEmail.objects.count(), 1)
+
+    def test_reparsing_a_failure_never_duplicates_a_matchless_package(self):
+        # The dangerous shape, if the "no state was applied" reasoning were
+        # ever wrong: a Pepe y Dalda notice matches on nothing and always
+        # creates a row, so a double-apply means two packages for one letter.
+        raw = _pepe_email("Recepción carta", "Hemos recibido 1 carta para ti")
+        with patch("packages.ingest.parse_email",
+                   side_effect=ParseError("Unrecognized email type")):
+            process_message(raw)
+        self.assertEqual(Package.objects.count(), 0)
+
+        process_message(raw)
+        process_message(raw)
+        self.assertEqual(Package.objects.count(), 1)
 
     def test_ready_alone_creates_awaiting_package(self):
         # The Locker Cebolla case: the first email the app ever sees for
@@ -755,8 +792,8 @@ class IngestTests(TestCase):
             "la ha dejado en su oficina para que la recojas.</p>",
             subtype="html",
         )
-        record, created = process_message(msg.as_bytes())
-        self.assertTrue(created)
+        record, outcome = process_message(msg.as_bytes())
+        self.assertEqual(outcome, Outcome.NEW)
         self.assertFalse(record.processed)
         self.assertIn("Unrecognized", record.parse_error)
         self.assertEqual(Package.objects.count(), 0)
@@ -1069,8 +1106,8 @@ class IngestTests(TestCase):
         msg["Subject"] = "Oferta especial solo hoy"
         msg["Message-ID"] = "<junk@example.com>"
         msg.set_content("Grandes descuentos", subtype="html")
-        record, created = process_message(msg.as_bytes())
-        self.assertTrue(created)
+        record, outcome = process_message(msg.as_bytes())
+        self.assertEqual(outcome, Outcome.NEW)
         self.assertFalse(record.processed)
         self.assertIn("Unrecognized", record.parse_error)
         self.assertEqual(Package.objects.count(), 0)
@@ -1543,6 +1580,58 @@ class ScanInboxTests(TestCase):
             [uid for uid, item, _ in second.stored if item == "+X-GM-LABELS"], [11]
         )
 
+    @override_settings(GMAIL_TRASH_PROCESSED=True)
+    def test_a_sweep_reprocesses_a_stored_failure_after_a_parser_fix(self):
+        """The whole point of retrying failures (2026-07-31): deploying a
+        parser fix is enough, the next sweep — worker or the topbar's ⟳ —
+        clears the banner on its own. `manage.py reprocess` stays as the
+        instant, no-IMAP version, not as the only way."""
+        raw = fixture("006-fwd-pedido-cargador-inalambrico.eml")
+        # Before the fix: the parser doesn't know this template. It's stored,
+        # flagged, and left in the inbox.
+        with patch("packages.ingest.parse_email",
+                   side_effect=ParseError("Unrecognized email type")):
+            first = FakeIMAP([(11, raw)])
+            stats = scan_inbox(connection_factory=lambda: first)
+        self.assertEqual(stats["failed"], 1)
+        self.assertEqual(first.stored, [])  # kept, so the failure is visible
+        self.assertEqual(Package.objects.count(), 0)  # a failure applies nothing
+
+        # Deployed. The next sweep re-parses it in place — same row, no
+        # re-forwarding, no IMAP round trip beyond the one it was doing anyway.
+        second = FakeIMAP([(11, raw)])
+        stats = scan_inbox(connection_factory=lambda: second)
+
+        self.assertEqual(stats["fixed"], 1)
+        self.assertEqual(stats["new"], 0)  # not new mail, and counted apart
+        self.assertEqual(stats["failed"], 0)
+        self.assertEqual(RawEmail.objects.count(), 1)  # re-parsed, not re-stored
+        record = RawEmail.objects.get()
+        self.assertEqual(record.parse_error, "")  # banner clears
+        self.assertTrue(record.processed)
+        self.assertEqual(Package.objects.count(), 1)
+        # And now that it's resolved, the same sweep sweeps it out of the inbox.
+        self.assertEqual(
+            [uid for uid, item, _ in second.stored if item == "+X-GM-LABELS"], [11]
+        )
+
+    @override_settings(GMAIL_TRASH_PROCESSED=True)
+    def test_a_failure_that_still_does_not_parse_stays_quiet_and_stays_put(self):
+        # Retrying every sweep must not turn a permanently unparseable email
+        # (a newsletter that slipped in) into a warning every ten minutes: it
+        # shouts once, when it first fails, then counts as KNOWN.
+        bad = _junk_email()
+        scan_inbox(connection_factory=lambda: FakeIMAP([(22, bad)]))
+        second = FakeIMAP([(22, bad)])
+
+        stats = scan_inbox(connection_factory=lambda: second)
+
+        self.assertEqual(stats["failed"], 0)  # not re-counted
+        self.assertEqual(stats["fixed"], 0)
+        self.assertEqual(stats["new"], 0)
+        self.assertEqual(second.stored, [])  # still in the inbox, still flagged
+        self.assertTrue(RawEmail.objects.get().parse_error)
+
     @override_settings(GMAIL_TRASH_PROCESSED=False)
     def test_readonly_mode_never_touches_mailbox(self):
         good = fixture("006-fwd-pedido-cargador-inalambrico.eml")
@@ -1571,9 +1660,9 @@ class ScanInboxTests(TestCase):
             raise IntegrityError("UNIQUE constraint failed: packages_rawemail.message_id")
 
         with patch.object(RawEmail.objects, "create", side_effect=racing_create):
-            record, created = process_message(raw)
+            record, outcome = process_message(raw)
 
-        self.assertFalse(created)  # not ours to parse
+        self.assertEqual(outcome, Outcome.KNOWN)  # not ours to parse
         self.assertEqual(RawEmail.objects.count(), 1)
         self.assertEqual(record, RawEmail.objects.get())
         self.assertEqual(Package.objects.count(), 0)  # applied by the winner only
@@ -1616,7 +1705,7 @@ class ManualIngestTests(TestCase):
         scan.assert_not_called()
 
     def test_new_mail_is_reported_and_the_view_refreshes(self):
-        stats = {"messages": 3, "new": 2, "failed": 0, "trashed": 2}
+        stats = {"messages": 3, "new": 2, "fixed": 0, "failed": 0, "trashed": 2}
         with patch("packages.views.scan_now", return_value=stats):
             response = self.client.post(reverse("ingest_now"))
         self.assertContains(response, "2 correos nuevos")
@@ -1625,22 +1714,33 @@ class ManualIngestTests(TestCase):
         self.assertEqual(response["HX-Trigger"], "package-updated")
 
     def test_a_single_email_is_counted_in_the_singular(self):
-        stats = {"messages": 1, "new": 1, "failed": 0, "trashed": 1}
+        stats = {"messages": 1, "new": 1, "fixed": 0, "failed": 0, "trashed": 1}
         with patch("packages.views.scan_now", return_value=stats):
             response = self.client.post(reverse("ingest_now"))
         self.assertContains(response, "1 correo nuevo")
 
     def test_nothing_new_says_so_and_leaves_the_view_alone(self):
-        stats = {"messages": 0, "new": 0, "failed": 0, "trashed": 0}
+        stats = {"messages": 0, "new": 0, "fixed": 0, "failed": 0, "trashed": 0}
         with patch("packages.views.scan_now", return_value=stats):
             response = self.client.post(reverse("ingest_now"))
         self.assertContains(response, "Sin correos nuevos")
         self.assertFalse(response.has_header("HX-Trigger"))  # nothing changed
 
+    def test_reprocessed_mail_is_reported_apart_from_new_mail(self):
+        # Pressing ⟳ right after deploying a parser fix is exactly how the
+        # user reaches for the button, so "sin correos nuevos" — technically
+        # true, nothing new arrived — would read as "nothing happened".
+        stats = {"messages": 1, "new": 0, "fixed": 1, "failed": 0, "trashed": 1}
+        with patch("packages.views.scan_now", return_value=stats):
+            response = self.client.post(reverse("ingest_now"))
+        self.assertContains(response, "1 correo reprocesado")
+        self.assertNotContains(response, "bad")  # a fix isn't an error
+        self.assertEqual(response["HX-Trigger"], "package-updated")  # banner clears
+
     def test_unparseable_mail_shows_up_on_the_pill_and_refreshes(self):
         # The red banner spells out what broke; the pill just points at it,
         # which is why the refresh has to happen for a failure too.
-        stats = {"messages": 2, "new": 1, "failed": 1, "trashed": 1}
+        stats = {"messages": 2, "new": 1, "fixed": 0, "failed": 1, "trashed": 1}
         with patch("packages.views.scan_now", return_value=stats):
             response = self.client.post(reverse("ingest_now"))
         self.assertContains(response, "1 correo nuevo · 1 sin procesar")

@@ -12,6 +12,10 @@ Rules that matter:
   preserves the original Message-ID on auto-forward, and a hand-forward gets
   the forwarding Gmail's own one — both stable. Idempotency is by the DB, never
   by IMAP flags, so trashing processed mail (below) can't break it.
+- Idempotency guards *successes*, not failures. A stored failure applied no
+  state, so every sweep re-parses it with whatever the parser knows now, and a
+  parser fix reaches history the moment it deploys (2026-07-31). `manage.py
+  reprocess` still exists as the instant, no-IMAP version of the same thing.
 - A failed parse is recorded on the RawEmail (the calendar shows it as a red
   banner) and never aborts the scan of the remaining messages.
 - "Ya no está disponible" is misleading (proven repeatedly): it drives no
@@ -54,6 +58,16 @@ logger = logging.getLogger("packages.ingest")
 
 _LOCATION = re.compile(r"^Amazon (Locker|Counter) - ")
 _POSTAL_CODE = re.compile(r"\b(\d{5})\b")
+
+
+class Outcome:
+    """What one sweep did with a message, so the caller can log and count it
+    honestly instead of guessing from a bare "was it new?" boolean."""
+
+    NEW = "new"  # first sighting of this Message-ID: stored, parsed, applied
+    FIXED = "fixed"  # a stored failure that parses now — a parser fix
+    # reaching history by itself, without `manage.py reprocess`
+    KNOWN = "known"  # nothing to do: already applied, or still unparseable
 
 # States only move forward; a late or re-forwarded email never regresses one.
 # PICKED_UP and DELIVERED are both terminal (a pickup and a home delivery).
@@ -648,8 +662,7 @@ def _reparse(record, raw):
 def process_message(raw):
     """One raw RFC822 message (bytes) through the whole pipeline.
 
-    Returns (RawEmail, created): created=False means the Message-ID was
-    already in the database and nothing was touched.
+    Returns (RawEmail, Outcome): see Outcome for what each one means.
     """
     msg = message_from_bytes(raw, policy=policy.default)
     message_id = (msg.get("Message-ID") or "").strip()
@@ -657,7 +670,23 @@ def process_message(raw):
         message_id = "sha256:" + hashlib.sha256(raw).hexdigest()
     existing = RawEmail.objects.filter(message_id=message_id).first()
     if existing is not None:
-        return existing, False
+        if not existing.parse_error:
+            return existing, Outcome.KNOWN  # applied already; never twice
+        # A stored *failure*, on the other hand, is worth another go. It
+        # applied no state — a ParseError is raised before `_apply` ever runs,
+        # and a crash inside it is rolled back by the atomic block — so
+        # re-parsing is not "applying it twice", it's applying it for the
+        # first time, with whatever the parser has learned since. That is what
+        # makes a parser fix reach history on its own: the worker's next sweep
+        # (or the topbar's ⟳) picks it up, instead of leaving it stuck behind
+        # the red banner until someone remembers `manage.py reprocess`.
+        _reparse(existing, raw)
+        existing.save()
+        # Still broken ⇒ KNOWN, deliberately: a permanently unparseable email
+        # would otherwise shout the same warning into the audit trail every
+        # ten minutes, forever. It was logged loudly once, when it first
+        # failed, and the red banner keeps standing.
+        return existing, Outcome.FIXED if existing.processed else Outcome.KNOWN
 
     received_at = None
     if msg.get("Date"):
@@ -685,10 +714,10 @@ def process_message(raw):
         existing = RawEmail.objects.filter(message_id=message_id).first()
         if existing is None:  # not the race, then: a real constraint problem
             raise
-        return existing, False
+        return existing, Outcome.KNOWN
     _reparse(record, raw)
     record.save()
-    return record, True
+    return record, Outcome.NEW
 
 
 def reprocess_failures():
@@ -809,7 +838,7 @@ def scan_inbox(connection_factory=_default_connection):
         raise RuntimeError("GMAIL_IMAP_USER / GMAIL_IMAP_APP_PASSWORD are not set.")
 
     trash = settings.GMAIL_TRASH_PROCESSED
-    stats = {"messages": 0, "new": 0, "failed": 0, "trashed": 0}
+    stats = {"messages": 0, "new": 0, "fixed": 0, "failed": 0, "trashed": 0}
     with connection_factory() as conn:
         conn.login(settings.GMAIL_IMAP_USER, settings.GMAIL_IMAP_APP_PASSWORD)
         status, _ = conn.select("INBOX", readonly=not trash)
@@ -833,20 +862,21 @@ def scan_inbox(connection_factory=_default_connection):
                 stats["failed"] += 1
                 continue
             stats["messages"] += 1
-            record, created = process_message(msg_data[0][1])
+            record, outcome = process_message(msg_data[0][1])
             when = timezone.localtime(record.received_at).strftime("%d %b %H:%M") \
                 if record.received_at else "fecha ?"
-            if created and record.parse_error:
+            if outcome == Outcome.NEW and record.parse_error:
                 stats["failed"] += 1
                 logger.warning(
                     "SIN PARSEAR [%s] %r → %s (se deja en la bandeja)",
                     when, record.subject[:70], record.parse_error,
                 )
-            elif created:
-                stats["new"] += 1
+            elif outcome in (Outcome.NEW, Outcome.FIXED):
+                stats["new" if outcome == Outcome.NEW else "fixed"] += 1
                 detail = f" · {record.note}" if record.note else ""
                 logger.info(
-                    "PROCESADO [%s] %r → %s%s",
+                    "%s [%s] %r → %s%s",
+                    "PROCESADO" if outcome == Outcome.NEW else "REPROCESADO",
                     when, record.subject[:70], record.kind or "?", detail,
                 )
             else:
@@ -854,8 +884,9 @@ def scan_inbox(connection_factory=_default_connection):
             if trash and record.processed:
                 _trash(conn, uid, record, stats)
     logger.info(
-        "Escaneo completado: %d en bandeja, %d nuevos, %d sin parsear, %d a papelera",
-        len(uids), stats["new"], stats["failed"], stats["trashed"],
+        "Escaneo completado: %d en bandeja, %d nuevos, %d reprocesados, "
+        "%d sin parsear, %d a papelera",
+        len(uids), stats["new"], stats["fixed"], stats["failed"], stats["trashed"],
     )
     return stats
 
