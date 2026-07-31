@@ -2419,6 +2419,45 @@ class CalendarViewTests(TestCase):
             reverse("package_detail", args=[pkg.pk])).content
         self.assertNotIn(b"<b>Tipo</b>", html)
 
+    def test_display_name_replaces_the_full_venue_name_on_the_card(self):
+        # The stored name is the email's own wording and stays verbatim
+        # (ingestion matches venues by it); the card prints the short name the
+        # user wrote in the admin instead.
+        counter = self._point(
+            "Amazon Counter - Les Mesures AVDA SALORIA, 30 BAJO LLEIDA , 25700",
+            PickupPoint.Kind.AMAZON_COUNTER)
+        counter.display_name = "Les Mesures"
+        counter.save()
+        pkg = Package.objects.create(
+            pickup_point=counter, state=Package.State.AWAITING_PICKUP,
+            description="Funda de móvil",
+        )
+        html = self.client.get(
+            reverse("package_detail", args=[pkg.pk])).content
+        self.assertIn(b"Les Mesures", html)
+        self.assertNotIn(b"AVDA SALORIA", html)
+
+    def test_without_a_display_name_the_full_name_still_shows(self):
+        home = self._point("Rosa - Can Salgot, Barcelona", PickupPoint.Kind.HOME)
+        pkg = self._delivered(home, "Rampa para perro", timezone.localdate())
+        html = self.client.get(
+            reverse("package_detail", args=[pkg.pk])).content
+        self.assertIn("Entrega a domicilio · Rosa - Can Salgot, Barcelona".encode(),
+                      html)
+
+    def test_display_name_reaches_the_prefixed_labels_too(self):
+        # The kind prefix ("Entrega a domicilio · …") is rendering, so it
+        # wraps the short name like it wraps the long one.
+        home = self._point("Rosa - Can Salgot (lliça D'amunt), Barcelona",
+                           PickupPoint.Kind.HOME)
+        home.display_name = "Casa de Rosa"
+        home.save()
+        pkg = self._delivered(home, "Rampa para perro", timezone.localdate())
+        html = self.client.get(
+            reverse("package_detail", args=[pkg.pk])).content
+        self.assertIn("Entrega a domicilio · Casa de Rosa".encode(), html)
+        self.assertNotIn("lliça D".encode(), html)
+
     def test_same_day_pickups_collapse_into_one_chip(self):
         # Two things picked up the same day, at different points: the month view
         # has no room for a chip each, so they become one "N productos" recap

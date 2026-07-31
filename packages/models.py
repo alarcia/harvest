@@ -152,6 +152,20 @@ class PickupPoint(models.Model):
         PEPE_Y_DALDA = "pepe_y_dalda", "Pepe y Dalda"
 
     name = models.CharField(max_length=120)
+    # What the calendar prints instead of `name`. The name is machinery: it is
+    # whatever the email said ("Amazon Counter - Les Mesures AVDA SALORIA, 30
+    # BAJO LLEIDA , 25700"), and it has to stay verbatim because ingestion
+    # matches venues by it. The user reads the place by a two-word nickname
+    # ("Les Mesures"), so he writes that here, in the admin, and every card
+    # and chip uses it (see `label`). Blank means "the name is short enough
+    # already", so nothing needs filling in for this to work.
+    display_name = models.CharField(
+        max_length=60, blank=True,
+        verbose_name="nombre para mostrar",
+        help_text="Nombre corto que se muestra en el calendario y en las "
+                  "fichas, en lugar del nombre completo del correo. Déjalo "
+                  "vacío para mostrar el nombre completo.",
+    )
     kind = models.CharField(max_length=20, choices=Kind.choices)
     # Postal code read from the venue line, used to dedup Amazon Locker/Counter
     # points: Amazon spells the same venue differently across templates (the
@@ -166,7 +180,13 @@ class PickupPoint(models.Model):
         ordering = ["name"]
 
     def __str__(self):
-        return self.name
+        return self.label
+
+    @property
+    def label(self):
+        """How this place is named to the user, everywhere. `display_name`
+        when the user has given one, the raw email name otherwise."""
+        return self.display_name.strip() or self.name
 
     @property
     def is_home(self):

@@ -252,18 +252,23 @@ def _label(pkg):
 def _point_label(point):
     """Human name for a pickup point. Amazon venues already read
     "Amazon Locker/Counter - …"; home and alt-store need a word to say what
-    kind of place it is."""
+    kind of place it is.
+
+    Always `point.label`, never `point.name`: the stored name is the email's
+    own wording, kept verbatim so ingestion can match venues by it, and the
+    user overrides it in the admin with the short name he actually says out
+    loud (PickupPoint.display_name)."""
     if point.kind == PickupPoint.Kind.HOME:
-        return f"Entrega a domicilio · {point.name}"
+        return f"Entrega a domicilio · {point.label}"
     if point.kind == PickupPoint.Kind.ALT_STORE:
         # "Otros" (not "Tienda"): the non-Amazon bucket is various stores and
         # drop-off spots, all handled the same, distinct from Amazon.
-        return f"Otros · {point.name}"
+        return f"Otros · {point.label}"
     if point.kind == PickupPoint.Kind.CARRIER:
-        return f"Recogida en transportista · {point.name}"
+        return f"Recogida en transportista · {point.label}"
     # Pepe y Dalda names itself, address included (the signature its emails
     # sign off with), so it needs no prefix — same as an Amazon venue.
-    return point.name
+    return point.label
 
 
 # Which colour family a chip belongs to. Three sources, not two: Pepe y
