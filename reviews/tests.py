@@ -460,6 +460,13 @@ class ReviewSuggestTests(TestCase):
         )
         self.url = reverse("review_suggest", args=[self.review.pk])
 
+    def _open(self, title="", text="", rating=""):
+        """Arrive from the editor, the only way in — carrying whatever is
+        typed there at that moment."""
+        return self.client.post(self.url, {
+            "action": "open", "title": title, "text": text, "rating": rating,
+        })
+
     def test_panel_shows_notes_and_stars_but_never_asks_for_a_title(self):
         self.review.notes = "El hueco de la cámara queda grande"
         self.review.rating = 3
@@ -470,20 +477,57 @@ class ReviewSuggestTests(TestCase):
             '<input type="radio" name="rating" id="rev-star-3" value="3" checked>',
             response.content.decode(),
         )
-        # The product's name is the title input, and it's already known.
+        # The product's name is the title input, and it's already known — so
+        # there's a hidden field carrying the editor's headline, but nothing
+        # to type one into.
         self.assertContains(response, "Funda con teclado")
-        self.assertNotContains(response, 'name="title"')
+        self.assertNotContains(response, 'for="rev-title"')
 
-    def test_saving_notes_keeps_them_without_touching_the_status(self):
+    def test_the_editor_is_reached_from_here_not_the_card(self):
+        # The panel lives inside the editor (user, 2026-08-01), so the card
+        # only ever offers the editor, and every exit here lands back in it.
+        card = self.client.get(reverse("review_detail", args=[self.review.pk]))
+        self.assertNotContains(card, "Notas y sugerencia")
+        editor = self.client.get(reverse("review_edit", args=[self.review.pk]))
+        self.assertContains(editor, "Notas y sugerencia")
+        self.assertContains(editor, self.url)
+
+    def test_unsaved_work_survives_the_detour(self):
+        # The whole reason the editor's fields ride along as hidden inputs:
+        # opening the panel swaps the modal, and a half-written review left
+        # in the DOM would simply be gone.
+        typed = "Un párrafo a medias\ncon salto de línea."
+        panel = self._open(title="Titular a medias", text=typed, rating="4")
+        self.assertContains(panel, "Titular a medias")
+        self.assertContains(panel, "con salto de línea.")
+
+        back = self.client.post(self.url, {
+            "action": "back", "title": "Titular a medias", "text": typed,
+            "rating": "4", "notes": "",
+        })
+        self.assertContains(back, "Guardar borrador")  # the editor, not the card
+        self.assertContains(back, "Titular a medias")
+        self.assertContains(back, "con salto de línea.")
+        # And nothing was written on the way through.
+        self.review.refresh_from_db()
+        self.assertEqual(self.review.title, "")
+        self.assertEqual(self.review.status, Review.Status.PENDING)
+
+    def test_saving_notes_keeps_them_without_touching_the_review(self):
         response = self.client.post(self.url, {
-            "action": "save", "notes": "Se enreda un poco con el uso", "rating": "4",
+            "action": "save", "notes": "Se enreda un poco con el uso",
+            "rating": "4", "title": "Titular a medias", "text": "A medias.",
         })
         self.review.refresh_from_db()
         self.assertEqual(self.review.notes, "Se enreda un poco con el uso")
         self.assertEqual(self.review.rating, 4)
-        # Notes are not a review: this is still a pending chore.
+        # Notes are not a review: this is still a pending chore, and the text
+        # in the editor is still unsaved.
         self.assertEqual(self.review.status, Review.Status.PENDING)
-        self.assertContains(response, "Escribir borrador")  # back on the card
+        self.assertEqual(self.review.text, "")
+        # Back in the editor with the work still there.
+        self.assertContains(response, "Guardar borrador")
+        self.assertContains(response, "Titular a medias")
 
     def test_suggesting_needs_the_notes_and_the_stars_first(self):
         for data, message in [
@@ -504,27 +548,37 @@ class ReviewSuggestTests(TestCase):
         self.assertEqual(self.review.status, Review.Status.PENDING)
         self.assertEqual(self.review.title, "")
 
-    def test_incorporating_a_proposal_makes_it_an_editable_draft(self):
-        # Stand in for what the suggestion step will store once it's wired up.
+    def _with_proposal(self):
+        """Stand in for what the suggestion step will store once it's wired up."""
         self.review.suggestion_title = "Funda completa y versátil"
         self.review.suggestion = "El cuerpo propuesto, para reescribir."
         self.review.save()
 
+    def test_incorporating_hands_the_proposal_to_the_editor_unsaved(self):
+        self._with_proposal()
         response = self.client.post(self.url, {
             "action": "incorporate", "notes": "Mis notas", "rating": "4",
+            "title": "", "text": "",
         })
-        self.review.refresh_from_db()
-        self.assertEqual(self.review.status, Review.Status.DRAFT)
-        self.assertEqual(self.review.title, "Funda completa y versátil")
-        self.assertEqual(self.review.text, "El cuerpo propuesto, para reescribir.")
-        self.assertTrue(self.review.text_is_complete)
-        # The proposal survives incorporation — regenerating is R4's business,
-        # and comparing against it is the user's.
-        self.assertEqual(self.review.suggestion, "El cuerpo propuesto, para reescribir.")
-        # Lands in the editor, ready to rewrite, not on the read-only card.
-        self.assertContains(response, 'name="text"')
+        # In the editor, filled in, ready to rewrite — but nothing stored: the
+        # editor's own "Guardar borrador" is still the only writer, so a
+        # mistaken tap costs one Cancelar, not a review.
+        self.assertContains(response, "Funda completa y versátil")
+        self.assertContains(response, "El cuerpo propuesto, para reescribir.")
         self.assertContains(response, "Guardar borrador")
-        self.assertEqual(response["HX-Trigger"], "package-updated")
+        self.review.refresh_from_db()
+        self.assertEqual(self.review.status, Review.Status.PENDING)
+        self.assertEqual(self.review.title, "")
+        self.assertEqual(self.review.text, "")
+        # The proposal survives — comparing against it is the user's business.
+        self.assertEqual(self.review.suggestion, "El cuerpo propuesto, para reescribir.")
+
+    def test_the_panel_warns_before_replacing_work_already_typed(self):
+        self._with_proposal()
+        blank = self._open()
+        self.assertNotContains(blank, "Sustituirá")
+        started = self._open(title="Lo mío", text="Mi texto")
+        self.assertContains(started, "Sustituirá")
 
     def test_panel_is_closed_once_the_review_is_on_amazon(self):
         self.review.status = Review.Status.PUBLISHED

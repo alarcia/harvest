@@ -327,72 +327,79 @@ def review_approve(request, pk):
 
 
 def review_suggest(request, pk):
-    """The suggestion panel: notes, stars, and the proposal built from them.
+    """The suggestion panel — a detour *inside* the editor, not a sibling of
+    it (user, 2026-08-01: "el usuario entra a la sección de escribir borrador
+    y, si lo desea, tiene una sección de notas y sugerencia").
 
-    The user's half is what makes this his review — a few real impressions
-    ("el hueco de la cámara queda grande", "se enreda un poco") plus the
-    stars he already decided on. The product's name completes the input; he
-    never types a title here, it's the one thing already known.
+    So the editor stays the only thing that ever writes the review itself:
+    this view touches `notes`, `rating` and the proposal, and nothing else.
+    What it renders is either the panel or the editor — every way out of the
+    panel leads back into the editor, which is where the user came from.
 
-    Three things can be asked of the form, all of them saving the notes and
-    the stars first, so nothing typed is ever lost to pressing the wrong one:
+    **The editor's unsaved work rides along as hidden fields.** Opening the
+    panel swaps the modal, and a half-written review left in the DOM would
+    simply be gone; instead the headline and body travel with every request
+    and are handed straight back. `rating` needs no such trick: the stars are
+    the same field on both screens, on purpose, so choosing them here is
+    choosing them there. Missing values fall back to what's stored, which is
+    what a bare GET (a hand-typed URL, a test) gets.
 
-    - **Guardar notas** — just that. Notes are worth keeping on their own:
-      they're written while the product is being used, days before the review
-      gets written.
-    - **Sugerir borrador** — requires both notes and stars (they *are* the
-      input) and asks `suggest.suggest_draft`. Not wired to anything yet, so
-      today it always comes back with the reason; the panel around it is
-      complete, and `suggest.is_configured()` is the single switch.
-    - **Incorporar al borrador** — moves an accepted proposal into the
-      review's own `title`/`text` and lands on the editor with them, which is
-      where it gets rewritten. That makes it a `draft` like any other: the
-      user's text from that point on, closed only by his own "ya la he
-      publicado" or by Amazon's email.
+    The actions:
+
+    - **open** — arrive from the editor. Writes nothing: asking for help is
+      not a decision about the review.
+    - **Guardar notas** — persists them and returns. Notes are worth keeping
+      on their own: they get written while the product is being used, days
+      before the review does.
+    - **Sugerir borrador** — requires notes *and* stars (they are the input)
+      and asks `suggest.suggest_draft`. Not wired to anything yet, so today it
+      always comes back with the reason; everything around it is complete, and
+      `suggest.is_configured()` is the single switch.
+    - **Incorporar al borrador** — hands the proposal to the editor as its new
+      headline and body. Still saves nothing: he reads it, rewrites it, and
+      presses "Guardar borrador" like any other draft. Which also means
+      incorporating by mistake costs one Cancelar, not a stored review.
+    - **Cancelar / ‹** — back to the editor exactly as he left it.
     """
     review = _editable_review(pk)
-    action = request.POST.get("action", "")
-    error = None
-    notes, rating = review.notes, review.rating
+    post = request.POST if request.method == "POST" else {}
+    action = post.get("action", "open")
 
-    if request.method == "POST":
-        notes = request.POST.get("notes", "").strip()
-        try:
-            rating = int(request.POST.get("rating", ""))
-        except ValueError:
-            rating = None
+    # The editor's state, carried through untouched (see docstring).
+    draft_title = post.get("title", review.title)
+    draft_text = post.get("text", review.text)
+    notes = post.get("notes", review.notes).strip()
+    try:
+        rating = int(post.get("rating", ""))
+    except ValueError:
+        rating = None if request.method == "POST" else review.rating
+
+    error = None
+
+    if action in ("save", "suggest", "incorporate"):
         review.notes = notes
         review.rating = rating
         review.save(update_fields=["notes", "rating", "updated_at"])
 
-        if action == "incorporate" and review.suggestion:
-            review.title = review.suggestion_title[:255]
-            review.text = review.suggestion
-            review.text_is_complete = True
-            review.status = Review.Status.DRAFT
-            review.save(update_fields=["title", "text", "text_is_complete",
-                                        "status", "updated_at"])
-            response = _editor(request, review, review.title, review.rating, review.text)
-            response["HX-Trigger"] = "package-updated"
-            return response
+    if action == "suggest":
+        if not notes:
+            error = "Escribe primero alguna nota sobre el producto."
+        elif rating not in range(1, 6):
+            error = "Elige la puntuación antes de pedir el borrador."
+        else:
+            try:
+                review.suggestion_title, review.suggestion = suggest_draft(review)
+                review.save(update_fields=["suggestion_title", "suggestion", "updated_at"])
+            except SuggestionUnavailable as exc:
+                error = str(exc)
+    elif action == "incorporate" and review.suggestion:
+        draft_title, draft_text = review.suggestion_title, review.suggestion
 
-        if action == "suggest":
-            if not notes:
-                error = "Escribe primero alguna nota sobre el producto."
-            elif rating not in range(1, 6):
-                error = "Elige la puntuación antes de pedir el borrador."
-            else:
-                try:
-                    review.suggestion_title, review.suggestion = suggest_draft(review)
-                    review.save(update_fields=["suggestion_title", "suggestion",
-                                                "updated_at"])
-                except SuggestionUnavailable as exc:
-                    error = str(exc)
-        elif action != "incorporate":
-            # Plain save. Back to the card, done — same as the editor.
-            response = _review_card(request, review)
-            response["HX-Trigger"] = "package-updated"
-            return response
+    if action in ("back", "save", "incorporate"):
+        response = _editor(request, review, draft_title, rating, draft_text)
+        # `rating` may have moved, and it shows on the draft's row.
+        response["HX-Trigger"] = "package-updated"
+        return response
 
     return render(request, "reviews/_review_suggest.html", {
         "review": review,
@@ -401,4 +408,10 @@ def review_suggest(request, pk):
         "stars": STAR_VALUES,
         "suggestions_enabled": is_configured(),
         "error": error,
+        # Handed back out unchanged on every exit.
+        "draft_title": draft_title,
+        "draft_text": draft_text,
+        # Incorporating would overwrite something already written, so the
+        # panel says so before he presses it rather than after.
+        "would_replace": bool(draft_title or draft_text),
     })

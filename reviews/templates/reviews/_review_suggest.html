@@ -1,15 +1,20 @@
 {% comment %}The suggestion panel: the user's own half of a review — a few real
-impressions and the stars — and the proposal built from them, which he then
-rewrites in the editor. The product's name is the third input and is already
-known, so it's shown, not asked for.
+impressions and the stars — and the proposal built from them. A detour inside
+the editor, so **every way out leads back to it**, carrying the headline and the
+body he had already typed as hidden fields. Nothing here writes the review
+itself; the editor does that.
 
-Backdrop-close is off here for the same reason as in the editor: these notes
-are typed, and losing them to a stray tap on a phone would be the whole
-work.{% endcomment %}
+The product's name is the third input and is already known, so it's shown, not
+asked for. Backdrop-close is off, same as the editor: typed content.{% endcomment %}
 <div class="modal-back">
   <div class="modal-card modal-wide">
-    <button type="button" class="modal-prev" aria-label="Volver a la reseña"
-            hx-get="{% url 'review_detail' review.pk %}"
+    {% comment %}‹ has to carry the editor's state back rather than re-read the
+    row, so it posts the form like Cancelar does — same idiom the editor uses to
+    get here.{% endcomment %}
+    <button type="button" class="modal-prev" aria-label="Volver al borrador"
+            hx-post="{% url 'review_suggest' review.pk %}"
+            hx-vals='{"action": "back"}'
+            hx-include="#rev-suggest-form"
             hx-target="#modal" hx-swap="innerHTML">‹</button>
     <button type="button" class="modal-x" aria-label="Cerrar"
             onclick="closeModal(this)">×</button>
@@ -20,9 +25,19 @@ work.{% endcomment %}
       <h2>{{ review.product_title|default:"Producto desconocido" }}</h2>
     </div>
 
-    <form hx-post="{% url 'review_suggest' review.pk %}"
+    <form id="rev-suggest-form" hx-post="{% url 'review_suggest' review.pk %}"
           hx-target="#modal" hx-swap="innerHTML" class="rev-form">
       {% csrf_token %}
+      {% comment %}The editor's unsaved work, riding along untouched. A hidden
+      <textarea> rather than an <input>: the body has line breaks, and only a
+      textarea gives them back exactly as they went in.{% endcomment %}
+      <input type="hidden" name="title" value="{{ draft_title }}">
+      <textarea name="text" hidden>{{ draft_text }}</textarea>
+
+      <p class="rev-panel-intro">
+        Tus notas y las estrellas son lo que se usa para proponerte un borrador.
+        El título sale del nombre del producto.
+      </p>
 
       <span class="confirm-label" id="rev-rating-label">Puntuación</span>
       <div class="rev-stars" role="radiogroup" aria-labelledby="rev-rating-label">
@@ -42,28 +57,39 @@ work.{% endcomment %}
 
       {% if error %}<p class="confirm-error">{{ error }}</p>{% endif %}
 
-      <div class="confirm-actions">
-        <button type="submit" name="action" value="save" class="btn-ghost">Guardar notas</button>
-        <button type="submit" name="action" value="suggest" class="btn-go">Sugerir borrador</button>
-      </div>
+      {% comment %}The panel's headline action, standing alone and marked as
+      what it is; the two plain ones share the row below.{% endcomment %}
+      <button type="submit" name="action" value="suggest" class="modal-action suggest">
+        {% include "reviews/_spark.html" with gradient=1 %}
+        <span>Sugerir borrador</span>
+      </button>
       {% if not suggestions_enabled and not error %}
         {% comment %}Said up front rather than only after pressing: the button
         works, the thing behind it isn't connected yet. Dropped once there's
         an error, which will be saying the same thing in red.{% endcomment %}
-        <p class="rev-hint">La sugerencia de borrador todavía no está conectada.</p>
+        <p class="rev-hint">Todavía no está conectada.</p>
       {% endif %}
 
+      <div class="confirm-actions">
+        <button type="submit" name="action" value="back" class="btn-ghost">Cancelar</button>
+        <button type="submit" name="action" value="save" class="btn-go">Guardar notas</button>
+      </div>
+
       {% comment %}A proposal, once there is one: shown in full and never
-      applied on its own — it becomes the review only when he says so, and
-      even then only as a draft he can rewrite.{% endcomment %}
+      applied on its own — it goes into the editor only when he says so, and
+      even there it's still unsaved text he can rewrite or cancel.{% endcomment %}
       {% if review.suggestion %}
         <div class="rev-proposal">
           <h3>Propuesta</h3>
           {% if review.suggestion_title %}<p class="rev-headline">«{{ review.suggestion_title }}»</p>{% endif %}
           <p class="review-text">{{ review.suggestion|linebreaksbr }}</p>
-          <button type="submit" name="action" value="incorporate" class="modal-action write">
-            Incorporar al borrador
+          <button type="submit" name="action" value="incorporate" class="modal-action suggest">
+            {% include "reviews/_spark.html" with gradient=1 %}
+            <span>Incorporar al borrador</span>
           </button>
+          {% if would_replace %}
+            <p class="rev-hint">Sustituirá lo que ya tienes escrito en el borrador.</p>
+          {% endif %}
         </div>
       {% endif %}
     </form>

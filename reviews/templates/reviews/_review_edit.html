@@ -25,6 +25,20 @@ twenty minutes of writing, and on a phone the backdrop is most of the screen.
           hx-target="#modal" hx-swap="innerHTML" class="rev-form">
       {% csrf_token %}
 
+      {% comment %}Help with the writing, offered before he starts rather than
+      after a screenful of textarea. `hx-include` sends the form along with the
+      request, so whatever is already typed travels to the panel and comes back
+      untouched — the detour can't cost him a paragraph.{% endcomment %}
+      <button type="button" class="modal-action suggest"
+              hx-post="{% url 'review_suggest' review.pk %}"
+              hx-vals='{"action": "open"}'
+              hx-include="closest form"
+              hx-target="#modal" hx-swap="innerHTML">
+        {% include "reviews/_spark.html" with gradient=1 %}
+        <span>Notas y sugerencia</span>
+        {% if review.notes %}<span class="rev-dot">●</span>{% endif %}
+      </button>
+
       <label class="confirm-label" for="rev-title">Título</label>
       <input type="text" id="rev-title" name="title" maxlength="255" required
              autocomplete="off" placeholder="Una frase que resuma la opinión"

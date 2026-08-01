@@ -37,18 +37,15 @@ readable without opening the editor again.{% endcomment %}
       <p class="review-origin">Borrador: todavía sin publicar en Amazon.</p>
     {% endif %}
     {% comment %}Everything that can still be done to this review, in the order
-    the work happens: write it, get help writing it, declare it published.
-    Nothing here for a review already on Amazon.{% endcomment %}
+    the work happens: write it, then declare it published. Notes and the
+    suggested draft are *inside* the editor, not beside it — they're help with
+    the writing, not a separate errand. Nothing here for a review already on
+    Amazon.{% endcomment %}
     {% if can_edit %}
       <button type="button" class="modal-action write"
               hx-get="{% url 'review_edit' review.pk %}"
               hx-target="#modal" hx-swap="innerHTML">
         {% if has_draft %}Editar borrador{% else %}Escribir borrador{% endif %}
-      </button>
-      <button type="button" class="modal-action quiet"
-              hx-get="{% url 'review_suggest' review.pk %}"
-              hx-target="#modal" hx-swap="innerHTML">
-        Notas y sugerencia{% if review.notes %} ·<span class="rev-dot">●</span>{% endif %}
       </button>
     {% endif %}
     {% if can_approve %}

@@ -219,10 +219,52 @@ section in place, no URL change.{% endcomment %}
        the main one, the notes panel is a side door, and the --success
        default is kept for the step that closes the review. */
     .modal-action.write { border-color: var(--accent); color: var(--accent); }
-    .modal-action.quiet { border-color: var(--border); color: var(--muted); margin-top: .5rem; }
     .modal-action + .modal-action { margin-top: .5rem; }
     /* A dot saying there are notes behind this button, without a count. */
-    .rev-dot { color: var(--accent); font-size: .6em; vertical-align: .25em; }
+    .rev-dot { color: var(--accent); font-size: .6em; align-self: center; }
+
+    /* ---- the suggested-draft door ----
+       The one action in the app whose text isn't written by the user, so it
+       gets a mark of its own: a spark, and a gradient the app's warm palette
+       never uses anywhere else. Cool blue→violet→pink reads as "different
+       kind of thing" precisely *because* it's foreign here.
+       The gradient stays strictly on the border (two backgrounds: a flat
+       card-coloured one clipped to the padding box, the gradient clipped to
+       the border box), so the button keeps the quiet, outlined weight of its
+       siblings — it's a side door, not the card's main action. */
+    :root {
+      --spark-1: #3f7bd8;
+      --spark-2: #8b5cd6;
+      --spark-3: #c9508f;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --spark-1: #6f9bff;
+        --spark-2: #b47cff;
+        --spark-3: #ff7ab8;
+      }
+    }
+    .modal-action.suggest {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: .45rem;
+      border: 1px solid transparent;
+      background:
+        linear-gradient(var(--card), var(--card)) padding-box,
+        linear-gradient(100deg, var(--spark-1), var(--spark-2), var(--spark-3)) border-box;
+      color: var(--fg);
+    }
+    .spark { width: 1.05em; height: 1.05em; flex: none; }
+    /* Inside the editor it's the door to the panel, so it leads rather than
+       follows: full width, above the fields, with room under it. */
+    .rev-form .modal-action.suggest { margin: .25rem 0 .35rem; }
+    .rev-panel-intro {
+      margin: 0 0 .4rem;
+      font-size: .74rem;
+      line-height: 1.45;
+      color: var(--muted);
+    }
 
     /* ---- suggestion panel ---- */
     .rev-hint { margin: .5rem 0 0; font-size: .72rem; color: var(--muted); font-style: italic; }
