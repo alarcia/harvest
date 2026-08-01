@@ -6,7 +6,14 @@ services:
     restart: unless-stopped
     user: "${DEPLOY_UID}:${DEPLOY_GID}"
     ports:
-      - "8000:8000"
+      # Loopback only. A bare "8000:8000" binds 0.0.0.0, which put the whole
+      # app on the home LAN beside the tunnel — and `SECURE_PROXY_SSL_HEADER`
+      # trusts X-Forwarded-Proto from anyone, so a LAN request carrying the
+      # right Host and that header got served without ever passing Cloudflare
+      # Access. There is no login of our own behind it. Cloudflared reaches
+      # this from the host; if it ever moves into a container of its own, drop
+      # `ports` entirely and put the two on a shared Docker network.
+      - "127.0.0.1:8000:8000"
     environment:
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
       DJANGO_DEBUG: "False"

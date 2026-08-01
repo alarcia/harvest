@@ -2,7 +2,8 @@ import re
 import unicodedata
 from decimal import Decimal
 
-from django.db import models
+from django.db import models, transaction
+from django.utils import timezone
 
 
 def _fold(text):
@@ -70,6 +71,43 @@ class Config(models.Model):
                   "acentos ni apóstrofos. Déjalo vacío para desactivarlo.",
     )
 
+    # Draft suggestions are the one thing Harvest does that costs money at a
+    # remote API (see reviews/suggest.py). The expected volume is a dozen a
+    # month; what a cap has to survive is not that, it's the app looping — a
+    # retrying HTMX request, a forgotten tab. The prepaid balance at the
+    # provider is the outer wall and the one that really can't be climbed;
+    # this is the inner one, and the only one Harvest itself can enforce.
+    #
+    # In the database, like the two settings above, because the day it needs
+    # raising is a day the user is mid-review, not mid-deploy. 0 turns
+    # suggestions off altogether — "empty means off", the same idiom
+    # `pepe_addresses` follows, and the safe direction for a money guard.
+    suggestions_per_month = models.PositiveIntegerField(
+        default=30,
+        verbose_name="sugerencias de borrador al mes",
+        help_text="Máximo de sugerencias que se le pueden pedir a la API en un "
+                  "mes natural. Cuenta los intentos, no los aciertos: un "
+                  "intento que falla puede haberse cobrado igual. Ponlo a 0 "
+                  "para desactivar las sugerencias.",
+    )
+
+    # The counter behind that cap, in two fields rather than one so the reset
+    # needs nothing to run on the 1st: the first request of a new month finds a
+    # stale stamp and starts over by itself.
+    suggestions_used = models.PositiveIntegerField(
+        default=0,
+        verbose_name="sugerencias gastadas este mes",
+        help_text="Cuántas van pedidas dentro del mes que dice el campo "
+                  "siguiente. Se reinicia solo al cambiar de mes; ponlo a 0 "
+                  "para devolver el cupo a mano.",
+    )
+    suggestions_month = models.DateField(
+        null=True, blank=True,
+        verbose_name="mes que cuenta el contador",
+        help_text="Día 1 del mes al que pertenece el contador de arriba. Lo "
+                  "escribe la propia aplicación.",
+    )
+
     class Meta:
         verbose_name = "configuración"
         verbose_name_plural = "configuración"
@@ -81,6 +119,38 @@ class Config(models.Model):
     def load(cls):
         obj, _ = cls.objects.get_or_create(pk=1)
         return obj
+
+    @classmethod
+    def claim_suggestion(cls, today=None):
+        """Book one suggestion against this month's allowance.
+
+        Returns `(claimed, limit)`: `claimed` is False when the month is spent
+        (or the cap is 0, i.e. the feature is switched off), and `limit` is
+        what the cap said, which is what `reviews.suggest` puts in the message
+        the panel shows.
+
+        It counts **attempts, not successes**, and never gives one back: a call
+        that failed halfway may well have been billed anyway, and a guard that
+        only counts what worked isn't guarding the thing that costs money.
+
+        The increment is a single conditional UPDATE the database resolves, so
+        two requests arriving together can't both read the same count and both
+        spend against it. The rollover above it is a separate write and could
+        in principle race with itself, but the worst it does is set the same
+        month twice.
+        """
+        today = today or timezone.localdate()
+        month = today.replace(day=1)
+        with transaction.atomic():
+            config = cls.load()
+            if config.suggestions_month != month:
+                cls.objects.filter(pk=config.pk).update(suggestions_month=month,
+                                                        suggestions_used=0)
+            claimed = (cls.objects
+                       .filter(pk=config.pk, suggestions_month=month,
+                               suggestions_used__lt=models.F("suggestions_per_month"))
+                       .update(suggestions_used=models.F("suggestions_used") + 1))
+        return bool(claimed), config.suggestions_per_month
 
     def means_vine(self, total):
         """Does this order total, as printed by Amazon, mean "free Vine item"?

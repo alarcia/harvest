@@ -10,9 +10,10 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from packages.models import Package, PickupPoint
+from packages.models import Config, Package, PickupPoint
 
 from .models import Review, VineCycle
+from .suggest import SuggestionUnavailable, suggest_draft
 
 
 def _package(ordered_on=None, picked_up_on=None, is_vine=True, description="Producto de prueba"):
@@ -584,6 +585,76 @@ class ReviewSuggestTests(TestCase):
         self.review.status = Review.Status.PUBLISHED
         self.review.save()
         self.assertEqual(self.client.get(self.url).status_code, 404)
+
+
+@override_settings(SUGGEST_API_URL="https://example.invalid/v1",
+                   SUGGEST_API_KEY="test-key", SUGGEST_MODEL="test-model")
+class SuggestionBudgetTests(TestCase):
+    """The monthly cap on suggestions — the one guard Harvest itself can put
+    between a loop in the app and a bill at the provider.
+
+    The remote call is still missing, so `suggest_draft` always ends in
+    "todavía no está disponible"; what these check is *which* refusal comes
+    out, because that is what says whether a request would have been made."""
+
+    def setUp(self):
+        self.review = Review.objects.create(
+            package=_package(ordered_on=timezone.localdate()),
+            product_title="Funda con teclado", status=Review.Status.PENDING,
+            notes="Cierra bien y pesa poco", rating=4,
+        )
+
+    def test_the_month_runs_out_and_says_so(self):
+        Config.objects.update_or_create(pk=1, defaults={"suggestions_per_month": 2})
+        for _ in range(2):
+            claimed, limit = Config.claim_suggestion()
+            self.assertTrue(claimed)
+            self.assertEqual(limit, 2)
+        self.assertEqual(Config.claim_suggestion(), (False, 2))
+
+        with self.assertRaises(SuggestionUnavailable) as spent:
+            suggest_draft(self.review)
+        self.assertIn("tope de 2 sugerencias", str(spent.exception))
+
+    def test_a_new_month_starts_over_without_anything_having_to_run(self):
+        Config.objects.update_or_create(pk=1, defaults={"suggestions_per_month": 1})
+        july = date(2026, 7, 20)
+        self.assertEqual(Config.claim_suggestion(july)[0], True)
+        self.assertEqual(Config.claim_suggestion(date(2026, 7, 31))[0], False)
+        # No job fires on the 1st: the first caller of a new month finds a
+        # stale stamp and resets it on the way past.
+        self.assertEqual(Config.claim_suggestion(date(2026, 8, 1))[0], True)
+        config = Config.load()
+        self.assertEqual(config.suggestions_month, date(2026, 8, 1))
+        self.assertEqual(config.suggestions_used, 1)
+
+    def test_zero_switches_the_feature_off_rather_than_meaning_unlimited(self):
+        Config.objects.update_or_create(pk=1, defaults={"suggestions_per_month": 0})
+        self.assertEqual(Config.claim_suggestion(), (False, 0))
+        with self.assertRaises(SuggestionUnavailable) as off:
+            suggest_draft(self.review)
+        self.assertIn("desactivadas", str(off.exception))
+        self.assertEqual(Config.load().suggestions_used, 0)
+
+    @override_settings(SUGGEST_API_URL="", SUGGEST_API_KEY="")
+    def test_an_unconfigured_install_never_spends_a_slot(self):
+        # The order matters: nothing can be billed while the feature is off, so
+        # nothing may be counted either — otherwise the cap would drain itself
+        # on an install that can't make a single request.
+        with self.assertRaises(SuggestionUnavailable):
+            suggest_draft(self.review)
+        self.assertEqual(Config.load().suggestions_used, 0)
+
+    def test_the_panel_shows_the_refusal_the_user_can_act_on(self):
+        Config.objects.update_or_create(pk=1, defaults={"suggestions_per_month": 0})
+        response = self.client.post(
+            reverse("review_suggest", args=[self.review.pk]),
+            {"action": "suggest", "notes": "Cierra bien", "rating": "4"},
+        )
+        self.assertContains(response, "desactivadas")
+        # The notes still saved: asking for help and being told no is not a
+        # reason to lose what was typed.
+        self.assertEqual(Review.objects.get(pk=self.review.pk).notes, "Cierra bien")
 
 
 class VineCycleBoundaryTests(TestCase):

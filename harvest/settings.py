@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 import os
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -25,17 +26,30 @@ load_dotenv(BASE_DIR / '.env')
 
 
 # Everything below is read from the environment so the same image runs in dev
-# and on the Pi: anything missing falls back to the original `startproject`
-# values (DEBUG on, no host restrictions, local sqlite file).
+# and on the Pi. What's missing falls back to the *production-safe* value, not
+# to the `startproject` one: an install that configures nothing is treated as
+# production, and development opts in explicitly with DJANGO_DEBUG=True in its
+# .env. The defaults used to run the other way round, which meant a
+# DJANGO_DEBUG that ever went missing from docker-compose would have served
+# tracebacks over the public tunnel. A variable disappearing has to fail
+# closed.
+DEBUG = os.environ.get('DJANGO_DEBUG', 'False') == 'True'
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ.get(
-    'DJANGO_SECRET_KEY',
-    'django-insecure-ve-zktzror9t3utu8+)yakto*9r#paz*%-dw9u69w)3jhge9il',
-)
-
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get('DJANGO_DEBUG', 'True') == 'True'
+#
+# The development key below is *published* — this is a public repository — so
+# it is only ever handed out with DEBUG on. Refusing to boot without a real one
+# is the whole point: an app on the tunnel signing CSRF tokens with a key
+# anybody can read would do it silently, and nothing would ever look wrong.
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', '')
+if not SECRET_KEY:
+    if not DEBUG:
+        raise ImproperlyConfigured(
+            'DJANGO_SECRET_KEY no está definida. Harvest no arranca en '
+            'producción con la clave de desarrollo: está publicada en el '
+            'repositorio.'
+        )
+    SECRET_KEY = 'django-insecure-ve-zktzror9t3utu8+)yakto*9r#paz*%-dw9u69w)3jhge9il'
 
 ALLOWED_HOSTS = [h for h in os.environ.get('DJANGO_ALLOWED_HOSTS', '').split(',') if h]
 

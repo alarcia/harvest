@@ -14,9 +14,21 @@ that turns the feature on — the UI asks it what to render, and the view asks
 it before trying. Configuring `SUGGEST_API_URL`/`SUGGEST_API_KEY` (see
 `.env`, kept out of the repo like the IMAP password) and filling in
 `_request()` is the whole of what's left.
+
+**The monthly cap is already in place (2026-08-02),** ahead of the call it
+guards, because the failure it exists for is the app calling in a loop — and
+that is not a thing to discover after the fact on a bill. `Config
+.claim_suggestion()` is booked *after* `is_configured()` and *before* the
+request, so an install with the feature off never touches the counter, and an
+attempt that fails still costs its slot (it may have been billed all the
+same). It is the inner wall only: the outer one is the provider's prepaid
+balance with auto-reload off, which is what actually makes a stolen key
+worthless.
 """
 
 from django.conf import settings
+
+from packages.models import Config
 
 
 class SuggestionUnavailable(RuntimeError):
@@ -45,6 +57,15 @@ def suggest_draft(review):
         raise SuggestionUnavailable(
             "La sugerencia de borrador todavía no está disponible."
         )
+
+    claimed, limit = Config.claim_suggestion()
+    if not claimed:
+        raise SuggestionUnavailable(
+            "Las sugerencias de borrador están desactivadas." if limit == 0 else
+            f"Se ha alcanzado el tope de {limit} sugerencias de este mes. "
+            f"Puedes subirlo en la configuración."
+        )
+
     raise SuggestionUnavailable(
         "La sugerencia de borrador todavía no está disponible."
     )
