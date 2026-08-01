@@ -103,6 +103,37 @@ class ReviewsListViewTests(TestCase):
         self.assertIn(review, response.context["vencidas"])
         self.assertNotIn(review, response.context["pendientes"])
 
+    def test_draft_gets_its_own_group_between_urgent_and_pending(self):
+        pkg = _package(ordered_on=self._in_current())
+        draft = Review.objects.create(
+            package=pkg, product_title=pkg.description, status=Review.Status.DRAFT,
+            title="Un titular", rating=4, text="El cuerpo de la reseña.",
+        )
+        response = self._get()
+        self.assertIn(draft, response.context["borradores"])
+        self.assertNotIn(draft, response.context["pendientes"])
+        self.assertNotIn(draft, response.context["vencidas"])
+        self.assertNotIn(draft, response.context["confirmed"])  # not history yet
+        # The order the user asked for, read straight off the rendered page.
+        body = response.content.decode()
+        self.assertLess(body.index("Borradores"), body.index("Pendientes"))
+        self.assertIn("Un titular", body)  # recognisable without opening it
+
+    def test_overdue_draft_leaves_the_urgent_group_and_the_badge(self):
+        # Writing the draft is the work the badge nags about, so it stops
+        # counting — but the row keeps saying how late it is where it lands.
+        pkg = _package(ordered_on=self._in_current(), picked_up_on=self._in_current())
+        draft = Review.objects.create(
+            package=pkg, product_title=pkg.description, status=Review.Status.DRAFT,
+            title="Un titular", rating=4, text="Cuerpo.",
+            due_on=self.today - timedelta(days=3),
+        )
+        response = self._get()
+        self.assertIn(draft, response.context["borradores"])
+        self.assertEqual(list(response.context["vencidas"]), [])
+        self.assertEqual(response.context["vencidas_count"], 0)
+        self.assertContains(response, "vencida desde el")
+
     def test_past_cycle_backlog_shown_but_never_urgent(self):
         # The bug this guards: an item ordered *inside* the current cycle but
         # with a due_on that reads like it's "overdue" must never be dumped
@@ -266,6 +297,239 @@ class ReviewDetailViewTests(TestCase):
         response = self.client.get(reverse("review_detail", args=[review.pk]))
         self.assertContains(response, "<h2>Nombre real del producto</h2>", html=True)
         self.assertContains(response, "Titular de la reseña")
+
+    def test_pending_card_offers_writing_the_draft(self):
+        review = Review.objects.create(product_title="Algo", status=Review.Status.PENDING)
+        response = self.client.get(reverse("review_detail", args=[review.pk]))
+        self.assertContains(response, "Escribir borrador")
+        self.assertContains(response, reverse("review_edit", args=[review.pk]))
+
+    def test_draft_card_shows_its_text_and_offers_rewriting_it(self):
+        # The whole point of the status: a draft reads like a written review
+        # in the card, without having to reopen the editor.
+        review = Review.objects.create(
+            product_title="Algo", status=Review.Status.DRAFT,
+            title="Mi titular", rating=4, text="Mi texto completo.",
+        )
+        response = self.client.get(reverse("review_detail", args=[review.pk]))
+        self.assertContains(response, "Mi titular")
+        self.assertContains(response, "Mi texto completo.")
+        self.assertContains(response, "4★")
+        self.assertContains(response, "Editar borrador")
+
+    def test_published_card_has_no_editor(self):
+        review = Review.objects.create(product_title="Algo", status=Review.Status.PUBLISHED)
+        response = self.client.get(reverse("review_detail", args=[review.pk]))
+        self.assertNotContains(response, "borrador")
+
+
+class ReviewEditorTests(TestCase):
+    """The draft editor: the module's first write path."""
+
+    def setUp(self):
+        self.review = Review.objects.create(
+            package=_package(ordered_on=timezone.localdate()),
+            product_title="Funda con teclado", status=Review.Status.PENDING,
+        )
+        self.url = reverse("review_edit", args=[self.review.pk])
+
+    def _post(self, **fields):
+        data = {"title": "Un titular", "rating": "4", "text": "El cuerpo."}
+        data.update(fields)
+        return self.client.post(self.url, data)
+
+    def test_editor_prefills_what_is_already_there(self):
+        self.review.title, self.review.rating, self.review.text = "Titular", 3, "Cuerpo"
+        self.review.status = Review.Status.DRAFT
+        self.review.save()
+        response = self.client.get(self.url)
+        self.assertContains(response, 'value="Titular"')
+        self.assertContains(response, "Cuerpo")
+        # The chosen star comes back checked, not reset to nothing.
+        self.assertInHTML(
+            '<input type="radio" name="rating" id="rev-star-3" value="3" checked>',
+            response.content.decode(),
+        )
+
+    def test_saving_turns_a_pending_review_into_a_draft(self):
+        response = self._post(title="Funda completa", rating="5", text="Muy bien.")
+        self.review.refresh_from_db()
+        self.assertEqual(self.review.status, Review.Status.DRAFT)
+        self.assertEqual(self.review.title, "Funda completa")
+        self.assertEqual(self.review.rating, 5)
+        self.assertEqual(self.review.text, "Muy bien.")
+        # Written by hand, so it belongs in the corpus.
+        self.assertTrue(self.review.text_is_complete)
+        # Lands back on the card, and tells the list behind it to refetch.
+        self.assertContains(response, "Editar borrador")
+        self.assertEqual(response["HX-Trigger"], "package-updated")
+
+    def test_a_draft_can_be_rewritten_and_stays_a_draft(self):
+        self._post(title="Primera versión", rating="3", text="Primer texto.")
+        self._post(title="Segunda versión", rating="5", text="Segundo texto.")
+        self.review.refresh_from_db()
+        self.assertEqual(self.review.status, Review.Status.DRAFT)
+        self.assertEqual(self.review.title, "Segunda versión")
+        self.assertEqual(self.review.text, "Segundo texto.")
+
+    def test_every_field_is_required(self):
+        for missing, message in [("title", "título"), ("rating", "puntuación"),
+                                  ("text", "texto")]:
+            with self.subTest(missing=missing):
+                response = self._post(**{missing: ""})
+                self.review.refresh_from_db()
+                self.assertEqual(self.review.status, Review.Status.PENDING)
+                self.assertContains(response, message)
+
+    def test_a_rejected_save_gives_back_what_was_typed(self):
+        # A thousand characters of writing must never be lost to a missing
+        # star — the form comes back filled in, not blank.
+        response = self._post(rating="", text="Un texto que costó escribir.")
+        self.assertContains(response, "Un texto que costó escribir.")
+        self.assertContains(response, 'value="Un titular"')
+
+    def test_a_bogus_rating_is_refused(self):
+        for bogus in ["0", "6", "cuatro", "4.5"]:
+            with self.subTest(rating=bogus):
+                self._post(rating=bogus)
+                self.review.refresh_from_db()
+                self.assertEqual(self.review.status, Review.Status.PENDING)
+
+    def test_a_published_review_cannot_be_edited(self):
+        self.review.status = Review.Status.PUBLISHED
+        self.review.save()
+        self.assertEqual(self.client.get(self.url).status_code, 404)
+        self.assertEqual(self._post().status_code, 404)
+
+
+class ReviewApproveTests(TestCase):
+    """"Ya la he publicado en Amazon" — the step no email can observe until
+    Amazon's own confirmation turns up days later."""
+
+    def setUp(self):
+        self.review = Review.objects.create(
+            package=_package(ordered_on=timezone.localdate()),
+            product_title="Funda con teclado", status=Review.Status.DRAFT,
+            title="Un titular", rating=4, text="El cuerpo.",
+        )
+        self.url = reverse("review_approve", args=[self.review.pk])
+
+    def test_it_asks_before_doing_it(self):
+        response = self.client.get(self.url)
+        self.assertContains(response, "¿Ya la has publicado?")
+        self.assertContains(response, "Cancelar")
+        self.review.refresh_from_db()
+        self.assertEqual(self.review.status, Review.Status.DRAFT)  # GET changes nothing
+
+    def test_confirming_approves_it_dated_today(self):
+        response = self.client.post(self.url)
+        self.review.refresh_from_db()
+        self.assertEqual(self.review.status, Review.Status.APPROVED)
+        self.assertEqual(self.review.approved_on, timezone.localdate())
+        self.assertEqual(response["HX-Trigger"], "package-updated")
+        # The text is untouched — approving says where it is, not what it says.
+        self.assertEqual(self.review.text, "El cuerpo.")
+
+    def test_an_approved_review_leaves_the_backlog_for_the_written_ones(self):
+        self.client.post(self.url)
+        response = self.client.get(reverse("reviews_list"), HTTP_HX_REQUEST="true")
+        self.review.refresh_from_db()
+        self.assertIn(self.review, response.context["confirmed"])
+        self.assertNotIn(self.review, response.context["borradores"])
+        self.assertNotIn(self.review, response.context["pendientes"])
+
+    def test_only_a_draft_can_be_approved(self):
+        for status in [Review.Status.PENDING, Review.Status.PUBLISHED,
+                        Review.Status.APPROVED]:
+            with self.subTest(status=status):
+                self.review.status = status
+                self.review.save()
+                self.assertEqual(self.client.get(self.url).status_code, 404)
+                self.assertEqual(self.client.post(self.url).status_code, 404)
+
+
+class ReviewSuggestTests(TestCase):
+    """The notes-and-suggestion panel. The remote call isn't wired up yet, so
+    what's under test is everything around it — which is the part that has to
+    already work when it is."""
+
+    def setUp(self):
+        self.review = Review.objects.create(
+            package=_package(ordered_on=timezone.localdate()),
+            product_title="Funda con teclado", status=Review.Status.PENDING,
+        )
+        self.url = reverse("review_suggest", args=[self.review.pk])
+
+    def test_panel_shows_notes_and_stars_but_never_asks_for_a_title(self):
+        self.review.notes = "El hueco de la cámara queda grande"
+        self.review.rating = 3
+        self.review.save()
+        response = self.client.get(self.url)
+        self.assertContains(response, "El hueco de la cámara queda grande")
+        self.assertInHTML(
+            '<input type="radio" name="rating" id="rev-star-3" value="3" checked>',
+            response.content.decode(),
+        )
+        # The product's name is the title input, and it's already known.
+        self.assertContains(response, "Funda con teclado")
+        self.assertNotContains(response, 'name="title"')
+
+    def test_saving_notes_keeps_them_without_touching_the_status(self):
+        response = self.client.post(self.url, {
+            "action": "save", "notes": "Se enreda un poco con el uso", "rating": "4",
+        })
+        self.review.refresh_from_db()
+        self.assertEqual(self.review.notes, "Se enreda un poco con el uso")
+        self.assertEqual(self.review.rating, 4)
+        # Notes are not a review: this is still a pending chore.
+        self.assertEqual(self.review.status, Review.Status.PENDING)
+        self.assertContains(response, "Escribir borrador")  # back on the card
+
+    def test_suggesting_needs_the_notes_and_the_stars_first(self):
+        for data, message in [
+            ({"notes": "", "rating": "4"}, "nota"),
+            ({"notes": "Algo", "rating": ""}, "puntuación"),
+        ]:
+            with self.subTest(**data):
+                response = self.client.post(self.url, dict(data, action="suggest"))
+                self.assertContains(response, message)
+
+    def test_suggesting_says_it_is_not_connected_yet_and_keeps_the_notes(self):
+        response = self.client.post(self.url, {
+            "action": "suggest", "notes": "Muy cómoda", "rating": "5",
+        })
+        self.assertContains(response, "todavía no está")
+        self.review.refresh_from_db()
+        self.assertEqual(self.review.notes, "Muy cómoda")  # never lost to a failed request
+        self.assertEqual(self.review.status, Review.Status.PENDING)
+        self.assertEqual(self.review.title, "")
+
+    def test_incorporating_a_proposal_makes_it_an_editable_draft(self):
+        # Stand in for what the suggestion step will store once it's wired up.
+        self.review.suggestion_title = "Funda completa y versátil"
+        self.review.suggestion = "El cuerpo propuesto, para reescribir."
+        self.review.save()
+
+        response = self.client.post(self.url, {
+            "action": "incorporate", "notes": "Mis notas", "rating": "4",
+        })
+        self.review.refresh_from_db()
+        self.assertEqual(self.review.status, Review.Status.DRAFT)
+        self.assertEqual(self.review.title, "Funda completa y versátil")
+        self.assertEqual(self.review.text, "El cuerpo propuesto, para reescribir.")
+        self.assertTrue(self.review.text_is_complete)
+        # The proposal survives incorporation — regenerating is R4's business,
+        # and comparing against it is the user's.
+        self.assertEqual(self.review.suggestion, "El cuerpo propuesto, para reescribir.")
+        # Lands in the editor, ready to rewrite, not on the read-only card.
+        self.assertContains(response, 'name="text"')
+        self.assertContains(response, "Guardar borrador")
+        self.assertEqual(response["HX-Trigger"], "package-updated")
+
+    def test_panel_is_closed_once_the_review_is_on_amazon(self):
+        self.review.status = Review.Status.PUBLISHED
+        self.review.save()
+        self.assertEqual(self.client.get(self.url).status_code, 404)
 
 
 class VineCycleBoundaryTests(TestCase):

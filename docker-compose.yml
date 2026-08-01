@@ -22,6 +22,12 @@ services:
       # would leave already-processed mail sitting in the inbox until the next
       # worker cycle came round to trash it.
       GMAIL_TRASH_PROCESSED: ${GMAIL_TRASH_PROCESSED:-true}
+      # Draft suggestions (reviews module). Web only: a suggestion is asked for
+      # from a request, never from the sweep loop. Empty ⇒ the feature reports
+      # itself as unavailable instead of failing.
+      SUGGEST_API_URL: ${SUGGEST_API_URL:-}
+      SUGGEST_API_KEY: ${SUGGEST_API_KEY:-}
+      SUGGEST_MODEL: ${SUGGEST_MODEL:-}
     volumes:
       - ${HOST_DB_PATH}:/app/data
 

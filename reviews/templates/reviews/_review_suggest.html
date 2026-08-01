@@ -1,0 +1,71 @@
+{% comment %}The suggestion panel: the user's own half of a review — a few real
+impressions and the stars — and the proposal built from them, which he then
+rewrites in the editor. The product's name is the third input and is already
+known, so it's shown, not asked for.
+
+Backdrop-close is off here for the same reason as in the editor: these notes
+are typed, and losing them to a stray tap on a phone would be the whole
+work.{% endcomment %}
+<div class="modal-back">
+  <div class="modal-card modal-wide">
+    <button type="button" class="modal-prev" aria-label="Volver a la reseña"
+            hx-get="{% url 'review_detail' review.pk %}"
+            hx-target="#modal" hx-swap="innerHTML">‹</button>
+    <button type="button" class="modal-x" aria-label="Cerrar"
+            onclick="closeModal(this)">×</button>
+    <div class="modal-head">
+      {% if review.package.image_url %}
+        <img class="modal-thumb" src="{{ review.package.image_url }}" alt="">
+      {% endif %}
+      <h2>{{ review.product_title|default:"Producto desconocido" }}</h2>
+    </div>
+
+    <form hx-post="{% url 'review_suggest' review.pk %}"
+          hx-target="#modal" hx-swap="innerHTML" class="rev-form">
+      {% csrf_token %}
+
+      <span class="confirm-label" id="rev-rating-label">Puntuación</span>
+      <div class="rev-stars" role="radiogroup" aria-labelledby="rev-rating-label">
+        {% for star in stars %}
+          <input type="radio" name="rating" id="rev-star-{{ star }}" value="{{ star }}"
+                 {% if rating == star %}checked{% endif %}>
+          <label for="rev-star-{{ star }}"
+                 aria-label="{{ star }} estrella{{ star|pluralize:"s" }}">★</label>
+        {% endfor %}
+      </div>
+
+      <label class="confirm-label" for="rev-notes">Notas sobre el producto</label>
+      <textarea id="rev-notes" name="notes" rows="6"
+                placeholder="Lo que has notado usándolo: qué va bien, qué falla, para quién sirve…"
+                oninput="this.nextElementSibling.textContent = this.value.length + ' caracteres'">{{ notes }}</textarea>
+      <p class="rev-charcount">{{ notes|length }} caracteres</p>
+
+      {% if error %}<p class="confirm-error">{{ error }}</p>{% endif %}
+
+      <div class="confirm-actions">
+        <button type="submit" name="action" value="save" class="btn-ghost">Guardar notas</button>
+        <button type="submit" name="action" value="suggest" class="btn-go">Sugerir borrador</button>
+      </div>
+      {% if not suggestions_enabled and not error %}
+        {% comment %}Said up front rather than only after pressing: the button
+        works, the thing behind it isn't connected yet. Dropped once there's
+        an error, which will be saying the same thing in red.{% endcomment %}
+        <p class="rev-hint">La sugerencia de borrador todavía no está conectada.</p>
+      {% endif %}
+
+      {% comment %}A proposal, once there is one: shown in full and never
+      applied on its own — it becomes the review only when he says so, and
+      even then only as a draft he can rewrite.{% endcomment %}
+      {% if review.suggestion %}
+        <div class="rev-proposal">
+          <h3>Propuesta</h3>
+          {% if review.suggestion_title %}<p class="rev-headline">«{{ review.suggestion_title }}»</p>{% endif %}
+          <p class="review-text">{{ review.suggestion|linebreaksbr }}</p>
+          <button type="submit" name="action" value="incorporate" class="modal-action write">
+            Incorporar al borrador
+          </button>
+        </div>
+      {% endif %}
+    </form>
+  </div>
+</div>

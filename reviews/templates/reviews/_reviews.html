@@ -199,6 +199,10 @@ section in place, no URL change.{% endcomment %}
     }
     .status-approved { color: var(--accent); border: 1px solid var(--accent); }
     .status-published { color: var(--success); border: 1px solid var(--success); }
+    .status-draft { color: var(--muted); border: 1px solid var(--muted); }
+    /* A draft that's past its due date keeps saying so — it left the ⚠ group
+       by being written, not by stopping being owed. */
+    .rev-late { color: var(--danger); font-weight: 600; }
 
     /* Review-detail modal extras (card chrome itself is shared, base.html). */
     .review-text { margin: .75rem 0 0; font-size: .85rem; line-height: 1.5; }
@@ -209,6 +213,96 @@ section in place, no URL change.{% endcomment %}
       color: var(--muted);
       font-style: italic;
     }
+    /* The card's own action, so it takes the accent rather than the quiet
+       outlined --success of the calendar's exception-path button. The card
+       can carry three of these, so they need an order of loudness: write is
+       the main one, the notes panel is a side door, and the --success
+       default is kept for the step that closes the review. */
+    .modal-action.write { border-color: var(--accent); color: var(--accent); }
+    .modal-action.quiet { border-color: var(--border); color: var(--muted); margin-top: .5rem; }
+    .modal-action + .modal-action { margin-top: .5rem; }
+    /* A dot saying there are notes behind this button, without a count. */
+    .rev-dot { color: var(--accent); font-size: .6em; vertical-align: .25em; }
+
+    /* ---- suggestion panel ---- */
+    .rev-hint { margin: .5rem 0 0; font-size: .72rem; color: var(--muted); font-style: italic; }
+    .rev-proposal {
+      margin-top: 1.1rem;
+      padding-top: .9rem;
+      border-top: 1px solid var(--border);
+    }
+    .rev-proposal h3 {
+      margin: 0;
+      font-size: .74rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      color: var(--muted);
+    }
+    .rev-proposal .rev-headline { display: block; margin: .35rem 0 0; }
+
+    /* ---- draft editor (modal, so styled outside .rev on purpose) ---- */
+    /* Wider than a fact card and allowed to scroll: it holds ~1.000
+       characters of writing, not five rows of dates. */
+    .modal-card.modal-wide {
+      max-width: 32rem;
+      max-height: calc(100dvh - 2rem);
+      overflow-y: auto;
+    }
+    .rev-form textarea {
+      width: 100%;
+      padding: .55rem .65rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--fg);
+      font: inherit;
+      font-size: .95rem;
+      line-height: 1.5;
+      resize: vertical;
+      min-height: 12rem;
+    }
+    .rev-form input[type="text"] { font-size: .95rem; }
+    .rev-form .confirm-label { font-weight: 600; }
+    .rev-charcount {
+      margin: .25rem 0 0;
+      font-size: .68rem;
+      color: var(--muted);
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Stars: radios hidden behind their labels, laid out back to front so a
+       plain `input:checked ~ label` fills the chosen star and every lower
+       one. Reversed in the DOM (5→1) and re-reversed here, so what the user
+       sees still runs 1→5 left to right. */
+    .rev-stars { display: inline-flex; flex-direction: row-reverse; justify-content: flex-end; }
+    .rev-stars input {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .rev-stars label {
+      margin: 0;
+      padding: 0 .12rem;
+      font-size: 1.9rem;
+      line-height: 1.1;
+      color: var(--border);
+      cursor: pointer;
+      transition: color .12s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .rev-stars input:checked ~ label { color: var(--accent); }
+    /* While the pointer is on the row, the preview wins over what's already
+       chosen — otherwise hovering 2 with 4 checked would light four stars.
+       Same specificity as the rule it overrides, so source order decides. */
+    .rev-stars:hover input:checked ~ label { color: var(--border); }
+    .rev-stars:hover label:hover,
+    .rev-stars:hover label:hover ~ label { color: var(--accent); }
+    .rev-stars input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 2px; }
+    @media (prefers-reduced-motion: reduce) { .rev-stars label { transition: none; } }
 
     /* ---- desktop only: the mobile single column is already right ---- */
     @media (min-width: 700px) {
@@ -261,6 +355,20 @@ section in place, no URL change.{% endcomment %}
         <h2>⚠ Urgentes</h2>
         <ul>
           {% for r in vencidas %}{% include "reviews/_review_row.html" with r=r mode="urgent" %}{% endfor %}
+        </ul>
+      </section>
+    {% endif %}
+
+    {% comment %}Written but not yet on Amazon: above the untouched backlog
+    (the work is half done) and below the urgent one (the badge and the ⚠ list
+    have to name the same rows — see ReviewQuerySet.vencidas). Hidden when
+    empty, like ⚠ Urgentes: an always-visible empty group would just push the
+    real backlog down.{% endcomment %}
+    {% if borradores %}
+      <section class="rev-group drafts">
+        <h2>Borradores</h2>
+        <ul>
+          {% for r in borradores %}{% include "reviews/_review_row.html" with r=r mode="draft" %}{% endfor %}
         </ul>
       </section>
     {% endif %}

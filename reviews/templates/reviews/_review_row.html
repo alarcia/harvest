@@ -1,16 +1,28 @@
-{% comment %}One row in the pending backlog. mode: "urgent" | "pending" — decides
-the meta line, the only thing that differs between the two lists. The whole row
-is a button opening the review's detail card (same #modal as the written
-reviews). The view only ever passes rows with a known order date; the last
-branch below is a defensive fallback, not a real case.{% endcomment %}
+{% comment %}One row in the open backlog. mode: "urgent" | "pending" | "draft" —
+it decides the meta line and the badge, the only things that differ between the
+three lists. The whole row is a button opening the review's detail card (same
+#modal as the written reviews).
+
+A draft row also shows its headline, like a written one: it *is* written, and
+recognising it at a glance is the point. It keeps saying how late it is, in
+danger red when it's past due — it left the ⚠ group by writing the draft, not
+by stopping being owed. The view only ever passes rows with a known order date;
+the last branch below is a defensive fallback, not a real case.{% endcomment %}
 <li>
   <button type="button" class="rev-row-btn{% if mode == "urgent" %} is-due{% endif %}"
           hx-get="{% url 'review_detail' r.pk %}" hx-target="#modal" hx-swap="innerHTML">
     {% if r.package.image_url %}<img class="rev-thumb" src="{{ r.package.image_url }}" alt="">{% endif %}
     <div class="rev-body">
       <span class="rev-name">{{ r.product_title|default:"Producto desconocido" }}{% if r.is_vine %} <i class="vine-badge">Vine</i>{% endif %}</span>
+      {% if mode == "draft" and r.title %}<span class="rev-headline">«{{ r.title }}»</span>{% endif %}
       <span class="rev-meta">
-        {% if mode == "urgent" %}
+        {% if mode == "draft" %}
+          <i class="status-badge status-draft">Borrador</i>
+          {% if r.rating %}· {{ r.rating }}★{% endif %}
+          {% if r.due_on and r.due_on <= today %}
+            · <span class="rev-late">vencida desde el {{ r.due_on|date:"j" }} de {{ r.due_on|date:"F" }}</span>
+          {% endif %}
+        {% elif mode == "urgent" %}
           Vencida desde el {{ r.due_on|date:"j" }} de {{ r.due_on|date:"F" }}
         {% elif r.due_on %}
           Reseña antes del {{ r.due_on|date:"j" }} de {{ r.due_on|date:"F" }}

@@ -1,0 +1,64 @@
+{% comment %}The draft editor: headline, stars and body — what Amazon asks for
+and nothing else — in the same #modal slot the review card lives in.
+
+Deliberately *not* closable by tapping the backdrop (unlike every other card in
+this app): the other modals hold a paragraph of read-only facts, this one holds
+twenty minutes of writing, and on a phone the backdrop is most of the screen.
+× and Cancelar stay, since both are aimed at.{% endcomment %}
+<div class="modal-back">
+  <div class="modal-card modal-wide">
+    {% comment %}‹ and × both drop back to the review card rather than closing
+    outright, so the way back is the same one the editor was opened from.{% endcomment %}
+    <button type="button" class="modal-prev" aria-label="Volver a la reseña"
+            hx-get="{% url 'review_detail' review.pk %}"
+            hx-target="#modal" hx-swap="innerHTML">‹</button>
+    <button type="button" class="modal-x" aria-label="Cerrar"
+            onclick="closeModal(this)">×</button>
+    <div class="modal-head">
+      {% if review.package.image_url %}
+        <img class="modal-thumb" src="{{ review.package.image_url }}" alt="">
+      {% endif %}
+      <h2>{{ review.product_title|default:"Producto desconocido" }}</h2>
+    </div>
+
+    <form hx-post="{% url 'review_edit' review.pk %}"
+          hx-target="#modal" hx-swap="innerHTML" class="rev-form">
+      {% csrf_token %}
+
+      <label class="confirm-label" for="rev-title">Título</label>
+      <input type="text" id="rev-title" name="title" maxlength="255" required
+             autocomplete="off" placeholder="Una frase que resuma la opinión"
+             value="{{ title }}">
+
+      {% comment %}Stars: radios hidden behind their own labels, in DOM order
+      5→1 and drawn back to front, so `input:checked ~ label` fills the checked
+      star and every one below it with no JS at all. No `required` here — a
+      hidden control can't be focused for the browser to complain about, and it
+      would refuse to submit without saying why; the view validates it instead.
+      {% endcomment %}
+      <span class="confirm-label" id="rev-rating-label">Puntuación</span>
+      <div class="rev-stars" role="radiogroup" aria-labelledby="rev-rating-label">
+        {% for star in stars %}
+          <input type="radio" name="rating" id="rev-star-{{ star }}" value="{{ star }}"
+                 {% if rating == star %}checked{% endif %}>
+          <label for="rev-star-{{ star }}"
+                 aria-label="{{ star }} estrella{{ star|pluralize:"s" }}">★</label>
+        {% endfor %}
+      </div>
+
+      <label class="confirm-label" for="rev-text">Reseña</label>
+      <textarea id="rev-text" name="text" rows="10" required
+                placeholder="Qué tal ha ido, qué destacarías, qué no acaba de convencerte…"
+                oninput="this.nextElementSibling.textContent = this.value.length + ' caracteres'">{{ text }}</textarea>
+      <p class="rev-charcount">{{ text|length }} caracteres</p>
+
+      {% if error %}<p class="confirm-error">{{ error }}</p>{% endif %}
+      <div class="confirm-actions">
+        <button type="button" class="btn-ghost"
+                hx-get="{% url 'review_detail' review.pk %}"
+                hx-target="#modal" hx-swap="innerHTML">Cancelar</button>
+        <button type="submit" class="btn-go">Guardar borrador</button>
+      </div>
+    </form>
+  </div>
+</div>

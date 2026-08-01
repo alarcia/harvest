@@ -124,6 +124,16 @@ GMAIL_IMAP_APP_PASSWORD = os.environ.get('GMAIL_IMAP_APP_PASSWORD', '')
 # is safe and reversible. Off by default (dev safety); the Pi turns it on.
 GMAIL_TRASH_PROCESSED = os.environ.get('GMAIL_TRASH_PROCESSED', 'false').lower() == 'true'
 
+# Draft suggestions for the reviews module (see reviews/suggest.py). Empty by
+# default and empty everywhere today: `suggest.is_configured()` reads these,
+# and the UI offers the feature only when both are set — so an unconfigured
+# install says so instead of failing at the press of a button. The style
+# guide that shapes the wording is not here: it lives in the database,
+# tunable without a deploy.
+SUGGEST_API_URL = os.environ.get('SUGGEST_API_URL', '')
+SUGGEST_API_KEY = os.environ.get('SUGGEST_API_KEY', '')
+SUGGEST_MODEL = os.environ.get('SUGGEST_MODEL', '')
+
 
 # Logging: single console handler, timestamps in Europe/Madrid, so the whole
 # ingestion audit trail is one `docker logs` away and reads in local time.

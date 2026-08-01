@@ -317,8 +317,8 @@ def _sync_review_for_vine(pkg):
         return ""
     untouched = (existing is not None and existing.status == Review.Status.PENDING
                  and not existing.title and not existing.text
-                 and not existing.draft and not existing.notes
-                 and existing.rating is None)
+                 and not existing.suggestion and not existing.suggestion_title
+                 and not existing.notes and existing.rating is None)
     if untouched:
         existing.delete()
         return "reseña pendiente descartada (ya no es Vine)"
@@ -337,6 +337,19 @@ def set_review_due(pkg, picked_up_on):
     if review is not None and review.status == Review.Status.PENDING and not review.due_on:
         review.due_on = picked_up_on + timedelta(days=30)
         review.save(update_fields=["due_on"])
+
+
+def _best_review_match(rows):
+    """The row a published-confirmation email should close, out of several
+    candidates for one product: the one carrying the most of the user's own
+    work. `approved` means he already pasted that exact text into Amazon;
+    `draft` means he wrote it and hasn't yet; `pending` is an empty chore. In
+    practice there's only ever one row, so this only decides the rare
+    duplicate — but closing the empty one and leaving the written one open
+    would lose the text from the corpus."""
+    rows = list(rows)
+    preference = {Review.Status.APPROVED: 0, Review.Status.DRAFT: 1}
+    return min(rows, key=lambda r: preference.get(r.status, 2)) if rows else None
 
 
 def _apply_review_published(parsed, sent_on):
@@ -359,8 +372,7 @@ def _apply_review_published(parsed, sent_on):
     if parsed.asin:
         candidates = Review.objects.filter(asin=parsed.asin).exclude(
             status=Review.Status.PUBLISHED)
-        review = (candidates.filter(status=Review.Status.APPROVED).first()
-                  or candidates.first())
+        review = _best_review_match(candidates)
     if review is None and parsed.item_title:
         title = parsed.item_title
         matches = [
@@ -369,9 +381,7 @@ def _apply_review_published(parsed, sent_on):
                                      or title.startswith(r.product_title)
                                      or r.product_title.startswith(title))
         ]
-        if matches:
-            review = next((r for r in matches if r.status == Review.Status.APPROVED),
-                          matches[0])
+        review = _best_review_match(matches)
 
     created = review is None
     if created:

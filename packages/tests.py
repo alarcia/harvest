@@ -1581,6 +1581,29 @@ class IngestTests(TestCase):
         self.assertEqual(approved.title, "Mi propio título")  # never overwritten
         self.assertEqual(pending.status, Review.Status.PENDING)  # untouched
 
+    def test_review_published_closes_a_draft_keeping_the_users_own_text(self):
+        # The point of writing the draft in Harvest: when the confirmation
+        # email lands, the corpus gets the whole review the user wrote, not
+        # the truncated excerpt the email carries.
+        pending = Review.objects.create(
+            product_title="otro", asin="B0GXK1FPTY", status=Review.Status.PENDING,
+        )
+        draft = Review.objects.create(
+            product_title="Cargador Inalámbrico (mío)", asin="B0GXK1FPTY",
+            status=Review.Status.DRAFT, title="Mi propio título", rating=5,
+            text="El texto entero, escrito a mano y sin cortar.",
+        )
+        process_message(
+            fixture("010-fwd-gracias-por-su-resena-de-cargador-inalambrico-mag-en-ama.eml")
+        )
+        draft.refresh_from_db()
+        pending.refresh_from_db()
+        self.assertEqual(draft.status, Review.Status.PUBLISHED)
+        self.assertEqual(draft.title, "Mi propio título")
+        self.assertEqual(draft.text, "El texto entero, escrito a mano y sin cortar.")
+        self.assertTrue(draft.text_is_complete)
+        self.assertEqual(pending.status, Review.Status.PENDING)  # the empty one is left alone
+
     def test_review_published_is_idempotent(self):
         process_message(
             fixture("010-fwd-gracias-por-su-resena-de-cargador-inalambrico-mag-en-ama.eml")

@@ -137,7 +137,9 @@ class ReviewQuerySet(models.QuerySet):
         return self.filter(Q(package__isnull=True) | Q(package__is_vine=True))
 
     def written(self):
-        """The ones that exist as text — the "Reseñas escritas" history."""
+        """The ones that are *on Amazon* — the "Reseñas escritas" history.
+        A `draft` has text too, but it's still a chore: it belongs with the
+        backlog at the top of the page, not with the history at the bottom."""
         return self.filter(status__in=[Review.Status.APPROVED, Review.Status.PUBLISHED])
 
     def in_cycle(self, starts_on, ends_on):
@@ -151,7 +153,13 @@ class ReviewQuerySet(models.QuerySet):
     def vencidas(self, today=None, cycle=None):
         """Pending, overdue, and ordered inside the given (default: current)
         VineCycle — the only ones that nag. No current cycle configured ⇒
-        nothing is urgent."""
+        nothing is urgent.
+
+        `draft` is deliberately *not* counted: writing the review is the work,
+        and once it's written the red badge has done its job — the row moves
+        to its own "Borradores" group, which sits directly under the urgent
+        one and keeps saying how late it is. Counting drafts here would leave
+        the badge naming a number the ⚠ list doesn't show."""
         today = today or timezone.localdate()
         cycle = cycle if cycle is not None else VineCycle.current(today)
         if cycle is None:
@@ -178,10 +186,24 @@ class Review(models.Model):
 
     class Status(models.TextChoices):
         PENDING = "pending", "Pendiente"
-        # Approved in Harvest and pasted into Amazon by the user.
+        # Written in Harvest's own editor but not yet on Amazon: the whole
+        # trio (title/rating/text) is filled in and re-editable. Not part of
+        # `written()` — "Reseñas escritas" is what's actually been posted —
+        # and not part of the corpus either, for the same reason.
+        DRAFT = "draft", "Borrador"
+        # The user has pasted it into Amazon and said so ("Ya la he
+        # publicado"). Terminal as far as Harvest is concerned; the
+        # confirmation email only upgrades it to PUBLISHED days later.
         APPROVED = "approved", "Aprobada"
         # Confirmed live by the "tu reseña está en directo" email.
         PUBLISHED = "published", "Publicada"
+
+    # The statuses still being worked on: the editor and the suggestion panel
+    # open these and nothing else. Everything past DRAFT is already on
+    # Amazon — its text is a record of what was posted, not a working copy —
+    # so it stays read-only here (the admin remains the safety net, as
+    # always).
+    EDITABLE = (Status.PENDING, Status.DRAFT)
 
     package = models.OneToOneField(
         "packages.Package", null=True, blank=True, on_delete=models.SET_NULL,
@@ -196,14 +218,26 @@ class Review(models.Model):
         max_length=20, choices=Status.choices, default=Status.PENDING
     )
 
-    # The working area: the current suggested draft (overwritten each time a
-    # new suggestion is requested) and the user's own impressions of the
-    # product, folded into the next suggestion.
-    draft = models.TextField(blank=True)
+    # The user's own impressions of the product, jotted down while using it:
+    # the raw material a suggestion is built from, and the only field of the
+    # working area he writes himself. Kept apart from `text` on purpose
+    # (user, 2026-08-01) — notes are for him, `text` is for Amazon.
     notes = models.TextField(blank=True)
 
-    # The approved review as pasted into Amazon — headline, stars, body.
-    # This trio is what the corpus is made of.
+    # The current suggested draft, headline and body, overwritten each time a
+    # new one is requested — never merged into the trio below on its own: the
+    # user incorporates it explicitly, and rewrites it from there. Named
+    # `suggestion`, not `draft`, because `Status.DRAFT` means something else
+    # entirely (his own finished text, waiting to be posted) and the two side
+    # by side read as the same thing.
+    suggestion_title = models.CharField(max_length=255, blank=True)
+    suggestion = models.TextField(blank=True)
+
+    # The review as written by the user — headline, stars, body. Filled by
+    # the editor while still a `draft`, then unchanged through
+    # approved/published: what he saved is what he pastes into Amazon. This
+    # trio is what the corpus is made of (from `approved` on; a draft is not
+    # in it yet, it may still be rewritten).
     title = models.CharField(max_length=255, blank=True)
     rating = models.PositiveSmallIntegerField(
         null=True, blank=True,

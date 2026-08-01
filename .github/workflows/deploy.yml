@@ -21,6 +21,13 @@ jobs:
           echo "DEPLOY_GID=$(id -g)" >> .env
           echo "GMAIL_IMAP_USER=${{ vars.GMAIL_IMAP_USER }}" >> .env
           echo "GMAIL_IMAP_APP_PASSWORD=${{ secrets.GMAIL_IMAP_APP_PASSWORD }}" >> .env
+          # Draft suggestions. Unset until the feature is switched on, which is
+          # exactly what the app expects — it reports itself unavailable rather
+          # than failing. Add SUGGEST_API_KEY as an Actions *secret*, the other
+          # two as Actions *variables*, same split as the IMAP pair above.
+          echo "SUGGEST_API_URL=${{ vars.SUGGEST_API_URL }}" >> .env
+          echo "SUGGEST_API_KEY=${{ secrets.SUGGEST_API_KEY }}" >> .env
+          echo "SUGGEST_MODEL=${{ vars.SUGGEST_MODEL }}" >> .env
 
       - name: Initialize data directory
         run: mkdir -p ${{ vars.HOST_DB_PATH }}

@@ -1,4 +1,8 @@
-{# Read-only detail card for a review (any status), swapped into #modal. #}
+{% comment %}Detail card for a review of any status, swapped into #modal. Read
+only, except for the one thing that can still be done to it from here: writing
+or rewriting the draft. A draft's own text shows exactly like a published
+one's — the point of the status is that the review is *written*, so it must be
+readable without opening the editor again.{% endcomment %}
 <div class="modal-back" onclick="if (event.target === this) closeModal(this)">
   <div class="modal-card">
     <button type="button" class="modal-x" aria-label="Cerrar" onclick="closeModal(this)">×</button>
@@ -25,6 +29,32 @@
       {% endif %}
     {% else %}
       <p class="review-text review-text-empty">Sin texto guardado.</p>
+    {% endif %}
+    {% if has_draft %}
+      {% comment %}A draft is finished text that hasn't left Harvest yet. Say
+      so plainly here, where the user is reading it: the row's badge on the
+      list can't hold the whole sentence.{% endcomment %}
+      <p class="review-origin">Borrador: todavía sin publicar en Amazon.</p>
+    {% endif %}
+    {% comment %}Everything that can still be done to this review, in the order
+    the work happens: write it, get help writing it, declare it published.
+    Nothing here for a review already on Amazon.{% endcomment %}
+    {% if can_edit %}
+      <button type="button" class="modal-action write"
+              hx-get="{% url 'review_edit' review.pk %}"
+              hx-target="#modal" hx-swap="innerHTML">
+        {% if has_draft %}Editar borrador{% else %}Escribir borrador{% endif %}
+      </button>
+      <button type="button" class="modal-action quiet"
+              hx-get="{% url 'review_suggest' review.pk %}"
+              hx-target="#modal" hx-swap="innerHTML">
+        Notas y sugerencia{% if review.notes %} ·<span class="rev-dot">●</span>{% endif %}
+      </button>
+    {% endif %}
+    {% if can_approve %}
+      <button type="button" class="modal-action"
+              hx-get="{% url 'review_approve' review.pk %}"
+              hx-target="#modal" hx-swap="innerHTML">Ya la he publicado en Amazon</button>
     {% endif %}
   </div>
 </div>

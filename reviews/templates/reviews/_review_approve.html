@@ -1,0 +1,36 @@
+{% comment %}Confirmation step for "ya la he publicado en Amazon", in the same
+#modal slot the review card lives in. Small on purpose: unlike the calendar's
+pickup confirmation there's no day to ask for (pasting a review happens right
+here, right now), so all this does is make the tap deliberate — it files the
+review into the written ones and nothing in the UI brings it back.{% endcomment %}
+<div class="modal-back" onclick="if (event.target === this) closeModal(this)">
+  <div class="modal-card">
+    <button type="button" class="modal-prev" aria-label="Volver a la reseña"
+            hx-get="{% url 'review_detail' review.pk %}"
+            hx-target="#modal" hx-swap="innerHTML">‹</button>
+    <button type="button" class="modal-x" aria-label="Cerrar"
+            onclick="closeModal(this)">×</button>
+    <div class="modal-head">
+      {% if review.package.image_url %}
+        <img class="modal-thumb" src="{{ review.package.image_url }}" alt="">
+      {% endif %}
+      <h2>¿Ya la has publicado?</h2>
+    </div>
+    <p class="confirm-item">{{ review.product_title|default:"Producto desconocido" }}</p>
+    {% if review.title %}<p class="rev-headline">«{{ review.title }}»</p>{% endif %}
+    <p class="modal-note">
+      Se guardará como <b>aprobada</b> y pasará a las reseñas escritas. Cuando
+      Amazon confirme por correo que está publicada, se marcará sola.
+    </p>
+    <form hx-post="{% url 'review_approve' review.pk %}"
+          hx-target="#modal" hx-swap="innerHTML">
+      {% csrf_token %}
+      <div class="confirm-actions">
+        <button type="button" class="btn-ghost"
+                hx-get="{% url 'review_detail' review.pk %}"
+                hx-target="#modal" hx-swap="innerHTML">Cancelar</button>
+        <button type="submit" class="btn-go">Sí, ya está en Amazon</button>
+      </div>
+    </form>
+  </div>
+</div>
