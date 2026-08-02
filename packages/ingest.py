@@ -30,6 +30,9 @@ Rules that matter:
   the package enters Harvest — in_transit, with the arrival it prints. It only
   ever goes out for Vine, so it flags Vine outright, with no total to read it
   from.
+- An order of several products is never Vine, whatever it cost: Vine items are
+  requested one at a time. The order still becomes one row here — how many
+  boxes it ships in is the later "Enviado" emails' news, not this one's.
 - Home deliveries (location is not an Amazon Locker/Counter) create no rows:
   the calendar tracks trips to pickup points. The raw email stays stored, so
   the decision is reversible by reprocessing.
@@ -269,6 +272,21 @@ def _fill(pkg, parsed):
         pkg.estimated_arrival_end = parsed.estimated_arrival_end
 
 
+def _could_be_vine(parsed):
+    """Could this email be about a Vine item at all?
+
+    Vine products are requested one at a time — one order, one shipment, one
+    item, always (user, 2026-08-02) — so an email naming *two or more*
+    products is by construction an ordinary paid order, whatever its total
+    says. That outranks the total: a multi-item order settled with gift
+    balance prints the same "Total 0.00€" a Vine one does, and there is no
+    later email to refute it with (the Enviado prints the same figure).
+
+    Only ever *refutes* Vine, never grants it: a single-item email still has
+    to get past Config.means_vine."""
+    return len(parsed.items) < 2
+
+
 def _apply_cost(pkg, parsed, *, authoritative):
     """Set cost and the Vine flag.
 
@@ -283,12 +301,16 @@ def _apply_cost(pkg, parsed, *, authoritative):
     "Free" is not always 0.00€: a Vine item from a seller outside the EU
     carries the import surcharge, and that is the whole total the user pays.
     Config.means_vine owns that rule; `cost` still records what was really
-    charged."""
+    charged.
+
+    None of that applies to an order of several products, which is never Vine
+    whatever it cost — see _could_be_vine."""
     if parsed.total is None:
         return
     if authoritative or not pkg.shipped_on:
         pkg.cost = parsed.total
-        pkg.is_vine = Config.load().means_vine(parsed.total)
+        pkg.is_vine = (Config.load().means_vine(parsed.total)
+                       and _could_be_vine(parsed))
 
 
 def _sync_review_for_vine(pkg):
@@ -478,23 +500,31 @@ def _apply(parsed):
         _fill(pkg, parsed)
         was_vine = pkg.is_vine
         _apply_cost(pkg, parsed, authoritative=(kind == EmailKind.SHIPPED))
-        if kind == EmailKind.ESTIMATE_UPDATED and not pkg.shipped_on:
+        if (kind == EmailKind.ESTIMATE_UPDATED and not pkg.shipped_on
+                and _could_be_vine(parsed)):
             # This template only ever goes out for a Vine item in versión
             # preliminar (user, 2026-07-31), so it settles the flag by itself:
             # there is no total to infer it from, only the item's list price,
             # which says nothing about what was paid. Set after _apply_cost so
             # it wins if Amazon ever adds a total line. The shipped_on guard is
             # for the out-of-order case alone — the Enviado stays authoritative
-            # about cost and Vine, as everywhere else.
+            # about cost and Vine, as everywhere else. Amazon also sends this
+            # to re-date an ordinary order, and one of several products can't
+            # be Vine however dateless it is.
             pkg.is_vine = True
         created = pkg.pk is None
         pkg.save()
         notes = []
+        if kind == EmailKind.ORDERED and parsed.payment_review:
+            # Explains a row born without an estimated arrival: the audit trail
+            # has to say Amazon withheld the date, not that we lost it.
+            notes.append("Pago en revisión: el pedido aún no tiene fecha")
         if kind == EmailKind.ESTIMATE_UPDATED:
             notes.append("Nueva estimación de entrega")
             if created:
                 notes.append("alta de un Vine en versión preliminar "
-                             "(nunca hubo correo de pedido)")
+                             "(nunca hubo correo de pedido)" if pkg.is_vine
+                             else "alta de un pedido del que nunca llegó el correo")
         if kind == EmailKind.SHIPPED and parsed.total:
             # A non-zero shipped total is the interesting case: it either
             # refutes Vine (real purchase) or is just the EU import surcharge

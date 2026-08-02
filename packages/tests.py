@@ -33,7 +33,7 @@ from .ingest import (
 )
 from .models import Config, Package, PickupPoint, RawEmail
 from .parser import EmailKind, ParseError, _resolve_date, parse_email
-from .views import _estimate_line, _estimate_note
+from .views import _estimate_line, _estimate_note, _marks
 
 FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 
@@ -88,7 +88,8 @@ def _pepe_email(subject, body_line, *, forwarded=True,
 def _amazon_email(headline, destination, *, subject=None,
                   order_id="404-9182736-4501122", arrives="Llega el lunes",
                   total="0.00", item="ONES Funda Magnética para Galaxy S26",
-                  asin="B0F1PEPE01", sent="Mon, 27 Jul 2026 09:00:00 +0200"):
+                  asin="B0F1PEPE01", extra_items=(),
+                  sent="Mon, 27 Jul 2026 09:00:00 +0200"):
     """One Amazon lifecycle email, shaped like the real ones (fixtures
     006/007/021): the headline that names the template, the arrival line, the
     destination line right above "Pedido n.º", the item anchor and the total.
@@ -99,6 +100,10 @@ def _amazon_email(headline, destination, *, subject=None,
     one to arrive in production is exactly how it would go unnoticed. Every
     field a real email carries is in the same shape here, so the parser reads
     it the same way; only the destination varies between tests.
+
+    `extra_items` — (title, asin) pairs — puts more products in the same
+    email, which is what makes an order too big to be Vine; `arrives=None`
+    drops the arrival line, as the payment-review template does.
     """
     msg = EmailMessage()
     msg["Subject"] = subject or headline
@@ -110,10 +115,11 @@ def _amazon_email(headline, destination, *, subject=None,
         body.append(f"<div>{arrives}</div>")
     body.append(f"<div>{destination}</div>")
     body.append(f"<div>Pedido n.º</div><div>{order_id}</div>")
-    body.append(
-        f'<a href="https://www.amazon.es/dp/{asin}/ref=fed_asin_title">'
-        f'<img src="https://m.media-amazon.com/images/I/x.jpg" alt="{item}"></a>'
-    )
+    for title, item_asin in ((item, asin), *extra_items):
+        body.append(
+            f'<a href="https://www.amazon.es/dp/{item_asin}/ref=fed_asin_title">'
+            f'<img src="https://m.media-amazon.com/images/I/x.jpg" alt="{title}"></a>'
+        )
     if total is not None:
         body.append(f"<div>Total {total} €</div>")
     msg.set_content(f"<div>{''.join(body)}</div>", subtype="html")
@@ -269,6 +275,47 @@ class ParseEmailTests(SimpleTestCase):
             parsed.image_url,
             "https://m.media-amazon.com/images/I/61LHU0-P3OL._SS90_.jpg",
         )
+
+    def test_ordered_several_items_held_for_payment(self):
+        # A new shape of "Pedido" (fixture 180, real): two products in one
+        # order, and **no arrival line at all** — Amazon is holding it until
+        # the payment goes through, so it promises no day. The order still has
+        # to be recorded; the date arrives with the "Enviado" later.
+        parsed = parse_email(
+            fixture("180-fwd-pedido-amazon-basics-almohadillas-y-1-productos-mas.eml"))
+        self.assertEqual(parsed.kind, EmailKind.ORDERED)
+        self.assertEqual(parsed.order_id, "405-4911339-6273128")
+        self.assertTrue(parsed.payment_review)
+        self.assertIsNone(parsed.estimated_arrival)
+        self.assertEqual(len(parsed.items), 2)
+        self.assertEqual(parsed.total, Decimal("40.48"))
+
+    def test_split_venue_line_is_rejoined(self):
+        # That same template breaks the venue across three lines ("Amazon
+        # Counter - Les Mesures," / "AVDA SALORIA, 30" / "BAJO, LA SEU
+        # D´URGELL, 25700"). Rejoined, it is the exact string every other
+        # template prints in one — prefix and postal code included, which is
+        # what keeps it from being read as somebody's home address.
+        split = parse_email(
+            fixture("180-fwd-pedido-amazon-basics-almohadillas-y-1-productos-mas.eml"))
+        whole = parse_email(fixture("006-fwd-pedido-cargador-inalambrico.eml"))
+        self.assertEqual(split.pickup_location, whole.pickup_location)
+
+    def test_dateless_order_without_payment_review_fails_loudly(self):
+        # The waiver covers the one case Amazon explains in the email. A
+        # "Pedido" that simply stopped printing "Llega el …" is a template
+        # change and has to keep tripping the red banner.
+        with self.assertRaisesMessage(ParseError, "estimated_arrival"):
+            parse_email(_amazon_email("¡Gracias por tu pedido!",
+                                      _HOME_DESTINATION, arrives=None))
+
+    def test_send_time_is_read_in_local_time(self):
+        # Amazon stamps its tracking token in UTC and every day Harvest paints
+        # is local. This order was placed at 00:49 Madrid time — 22:49 UTC the
+        # day before — so reading the token literally would date it to the 29th.
+        parsed = parse_email(
+            fixture("180-fwd-pedido-amazon-basics-almohadillas-y-1-productos-mas.eml"))
+        self.assertEqual(parsed.sent_at, datetime(2026, 7, 30, 0, 49, 26))
 
     def test_ordered_arrival_window(self):
         # Newer Pedido template gives a delivery window instead of a single
@@ -1352,6 +1399,60 @@ class IngestTests(TestCase):
         pkg = Package.objects.get()
         self.assertTrue(pkg.is_vine)  # shipped email also 0.00€
         self.assertEqual(pkg.cost, Decimal("0.00"))
+
+    def test_order_held_for_payment_records_only_the_order_day(self):
+        # The whole news of that email is "this order exists, on this day":
+        # one row in transit, the ○ on the day it was placed and nothing else
+        # on the board — no estimate to draw, hence no deadline forecast
+        # hanging off one either. The counter it's headed to is still read.
+        record, _ = process_message(
+            fixture("180-fwd-pedido-amazon-basics-almohadillas-y-1-productos-mas.eml"))
+        pkg = Package.objects.get()
+        self.assertEqual(pkg.state, Package.State.IN_TRANSIT)
+        self.assertEqual(pkg.ordered_on, date(2026, 7, 30))
+        self.assertIsNone(pkg.estimated_arrival)
+        self.assertIsNone(pkg.deadline)
+        self.assertEqual(pkg.pickup_point.kind, PickupPoint.Kind.AMAZON_COUNTER)
+        self.assertEqual(pkg.cost, Decimal("40.48"))
+        self.assertFalse(pkg.is_vine)
+        self.assertIn("Pago en revisión", record.note)
+        self.assertEqual(_marks(pkg, date(2026, 8, 2)),
+                         [(date(2026, 7, 30), "ordered", "")])
+
+    def test_split_venue_line_lands_on_the_known_counter(self):
+        # Same physical counter as the fixture-006 order, written across three
+        # lines instead of one: it must dedup onto that same point, not turn
+        # into a second one (and a HOME one at that, which has no deadline and
+        # hides the package from the pickup sweep).
+        process_message(fixture("006-fwd-pedido-cargador-inalambrico.eml"))
+        process_message(
+            fixture("180-fwd-pedido-amazon-basics-almohadillas-y-1-productos-mas.eml"))
+        self.assertEqual(PickupPoint.objects.count(), 1)
+        self.assertEqual(PickupPoint.objects.get().kind,
+                         PickupPoint.Kind.AMAZON_COUNTER)
+
+    def test_multi_item_order_is_never_vine(self):
+        # Vine is requested one item at a time, so an order carrying two
+        # products is a paid order whatever its total says — and this one says
+        # 0.00€, which on a single-item order is exactly what "Vine" looks
+        # like. No Enviado is coming to refute it, so the item count has to.
+        process_message(_amazon_email(
+            "¡Gracias por tu pedido!", _HOME_DESTINATION, total="0.00",
+            extra_items=[("svet Mantel Antimanchas Tacto Tela", "B0H26JP26F")]))
+        pkg = Package.objects.get()
+        self.assertFalse(pkg.is_vine)
+        self.assertEqual(pkg.cost, Decimal("0.00"))  # still what was charged
+
+    def test_multi_item_estimate_update_is_never_vine(self):
+        # The estimate-update template flags Vine outright — it only goes out
+        # for versión preliminar — but Amazon sends the same one to re-date an
+        # ordinary order, and one of several products is never Vine.
+        process_message(_amazon_email(
+            "Actualización sobre la fecha estimada de entrega", _HOME_DESTINATION,
+            total=None,
+            extra_items=[("svet Mantel Antimanchas Tacto Tela", "B0H26JP26F")]))
+        pkg = Package.objects.get()
+        self.assertFalse(pkg.is_vine)
 
     def test_pickup_sweeps_whole_point(self):
         # A package is awaiting at the Les Mesures counter (its Ready email).

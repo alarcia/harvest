@@ -19,7 +19,9 @@ Built for the day Amazon changes a template — fail loudly, never guess:
   token Amazon embeds in every link, or — for senders that embed no such
   token — from the "Date:" line of a Gmail forwarding block. The Date header
   is only the last fallback: on hand-forwarded mail it holds the forward
-  time, days after the fact.
+  time, days after the fact. Amazon writes both the token and that header in
+  UTC, so both are converted to local time (`_as_local`) before any day is
+  read off them.
 - Each kind declares required fields; anything missing raises ParseError
   naming the gap instead of returning half-parsed data.
 
@@ -32,6 +34,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, time
+from datetime import timezone as dt_timezone
 from decimal import Decimal
 from email import message_from_bytes, policy
 from email.utils import parsedate_to_datetime
@@ -40,6 +43,7 @@ from urllib.parse import unquote
 
 import dateparser
 from bs4 import BeautifulSoup
+from django.utils.timezone import get_default_timezone
 
 
 class EmailKind(Enum):
@@ -121,6 +125,11 @@ class ParsedEmail:
     estimated_arrival_end: date | None = None  # set only when the email gave a
     # window ("Llegada entre el 24 y el 28 de julio"): estimated_arrival is its
     # start, this its end. None on the usual single-day estimate.
+    # The order went through but the payment didn't: Amazon is asking for
+    # another card before it commits to a date, so this email carries no
+    # arrival at all. True only on the "Pedido" template that says so — it is
+    # what lets the estimate be missing without the parse failing.
+    payment_review: bool = False
     pickup_before: date | None = None  # the "antes del" day itself
     pickup_code: str | None = None
     barcode_url: str | None = None  # static image scanned at the counter
@@ -204,6 +213,9 @@ _KIND_PATTERNS = [
 
 # Fields that must come out of each kind, or the parse fails loudly.
 _REQUIRED = {
+    # `estimated_arrival` is waived for an order held for payment review, the
+    # one case where Amazon knowingly sends a "Pedido" with no date on it (see
+    # parse_email). Every other field stands.
     EmailKind.ORDERED: ("order_id", "sent_at", "item_title", "total",
                         "estimated_arrival", "pickup_location"),
     EmailKind.SHIPPED: ("order_id", "sent_at", "estimated_arrival"),
@@ -274,6 +286,25 @@ _PICKED = re.compile(r"^Recogido (.+)$")
 _PICKUP_CODE = re.compile(r"código de recogida es\s+(\w+)")
 _TEMP_PASSWORD = re.compile(r"contraseña temporal es\s+(\w+)")
 _ORDER_LINE = re.compile(r"^Pedido n")
+# The head of an Amazon venue line. Used to rejoin a destination Amazon broke
+# across several lines (see _pickup_location); ingestion classifies points by
+# this same prefix, but the parser must stay database-free, so it keeps its own.
+_VENUE_HEAD = re.compile(r"^Amazon (?:Locker|Counter) - ")
+# How far above "Pedido n.º" that rejoining may reach. Three lines is what the
+# real case needs (fixture 180); beyond it sits the step tracker ("Pedido /
+# Enviado / En reparto / Entregado"), which must never be read as an address.
+_VENUE_MAX_LINES = 4
+# "La revisión del pago es necesaria" / "Actualice el método de pago": Amazon
+# took the order but hasn't charged it, and the template then prints **no
+# arrival line at all** — there is no promise to make until the payment goes
+# through. The only known reason a "Pedido" carries no date, so it's matched
+# explicitly instead of making the estimate optional everywhere: a template
+# that stops saying "Llega el …" for any *other* reason must keep failing
+# loudly (see _REQUIRED).
+_PAYMENT_REVIEW = re.compile(
+    r"revisi[oó]n del pago es necesaria|actualice el m[eé]todo de pago",
+    re.IGNORECASE,
+)
 # Pepe y Dalda's one informative line: "Hemos recibido 1 carta para ti."
 _RECEPTION = re.compile(
     r"hemos recibido\s+(\d+)\s+(paquete|carta)s?(?:\s+para\s+([^.,;]+))?",
@@ -310,6 +341,28 @@ def _text_lines(html):
     return [line for line in lines if line]
 
 
+def _as_local(moment):
+    """A send time as a naive *local* timestamp.
+
+    Amazon stamps its tracking token in UTC — verified 2026-08-02 against
+    auto-forwarded mail, where the original header survives alongside it
+    (token `20260802114719` ↔ `Date: Sun, 02 Aug 2026 11:47:21 +0000`) — and
+    so is the `Date:` header of that same mail. Everything downstream is
+    local: the ○ dot's day, the base "Llega el lunes" resolves against, the
+    clock in the audit trail. Two hours of drift only shows in summer and
+    only after midnight in Madrid, and then it dates the whole entry to the
+    day before (fixture 180, ordered at 00:49).
+
+    `sent_at` stays naive throughout — ingestion makes it aware against this
+    same zone — so the conversion is done here rather than left to whoever
+    reads it. A header with no offset at all ("-0000", meaning unknown) is
+    read as UTC, which is what that spelling means.
+    """
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=dt_timezone.utc)
+    return moment.astimezone(get_default_timezone()).replace(tzinfo=None)
+
+
 def _resolve_date(phrase, base):
     """'el lunes' / 'hoy' / '13 de julio' → date, relative to base (forward).
 
@@ -344,18 +397,39 @@ def _first_line_match(pattern, lines):
 
 
 def _pickup_location(lines):
-    """The bold venue line sits right above "Pedido n.º", bar opening hours."""
+    """The bold venue line sits right above "Pedido n.º", bar opening hours.
+
+    Usually one line. Some templates break the *same* address across three
+    ("Amazon Counter - Les Mesures," / "AVDA SALORIA, 30" / "BAJO, LA SEU
+    D´URGELL, 25700" — fixture 180), and keeping only the last would lose both
+    the venue's name and the "Amazon Counter - " prefix ingestion classifies
+    it by, filing a counter pickup as a home delivery. So the block is rejoined
+    whenever such a head turns up just above it, into exactly the one-line form
+    every other template prints (postal code included, which is the dedup key).
+
+    A home address is a single line in every sample so far, and keeps that
+    reading: with no head to anchor on, only the nearest non-noise line is
+    taken — never the step-tracker labels stacked above it.
+    """
     try:
         idx = next(i for i, line in enumerate(lines) if _ORDER_LINE.match(line))
     except StopIteration:
         return None
+    block = []
     for line in reversed(lines[:idx]):
         if _NOISE_LINE.match(line):
             continue
-        # Venues read "Amazon Counter - Les Mesures, ..."; anything without
-        # that shape means the layout moved — better missing than wrong.
-        return line if (" - " in line or "," in line) else None
-    return None
+        block.insert(0, line)
+        if _VENUE_HEAD.match(line):
+            return " ".join(block)
+        if len(block) >= _VENUE_MAX_LINES:
+            break
+    if not block:
+        return None
+    # Venues read "Amazon Counter - Les Mesures, ..."; anything without
+    # that shape means the layout moved — better missing than wrong.
+    nearest = block[-1]
+    return nearest if (" - " in nearest or "," in nearest) else None
 
 
 def _forwarded_header(lines, name):
@@ -500,16 +574,18 @@ def parse_email(raw):
     token = _SENT_TOKEN.search(html)
     forwarded_date = _forwarded_header(lines, "Date")
     if token:
-        sent_at = datetime.strptime(token.group(1), "%Y%m%d%H%M%S")
+        sent_at = _as_local(datetime.strptime(token.group(1), "%Y%m%d%H%M%S"))
     elif forwarded_date and (parsed_fwd := dateparser.parse(
             forwarded_date, languages=["es"])):
         # A sender that embeds no tracking token (Pepe y Dalda) leaves the
         # forwarding block as the only record of when the email really went
         # out — and on a hand-forward the Date header below is the forward's
         # own, days late. Getting this wrong dates the whole calendar entry.
+        # Gmail writes that block in the reader's own timezone, so it needs no
+        # conversion, unlike the two branches around it.
         sent_at = parsed_fwd.replace(tzinfo=None)
     elif msg.get("Date"):
-        sent_at = parsedate_to_datetime(msg["Date"]).replace(tzinfo=None)
+        sent_at = _as_local(parsedate_to_datetime(msg["Date"]))
     else:
         sent_at = None
 
@@ -577,6 +653,7 @@ def parse_email(raw):
         total=Decimal(total_raw.group(1).replace(",", ".")) if total_raw else None,
         estimated_arrival=estimated_arrival,
         estimated_arrival_end=estimated_arrival_end,
+        payment_review=bool(_PAYMENT_REVIEW.search(haystack)),
         pickup_before=_resolve_date(before, sent_at) if before else None,
         pickup_code=match.group(1) if (match := _PICKUP_CODE.search(haystack)) else None,
         barcode_url=_barcode_url(soup),
@@ -591,7 +668,16 @@ def parse_email(raw):
         review_excerpt=review_excerpt,
     )
 
-    missing = [name for name in _REQUIRED[kind] if getattr(parsed, name) is None]
+    required = _REQUIRED[kind]
+    if kind is EmailKind.ORDERED and parsed.payment_review:
+        # An order held for payment review prints no "Llega el …" line: there
+        # is nothing to promise until the card goes through, and the arrival
+        # turns up in the "Enviado" that follows. Losing the order over a date
+        # Amazon deliberately withheld would be the worse trade — the same
+        # judgement ADDRESS_UPDATED already makes. Waived only here: any other
+        # dateless "Pedido" is a template change and still fails loudly.
+        required = tuple(name for name in required if name != "estimated_arrival")
+    missing = [name for name in required if getattr(parsed, name) is None]
     if missing:
         raise ParseError(
             f"{kind.value} email is missing {', '.join(missing)} "
