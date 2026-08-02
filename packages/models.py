@@ -108,6 +108,33 @@ class Config(models.Model):
                   "escribe la propia aplicación.",
     )
 
+    # The template that shapes a proposal. It lives here and **ships empty**,
+    # deliberately: this repository is public and the wording is the user's
+    # own business (ROADMAP, "public-repo discretion"). Blank ⇒ the feature
+    # says it isn't set up rather than sending something half-built.
+    #
+    # `reviews.suggest` substitutes four markers into it, all optional — a
+    # template that never mentions {notas} simply won't be told the notes.
+    suggestion_prompt = models.TextField(
+        blank=True,
+        verbose_name="plantilla de la propuesta",
+        help_text="Instrucciones con las que se redacta la propuesta de "
+                  "borrador. Marcadores disponibles: {producto}, {estrellas}, "
+                  "{notas} y {ejemplos}. Vacío desactiva la función.",
+    )
+
+    # How many reference reviews travel with each request. The cost is linear
+    # and small (a dozen full reviews is a couple of thousand tokens), so this
+    # is a *quality* dial, not a spending one: too many examples dilute the
+    # voice they exist to define.
+    suggestion_examples = models.PositiveIntegerField(
+        default=10,
+        verbose_name="reseñas de referencia por propuesta",
+        help_text="Cuántas reseñas de referencia se envían como ejemplo: "
+                  "primero las marcadas como fijas, luego las más recientes. "
+                  "0 no envía ninguna.",
+    )
+
     class Meta:
         verbose_name = "configuración"
         verbose_name_plural = "configuración"

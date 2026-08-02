@@ -1,3 +1,4 @@
+import difflib
 from datetime import timedelta
 
 from django.core.validators import MaxValueValidator, MinValueValidator
@@ -5,6 +6,15 @@ from django.db import models
 from django.db.models import Exists, OuterRef, Q
 from django.db.models.functions import Coalesce, TruncDate
 from django.utils import timezone
+
+
+# Above this similarity between the proposal and the text the user saved, the
+# review is really the proposal with a few words moved. Measured on his own
+# reviews (2026-08-02): pasted untouched 1.00, two words changed 0.97, a
+# paragraph appended 0.88, half of it rewritten 0.55, rewritten outright 0.29 —
+# and two unrelated reviews of his own also 0.30. So 0.6 sits in open space
+# between "he did the work" and "he pressed paste".
+_MOSTLY_THE_PROPOSAL = 0.6
 
 
 def _six_months_later(d):
@@ -276,3 +286,146 @@ class Review(models.Model):
         """A package-less row is always a historical import — Vine in
         practice, same assumption the "No vine" toggle's default rests on."""
         return self.package_id is None or self.package.is_vine
+
+
+class ReferenceReview(models.Model):
+    """One review known to be good, kept as an example of how the user writes.
+
+    Separate from `Review` on purpose, and not a query over it. A `Review` is
+    a **chore** — something owed, written, posted — with a lifecycle, a
+    package, a deadline. A row here is a **sample of a voice**, and the two
+    populations only partly overlap: the corpus wants texts Harvest never saw
+    (years of reviews written straight on Amazon, pasted in by hand), and it
+    does *not* want most of what `Review` holds — the ~32 rows the
+    confirmation email created carry a truncated excerpt, which as an example
+    would teach the wrong thing (see `text_is_complete`).
+
+    It fills itself as reviews get validated — `remember()` runs when the
+    "published" email closes one — but **not blindly**, and this is the whole
+    design (user, 2026-08-02). From here on most of the user's reviews will
+    start life as a proposal built from this very corpus. Feeding those back in
+    unfiltered would have the suggestions imitating their own output: a copy of
+    a copy, drifting a little further from how he actually writes with every
+    cycle, until the tidy register of a machine has quietly replaced the voice
+    the corpus exists to preserve. The evidence was in his own sample of ten —
+    the ones he wrote himself read nothing like the ones he had had drafted.
+
+    So a row is only an active example if the text is substantially **his**,
+    measured against the proposal it came from (`_is_mostly_his`). Anything
+    else is still kept, just switched off: recorded, promotable by hand, never
+    teaching on its own. And a hand-curated core survives all of it —
+    `is_pinned` rows are always in the slice, so what the user considers his
+    best writing can't be pushed out by whatever arrived most recently.
+    Nothing is ever deleted automatically.
+    """
+
+    product_title = models.CharField(max_length=255, verbose_name="producto")
+    rating = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+        verbose_name="estrellas",
+    )
+    title = models.CharField(max_length=255, verbose_name="titular")
+    text = models.TextField(verbose_name="texto")
+
+    # Curation without deletion: the user drops a row out of the examples from
+    # the admin list and can put it back. Deleting is for mistakes.
+    is_example = models.BooleanField(
+        default=True, verbose_name="usar como ejemplo",
+        help_text="Desmárcalo para que deje de enviarse como ejemplo sin "
+                  "perder el texto. Las reseñas que llegan solas y resultan "
+                  "ser casi la propuesta tal cual entran ya desmarcadas.",
+    )
+
+    # The curated core. Without it the slice is "the most recent N", and the
+    # reviews the user hand-picked as his best would be evicted one by one by
+    # whatever happened to arrive last — which is the opposite of the point.
+    is_pinned = models.BooleanField(
+        default=False, verbose_name="fija",
+        help_text="Las fijas van siempre en el lote de ejemplos, antes que "
+                  "las recientes. Reserva unas pocas para tus mejores reseñas.",
+    )
+
+    # Where it came from, when it came from Harvest at all: keeps `remember()`
+    # idempotent and shows the provenance in the admin. Null for anything
+    # typed or imported by hand, which is the whole point of this table.
+    source_review = models.OneToOneField(
+        Review, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="reference", verbose_name="reseña de origen",
+    )
+
+    added_on = models.DateField(default=timezone.localdate, verbose_name="añadida el")
+
+    class Meta:
+        # Pinned first, then most recent: `examples()` slices straight off
+        # this, so the curated core is what survives a full lot.
+        ordering = ["-is_pinned", "-added_on", "-pk"]
+        verbose_name = "reseña de referencia"
+        verbose_name_plural = "reseñas de referencia"
+
+    def __str__(self):
+        return f"{self.product_title} ({self.rating}★)"
+
+    @classmethod
+    def examples(cls, limit):
+        """The `limit` reviews that go out with a proposal: every pinned one
+        first, then the most recent of the rest.
+
+        Recency rather than best-match for the second group: the user's
+        writing drifts, and what he sounds like *now* is what a proposal
+        should sound like. A cleverer selection (same rating, similar product)
+        was considered and left alone — 95% of his ratings are 4★, so it would
+        sort almost nothing, and product similarity needs machinery this
+        doesn't earn.
+        """
+        if limit <= 0:
+            return cls.objects.none()
+        return cls.objects.filter(is_example=True)[:limit]
+
+    @staticmethod
+    def _is_mostly_his(review):
+        """Did the user actually rewrite the proposal, or paste it as it came?
+
+        The signal is free: the proposal is still on the row next to the text
+        he saved. A review written with no proposal at all is his by
+        definition. Above `_MOSTLY_THE_PROPOSAL` the two are close enough that
+        the text is really the machine's, and using it as an example would
+        teach the next proposal to sound like the last one.
+        """
+        if not review.suggestion or not review.text:
+            return True
+        # `autojunk=False` matters more than it looks: left on, SequenceMatcher
+        # discards characters that appear in over 1% of any sequence longer
+        # than 200 — which is every character in a paragraph of Spanish — and
+        # scored a proposal pasted back with two words changed at 0.31 instead
+        # of 0.97. The guard would have waved through precisely what it exists
+        # to catch.
+        ratio = difflib.SequenceMatcher(None, review.suggestion, review.text,
+                                         autojunk=False).ratio()
+        return ratio < _MOSTLY_THE_PROPOSAL
+
+    @classmethod
+    def remember(cls, review):
+        """Add `review` to the corpus if it belongs there. Returns the row, or
+        None when it doesn't.
+
+        Two conditions to be recorded at all, both about the text being worth
+        keeping: it has to be **complete** (an excerpt read off the
+        confirmation email is not a review, it's the first 250 characters of
+        one) and it has to have a headline and a rating, since that is what a
+        proposal has to produce. Whether it is recorded as an *active example*
+        is the separate judgement `_is_mostly_his` makes.
+
+        Idempotent by `source_review`, so replaying the email — the R1
+        backfill does exactly that — never duplicates a row.
+        """
+        if not (review.text_is_complete and review.text and review.title
+                and review.rating):
+            return None
+        existing = cls.objects.filter(source_review=review).first()
+        if existing is not None:
+            return existing
+        return cls.objects.create(
+            product_title=review.product_title, rating=review.rating,
+            title=review.title, text=review.text, source_review=review,
+            is_example=cls._is_mostly_his(review),
+        )

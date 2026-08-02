@@ -4,7 +4,9 @@ Ingestion-side coverage (Review creation/matching from real emails) lives in
 packages/tests.py, next to the parser/ingest fixtures it's built from.
 """
 
+import json
 from datetime import date, timedelta
+from unittest.mock import patch
 
 from django.test import TestCase, override_settings
 from django.urls import reverse
@@ -12,7 +14,7 @@ from django.utils import timezone
 
 from packages.models import Config, Package, PickupPoint
 
-from .models import Review, VineCycle
+from .models import ReferenceReview, Review, VineCycle
 from .suggest import SuggestionUnavailable, suggest_draft
 
 
@@ -530,14 +532,22 @@ class ReviewSuggestTests(TestCase):
         self.assertContains(response, "Guardar borrador")
         self.assertContains(response, "Titular a medias")
 
-    def test_suggesting_needs_the_notes_and_the_stars_first(self):
-        for data, message in [
-            ({"notes": "", "rating": "4"}, "nota"),
-            ({"notes": "Algo", "rating": ""}, "puntuación"),
-        ]:
-            with self.subTest(**data):
-                response = self.client.post(self.url, dict(data, action="suggest"))
-                self.assertContains(response, message)
+    def test_suggesting_needs_the_stars_first(self):
+        response = self.client.post(self.url, {
+            "action": "suggest", "notes": "Algo", "rating": "",
+        })
+        self.assertContains(response, "puntuación")
+
+    def test_suggesting_with_no_notes_at_all_is_allowed(self):
+        # The five-reviews-in-one-evening case (user, 2026-08-02): there are
+        # products he has nothing to say about, and the proposal has to be
+        # reachable anyway. It must get *past* the form and fail on the wiring
+        # instead — anything else and the button is unusable without notes.
+        response = self.client.post(self.url, {
+            "action": "suggest", "notes": "", "rating": "4",
+        })
+        self.assertNotContains(response, "nota sobre el producto.")
+        self.assertContains(response, "todavía no está disponible")
 
     def test_suggesting_says_it_is_not_connected_yet_and_keeps_the_notes(self):
         response = self.client.post(self.url, {
@@ -598,6 +608,11 @@ class SuggestionBudgetTests(TestCase):
     out, because that is what says whether a request would have been made."""
 
     def setUp(self):
+        # A template has to be in place: `suggest_draft` checks for one before
+        # it books anything, so without this every test here would fail on the
+        # wrong step.
+        Config.objects.update_or_create(
+            pk=1, defaults={"suggestion_prompt": "Redacta sobre {producto}"})
         self.review = Review.objects.create(
             package=_package(ordered_on=timezone.localdate()),
             product_title="Funda con teclado", status=Review.Status.PENDING,
@@ -605,7 +620,7 @@ class SuggestionBudgetTests(TestCase):
         )
 
     def test_the_month_runs_out_and_says_so(self):
-        Config.objects.update_or_create(pk=1, defaults={"suggestions_per_month": 2})
+        Config.objects.filter(pk=1).update(suggestions_per_month=2)
         for _ in range(2):
             claimed, limit = Config.claim_suggestion()
             self.assertTrue(claimed)
@@ -617,7 +632,7 @@ class SuggestionBudgetTests(TestCase):
         self.assertIn("tope de 2 sugerencias", str(spent.exception))
 
     def test_a_new_month_starts_over_without_anything_having_to_run(self):
-        Config.objects.update_or_create(pk=1, defaults={"suggestions_per_month": 1})
+        Config.objects.filter(pk=1).update(suggestions_per_month=1)
         july = date(2026, 7, 20)
         self.assertEqual(Config.claim_suggestion(july)[0], True)
         self.assertEqual(Config.claim_suggestion(date(2026, 7, 31))[0], False)
@@ -629,7 +644,7 @@ class SuggestionBudgetTests(TestCase):
         self.assertEqual(config.suggestions_used, 1)
 
     def test_zero_switches_the_feature_off_rather_than_meaning_unlimited(self):
-        Config.objects.update_or_create(pk=1, defaults={"suggestions_per_month": 0})
+        Config.objects.filter(pk=1).update(suggestions_per_month=0)
         self.assertEqual(Config.claim_suggestion(), (False, 0))
         with self.assertRaises(SuggestionUnavailable) as off:
             suggest_draft(self.review)
@@ -646,7 +661,7 @@ class SuggestionBudgetTests(TestCase):
         self.assertEqual(Config.load().suggestions_used, 0)
 
     def test_the_panel_shows_the_refusal_the_user_can_act_on(self):
-        Config.objects.update_or_create(pk=1, defaults={"suggestions_per_month": 0})
+        Config.objects.filter(pk=1).update(suggestions_per_month=0)
         response = self.client.post(
             reverse("review_suggest", args=[self.review.pk]),
             {"action": "suggest", "notes": "Cierra bien", "rating": "4"},
@@ -655,6 +670,245 @@ class SuggestionBudgetTests(TestCase):
         # The notes still saved: asking for help and being told no is not a
         # reason to lose what was typed.
         self.assertEqual(Review.objects.get(pk=self.review.pk).notes, "Cierra bien")
+
+
+def _answer(titulo="Cumple lo que promete", texto="Un cuerpo de reseña."):
+    """What the endpoint replies, minus the opening `{"titulo":` the request
+    already put in the assistant's mouth."""
+    body = json.dumps({"titulo": titulo, "texto": texto}, ensure_ascii=False)
+    return {"content": [{"type": "text", "text": body.split(":", 1)[1]}]}
+
+
+@override_settings(SUGGEST_API_URL="https://example.invalid/v1",
+                   SUGGEST_API_KEY="test-key", SUGGEST_MODEL="test-model",
+                   SUGGEST_API_HEADERS="x-version: 2026-01-01")
+class SuggestDraftTests(TestCase):
+    """The proposal itself: what gets sent, what comes back, and what happens
+    when it doesn't. The endpoint is always mocked — the tests must never make
+    a real request, least of all a billable one."""
+
+    def setUp(self):
+        Config.objects.update_or_create(pk=1, defaults={
+            "suggestion_prompt": "Producto: {producto}\nEstrellas: {estrellas}\n"
+                                 "Notas: {notas}\nEjemplos:\n{ejemplos}",
+            "suggestion_examples": 2,
+        })
+        self.review = Review.objects.create(
+            package=_package(ordered_on=timezone.localdate()),
+            product_title="Funda con teclado", status=Review.Status.PENDING,
+            notes="Cierra bien y pesa poco", rating=4,
+        )
+
+    def test_the_request_carries_the_notes_the_stars_and_the_corpus(self):
+        ReferenceReview.objects.create(product_title="Cargador", rating=5,
+                                        title="Rápido", text="Carga en una hora.")
+        with patch("reviews.suggest._post", return_value=_answer()) as post:
+            suggest_draft(self.review)
+        payload = post.call_args[0][0]
+        sent = payload["messages"][0]["content"]
+        self.assertIn("Funda con teclado", sent)
+        self.assertIn("4/5", sent)
+        self.assertIn("Cierra bien y pesa poco", sent)
+        self.assertIn("[5/5] Rápido", sent)
+        self.assertIn("Carga en una hora.", sent)
+        # The model comes from the environment, never from the code.
+        self.assertEqual(payload["model"], "test-model")
+
+    def test_a_proposal_can_be_asked_for_with_no_notes(self):
+        # The whole request still goes out; `{notas}` simply resolves to
+        # nothing and the template is written to carry on from the product and
+        # the stars. Nothing here may depend on the notes existing.
+        self.review.notes = ""
+        self.review.save()
+        with patch("reviews.suggest._post", return_value=_answer()) as post:
+            title, text = suggest_draft(self.review)
+        sent = post.call_args[0][0]["messages"][0]["content"]
+        self.assertIn("Funda con teclado", sent)
+        self.assertIn("4/5", sent)
+        self.assertNotIn("{notas}", sent)
+        self.assertTrue(title and text)
+
+    def test_only_the_configured_number_of_examples_travels(self):
+        for n in range(5):
+            ReferenceReview.objects.create(product_title=f"Cosa {n}", rating=4,
+                                            title=f"Titular {n}", text=f"Texto {n}")
+        with patch("reviews.suggest._post", return_value=_answer()) as post:
+            suggest_draft(self.review)
+        sent = post.call_args[0][0]["messages"][0]["content"]
+        # Two most recent, by `-added_on, -pk`.
+        self.assertIn("Titular 4", sent)
+        self.assertIn("Titular 3", sent)
+        self.assertNotIn("Titular 2", sent)
+
+    def test_retired_examples_stay_out(self):
+        ReferenceReview.objects.create(product_title="Vieja", rating=1,
+                                        title="No me representa", text="...",
+                                        is_example=False)
+        with patch("reviews.suggest._post", return_value=_answer()) as post:
+            suggest_draft(self.review)
+        self.assertNotIn("No me representa",
+                          post.call_args[0][0]["messages"][0]["content"])
+
+    def test_a_stray_brace_in_the_template_cannot_break_it(self):
+        # The template is typed into a textarea; `str.format` would raise on
+        # this and take the whole feature down until someone edited the DB.
+        Config.objects.filter(pk=1).update(
+            suggestion_prompt="Usa un {tono} coloquial sobre {producto}")
+        with patch("reviews.suggest._post", return_value=_answer()) as post:
+            suggest_draft(self.review)
+        sent = post.call_args[0][0]["messages"][0]["content"]
+        self.assertIn("{tono}", sent)          # untouched, not an error
+        self.assertIn("Funda con teclado", sent)
+
+    def test_the_answer_is_read_back_as_headline_and_body(self):
+        with patch("reviews.suggest._post",
+                    return_value=_answer("Ligera y resistente", "Llevo un mes.")):
+            title, text = suggest_draft(self.review)
+        self.assertEqual(title, "Ligera y resistente")
+        self.assertEqual(text, "Llevo un mes.")
+
+    def test_trailing_prose_after_the_json_is_ignored(self):
+        answer = _answer()
+        answer["content"][0]["text"] += "\n\nEspero que te sirva."
+        with patch("reviews.suggest._post", return_value=answer):
+            title, _ = suggest_draft(self.review)
+        self.assertEqual(title, "Cumple lo que promete")
+
+    def test_an_unreadable_answer_says_so_instead_of_crashing(self):
+        with patch("reviews.suggest._post", return_value={"content": []}):
+            with self.assertRaises(SuggestionUnavailable) as broken:
+                suggest_draft(self.review)
+        self.assertIn("no se entiende", str(broken.exception))
+
+    def test_without_a_template_it_asks_for_one_and_spends_nothing(self):
+        Config.objects.filter(pk=1).update(suggestion_prompt="")
+        with patch("reviews.suggest._post") as post:
+            with self.assertRaises(SuggestionUnavailable) as missing:
+                suggest_draft(self.review)
+        self.assertIn("plantilla", str(missing.exception))
+        post.assert_not_called()
+        self.assertEqual(Config.load().suggestions_used, 0)
+
+    def test_the_panel_shows_the_proposal_once_it_arrives(self):
+        with patch("reviews.suggest._post",
+                    return_value=_answer("Ligera y resistente", "Llevo un mes.")):
+            response = self.client.post(
+                reverse("review_suggest", args=[self.review.pk]),
+                {"action": "suggest", "notes": "Cierra bien", "rating": "4"},
+            )
+        self.assertContains(response, "Ligera y resistente")
+        saved = Review.objects.get(pk=self.review.pk)
+        self.assertEqual(saved.suggestion_title, "Ligera y resistente")
+        # Still nothing written into the review itself: only "Incorporar"
+        # moves a proposal across, and only the editor saves it.
+        self.assertEqual(saved.title, "")
+        self.assertEqual(saved.status, Review.Status.PENDING)
+
+
+class ReferenceCorpusTests(TestCase):
+    """How the corpus fills itself. The bar is "validated by Amazon *and*
+    written here", because the rows the confirmation email creates on its own
+    hold a 250-character excerpt — as an example that would teach the model to
+    stop mid-sentence."""
+
+    def _review(self, **kwargs):
+        fields = dict(product_title="Funda", title="Buen titular", rating=4,
+                       text="Un texto completo y propio.", text_is_complete=True,
+                       status=Review.Status.PUBLISHED)
+        fields.update(kwargs)
+        return Review.objects.create(**fields)
+
+    def test_a_review_written_here_joins_the_corpus(self):
+        review = self._review()
+        remembered = ReferenceReview.remember(review)
+        self.assertIsNotNone(remembered)
+        self.assertEqual(remembered.title, "Buen titular")
+        self.assertEqual(remembered.rating, 4)
+        self.assertEqual(remembered.source_review, review)
+
+    def test_a_truncated_excerpt_never_does(self):
+        self.assertIsNone(ReferenceReview.remember(
+            self._review(text="Empieza y se corta a los 250…",
+                          text_is_complete=False)))
+        self.assertEqual(ReferenceReview.objects.count(), 0)
+
+    def test_a_review_with_no_headline_never_does(self):
+        # A proposal has to produce a headline, so an example without one
+        # teaches nothing about the half that's missing.
+        self.assertIsNone(ReferenceReview.remember(self._review(title="")))
+
+    def test_remembering_twice_keeps_one_row(self):
+        review = self._review()
+        first = ReferenceReview.remember(review)
+        second = ReferenceReview.remember(review)
+        self.assertEqual(first.pk, second.pk)
+        self.assertEqual(ReferenceReview.objects.count(), 1)
+
+    def test_the_corpus_survives_its_review_being_deleted(self):
+        review = self._review()
+        ReferenceReview.remember(review)
+        review.delete()
+        surviving = ReferenceReview.objects.get()
+        self.assertIsNone(surviving.source_review)
+        self.assertEqual(surviving.text, "Un texto completo y propio.")
+
+    def test_a_proposal_pasted_almost_as_it_came_is_kept_but_switched_off(self):
+        # The drift guard. From here on most reviews start as a proposal built
+        # from this very corpus; feeding those back in unfiltered would have
+        # the suggestions imitating their own output until the user's voice
+        # was gone from it entirely.
+        proposal = ("Este carro de la compra destaca por su buena calidad y "
+                    "diseño práctico. La estructura metálica es firme, las "
+                    "ruedas son sólidas y permiten desplazarlo sin esfuerzo, y "
+                    "el conjunto no resulta pesado. El interior está aislado.")
+        review = self._review(suggestion=proposal,
+                               text=proposal.replace("firme", "sólida"))
+        remembered = ReferenceReview.remember(review)
+        self.assertIsNotNone(remembered)          # kept — he may want it later
+        self.assertFalse(remembered.is_example)   # but never teaching on its own
+
+    def test_keeping_the_whole_proposal_and_adding_to_it_is_still_not_his(self):
+        # The realistic near-miss, and the one `autojunk` used to wave through:
+        # every word of the proposal survives, with a paragraph of his own
+        # stuck on the end. That is the proposal's voice with a postscript.
+        proposal = ("Este carro de la compra destaca por su buena calidad y "
+                    "diseño práctico. La estructura metálica es firme, las "
+                    "ruedas son sólidas y permiten desplazarlo sin esfuerzo, y "
+                    "el conjunto no resulta pesado. El interior está aislado.")
+        review = self._review(
+            suggestion=proposal,
+            text=proposal + " Lo uso a diario para la compra del mercado.")
+        self.assertFalse(ReferenceReview.remember(review).is_example)
+
+    def test_a_proposal_he_actually_rewrote_counts_as_his(self):
+        review = self._review(
+            suggestion=("Este carro de la compra destaca por su buena calidad "
+                        "y diseño práctico. La estructura metálica es firme."),
+            text=("Cogí el gris. Pesa poco y las ruedas van finas por el "
+                  "adoquinado, que es donde otros se atascan. El forro de "
+                  "dentro se me ha enganchado ya una vez con una lata."),
+        )
+        self.assertTrue(ReferenceReview.remember(review).is_example)
+
+    def test_a_review_written_with_no_proposal_at_all_is_his_by_definition(self):
+        self.assertTrue(ReferenceReview.remember(self._review(suggestion="")).is_example)
+
+    def test_pinned_examples_are_never_pushed_out_by_recent_ones(self):
+        core = ReferenceReview.objects.create(
+            product_title="La buena", rating=4, title="Mi mejor titular",
+            text="El tono que quiero que imite.", is_pinned=True)
+        for n in range(5):
+            ReferenceReview.objects.create(product_title=f"Nueva {n}", rating=4,
+                                            title=f"Reciente {n}", text=f"Texto {n}")
+        picked = list(ReferenceReview.examples(2))
+        self.assertEqual(picked[0], core)
+        self.assertEqual(picked[1].title, "Reciente 4")
+
+    def test_switched_off_examples_stay_out_even_when_pinned(self):
+        ReferenceReview.objects.create(
+            product_title="Retirada", rating=4, title="No", text="...",
+            is_pinned=True, is_example=False)
+        self.assertEqual(list(ReferenceReview.examples(5)), [])
 
 
 class VineCycleBoundaryTests(TestCase):

@@ -36,7 +36,8 @@ asked for. Backdrop-close is off, same as the editor: typed content.{% endcommen
 
       <p class="rev-panel-intro">
         Tus notas y las estrellas son lo que se usa para proponerte un borrador.
-        El título sale del nombre del producto.
+        El título sale del nombre del producto. Si no tienes notas, puedes
+        pedirlo igualmente: saldrá del producto y la puntuación.
       </p>
 
       <span class="confirm-label" id="rev-rating-label">Puntuación</span>
@@ -49,7 +50,7 @@ asked for. Backdrop-close is off, same as the editor: typed content.{% endcommen
         {% endfor %}
       </div>
 
-      <label class="confirm-label" for="rev-notes">Notas sobre el producto</label>
+      <label class="confirm-label" for="rev-notes">Notas sobre el producto (opcional)</label>
       <textarea id="rev-notes" name="notes" rows="6"
                 placeholder="Lo que has notado usándolo: qué va bien, qué falla, para quién sirve…"
                 oninput="this.nextElementSibling.textContent = this.value.length + ' caracteres'">{{ notes }}</textarea>

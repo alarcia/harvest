@@ -147,6 +147,10 @@ GMAIL_TRASH_PROCESSED = os.environ.get('GMAIL_TRASH_PROCESSED', 'false').lower()
 SUGGEST_API_URL = os.environ.get('SUGGEST_API_URL', '')
 SUGGEST_API_KEY = os.environ.get('SUGGEST_API_KEY', '')
 SUGGEST_MODEL = os.environ.get('SUGGEST_MODEL', '')
+# Extra headers the endpoint requires, one `Nombre: valor` per line. Here
+# rather than in the code so nothing a particular service happens to need is
+# written down in a public repository.
+SUGGEST_API_HEADERS = os.environ.get('SUGGEST_API_HEADERS', '')
 
 
 # Logging: single console handler, timestamps in Europe/Madrid, so the whole

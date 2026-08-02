@@ -35,6 +35,7 @@ services:
       SUGGEST_API_URL: ${SUGGEST_API_URL:-}
       SUGGEST_API_KEY: ${SUGGEST_API_KEY:-}
       SUGGEST_MODEL: ${SUGGEST_MODEL:-}
+      SUGGEST_API_HEADERS: ${SUGGEST_API_HEADERS:-}
     volumes:
       - ${HOST_DB_PATH}:/app/data
 

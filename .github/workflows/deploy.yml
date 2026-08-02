@@ -28,6 +28,10 @@ jobs:
           echo "SUGGEST_API_URL=${{ vars.SUGGEST_API_URL }}" >> .env
           echo "SUGGEST_API_KEY=${{ secrets.SUGGEST_API_KEY }}" >> .env
           echo "SUGGEST_MODEL=${{ vars.SUGGEST_MODEL }}" >> .env
+          echo "SUGGEST_API_HEADERS=${{ vars.SUGGEST_API_HEADERS }}" >> .env
+
+      - name: Keep the secrets out of other users' reach
+        run: chmod 600 .env
 
       - name: Initialize data directory
         run: mkdir -p ${{ vars.HOST_DB_PATH }}

@@ -351,10 +351,9 @@ def review_suggest(request, pk):
     - **Guardar notas** — persists them and returns. Notes are worth keeping
       on their own: they get written while the product is being used, days
       before the review does.
-    - **Sugerir borrador** — requires notes *and* stars (they are the input)
-      and asks `suggest.suggest_draft`. Not wired to anything yet, so today it
-      always comes back with the reason; everything around it is complete, and
-      `suggest.is_configured()` is the single switch.
+    - **Sugerir borrador** — requires the stars, and *only* the stars: notes
+      are the normal input and the better one, but a proposal has to be
+      reachable without them (see the check itself).
     - **Incorporar al borrador** — hands the proposal to the editor as its new
       headline and body. Still saves nothing: he reads it, rewrites it, and
       presses "Guardar borrador" like any other draft. Which also means
@@ -382,9 +381,14 @@ def review_suggest(request, pk):
         review.save(update_fields=["notes", "rating", "updated_at"])
 
     if action == "suggest":
-        if not notes:
-            error = "Escribe primero alguna nota sobre el producto."
-        elif rating not in range(1, 6):
+        # The stars are required and the notes are **not** (user, 2026-08-02).
+        # Notes are the normal way in and by far the better one, but there are
+        # products he has nothing to say about, and days when five reviews have
+        # to be closed at once — on those, a proposal built from the product's
+        # name and the rating alone is the difference between a review written
+        # and a review skipped. He reads and rewrites every proposal anyway, so
+        # the floor on quality is his, not the template's.
+        if rating not in range(1, 6):
             error = "Elige la puntuación antes de pedir el borrador."
         else:
             try:
