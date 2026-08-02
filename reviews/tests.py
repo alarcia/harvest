@@ -584,6 +584,31 @@ class ReviewSuggestTests(TestCase):
         # The proposal survives — comparing against it is the user's business.
         self.assertEqual(self.review.suggestion, "El cuerpo propuesto, para reescribir.")
 
+    def test_only_the_action_that_writes_the_proposal_is_marked(self):
+        # The spark and its cool gradient mark text the user didn't write.
+        # "Incorporar al borrador" produces none — it copies a proposal that
+        # already exists into the editor, locally — so marking it would spread
+        # the mark across the feature until it meant nothing (user, 2026-08-02).
+        self._with_proposal()
+        panel = self._open().content.decode()
+        self.assertIn("Incorporar al borrador", panel)
+        incorporate = panel[panel.index('value="incorporate"'):]
+        self.assertNotIn("spark", incorporate[:incorporate.index("</button>")])
+        # Exactly one marked action on the panel: asking for the proposal.
+        self.assertEqual(panel.count('class="spark"'), 1)
+
+    def test_asking_for_a_proposal_cannot_be_double_clicked(self):
+        # It's the one request that takes seconds *and* costs money, so it
+        # issues from the button (htmx marks the element that requests, and the
+        # form would have spun for "Guardar notas" too) and disables it for the
+        # round trip.
+        panel = self._open().content.decode()
+        button = panel[panel.index('class="modal-action suggest"'):]
+        button = button[:button.index("</button>")]
+        self.assertIn('hx-disabled-elt="this"', button)
+        self.assertIn('hx-include="#rev-suggest-form"', button)
+        self.assertIn("Redactando la propuesta", button)
+
     def test_the_panel_warns_before_replacing_work_already_typed(self):
         self._with_proposal()
         blank = self._open()

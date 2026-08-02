@@ -256,6 +256,30 @@ section in place, no URL change.{% endcomment %}
       color: var(--fg);
     }
     .spark { width: 1.05em; height: 1.05em; flex: none; }
+    /* Writing a proposal is the one round trip in the app long enough to look
+       broken without saying anything — a few seconds of a button that did
+       nothing. So it says what it's doing, in words and with the same ring the
+       topbar's ⟳ uses, and htmx disables it meanwhile (each press is billable,
+       see the button's own comment). `spin` is defined in base.html. */
+    .rev-spinner {
+      display: none;
+      width: 1.05em;
+      height: 1.05em;
+      flex: none;
+      border: 2px solid var(--border);
+      border-top-color: var(--spark-2);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    .rev-busy { display: none; }
+    .modal-action.suggest.htmx-request .spark,
+    .modal-action.suggest.htmx-request .rev-idle { display: none; }
+    .modal-action.suggest.htmx-request .rev-spinner { display: block; }
+    .modal-action.suggest.htmx-request .rev-busy { display: inline; }
+    .modal-action.suggest[disabled] { cursor: progress; }
+    /* Even with animation off the button must still read as busy: the words
+       carry it, and the ring stays as a static mark rather than vanishing. */
+    @media (prefers-reduced-motion: reduce) { .rev-spinner { animation: none; } }
     /* Inside the editor it's the door to the panel, so it leads rather than
        follows: full width, above the fields, with room under it. */
     .rev-form .modal-action.suggest { margin: .25rem 0 .35rem; }
@@ -339,8 +363,15 @@ section in place, no URL change.{% endcomment %}
     .rev-stars input:checked ~ label { color: var(--accent); }
     /* While the pointer is on the row, the preview wins over what's already
        chosen — otherwise hovering 2 with 4 checked would light four stars.
-       Same specificity as the rule it overrides, so source order decides. */
-    .rev-stars:hover input:checked ~ label { color: var(--border); }
+       `:where()` is load-bearing: it contributes no specificity, which is the
+       only reason the two preview rules below can override this one. Written
+       plainly as `.rev-stars:hover input:checked ~ label` it scored (0,3,2)
+       against the (0,3,1) of `label:hover`, so the star actually under the
+       pointer was dimmed while every lower one lit — clicking the 2nd star
+       showed one, the 3rd showed two, and the whole widget read as if the
+       click had landed one place to the left. The comment here used to claim
+       both rules had equal specificity; they never did. */
+    .rev-stars:hover :where(input:checked) ~ label { color: var(--border); }
     .rev-stars:hover label:hover,
     .rev-stars:hover label:hover ~ label { color: var(--accent); }
     .rev-stars input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 2px; }

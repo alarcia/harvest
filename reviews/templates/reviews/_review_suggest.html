@@ -59,10 +59,28 @@ asked for. Backdrop-close is off, same as the editor: typed content.{% endcommen
       {% if error %}<p class="confirm-error">{{ error }}</p>{% endif %}
 
       {% comment %}The panel's headline action, standing alone and marked as
-      what it is; the two plain ones share the row below.{% endcomment %}
-      <button type="submit" name="action" value="suggest" class="modal-action suggest">
+      what it is; the two plain ones share the row below.
+
+      A `<button hx-post>` rather than a plain submit, for the feedback: this
+      is the one request in the app that takes seconds, and htmx puts
+      `.htmx-request` on the element that *issues* the request — on the form,
+      if the form owns the hx-post, which would spin this button for "Guardar
+      notas" too. Issuing it from here keeps the busy state on the thing that
+      is actually busy. `hx-include` carries the form's fields (and its CSRF
+      token) exactly as the ‹ button above already does, and `hx-disabled-elt`
+      matters more here than anywhere else in the app: every press costs
+      money, so a double-click must not buy two proposals.{% endcomment %}
+      <button type="button" class="modal-action suggest"
+              hx-post="{% url 'review_suggest' review.pk %}"
+              hx-vals='{"action": "suggest"}'
+              hx-include="#rev-suggest-form"
+              hx-target="#modal" hx-swap="innerHTML"
+              hx-disabled-elt="this">
         {% include "reviews/_spark.html" with gradient=1 %}
-        <span>Sugerir borrador</span>
+        <span class="rev-spinner" aria-hidden="true"></span>
+        <span class="rev-idle">Sugerir borrador</span>
+        {% comment %}Announced politely so the wait is spoken, not just drawn.{% endcomment %}
+        <span class="rev-busy" role="status">Redactando la propuesta…</span>
       </button>
       {% if not suggestions_enabled and not error %}
         {% comment %}Said up front rather than only after pressing: the button
@@ -84,9 +102,13 @@ asked for. Backdrop-close is off, same as the editor: typed content.{% endcommen
           <h3>Propuesta</h3>
           {% if review.suggestion_title %}<p class="rev-headline">«{{ review.suggestion_title }}»</p>{% endif %}
           <p class="review-text">{{ review.suggestion|linebreaksbr }}</p>
-          <button type="submit" name="action" value="incorporate" class="modal-action suggest">
-            {% include "reviews/_spark.html" with gradient=1 %}
-            <span>Incorporar al borrador</span>
+          {% comment %}Plain, deliberately: the spark and the cool gradient mark
+          text the user didn't write, and this button doesn't produce any — it
+          copies a proposal that already exists into the editor, locally, with
+          no request to anything. Marking it would spread the mark to the whole
+          feature and make it meaningless.{% endcomment %}
+          <button type="submit" name="action" value="incorporate" class="modal-action">
+            Incorporar al borrador
           </button>
           {% if would_replace %}
             <p class="rev-hint">Sustituirá lo que ya tienes escrito en el borrador.</p>
