@@ -324,10 +324,8 @@ def _sync_review_for_vine(pkg):
     event for the package, it's a no-op once the Review already matches."""
     existing = getattr(pkg, "review", None)
     if pkg.is_vine:
-        is_received = pkg.state in (Package.State.PICKED_UP, Package.State.DELIVERED)
-        if is_received and existing is None:
-            received_on = (pkg.picked_up_on if pkg.state == Package.State.PICKED_UP
-                           else pkg.actual_arrival or pkg.estimated_arrival)
+        if pkg.is_received and existing is None:
+            received_on = pkg.received_on
             due_on = (received_on + timedelta(days=30)) if received_on else None
             Review.objects.create(
                 package=pkg,
@@ -885,9 +883,7 @@ def backfill_reviews():
         review__isnull=True,
         state__in=[Package.State.PICKED_UP, Package.State.DELIVERED],
     ):
-        received_on = (pkg.picked_up_on if pkg.state == Package.State.PICKED_UP
-                       else pkg.actual_arrival or pkg.estimated_arrival)
-        due_on = (received_on + timedelta(days=30)) if received_on else None
+        due_on = (pkg.received_on + timedelta(days=30)) if pkg.received_on else None
         review = Review.objects.create(
             package=pkg,
             product_title=pkg.description or f"Paquete #{pkg.pk}",

@@ -17,6 +17,15 @@ readable without opening the editor again.{% endcomment %}
         <b>Estado</b> {{ status_label }}
         {% if review.is_vine %} · <i class="vine-badge">Vine</i>{% endif %}
       </span>
+      {% comment %}The product's dates before the review's own: "desde cuándo
+      lo tengo" is what says whether there's been time to try it.{% endcomment %}
+      {% if review.package.ordered_on %}<span><b>Pedido</b> el {{ review.package.ordered_on|date:"j" }} de {{ review.package.ordered_on|date:"F" }}</span>{% endif %}
+      {% if review.package.received_on %}
+        <span>
+          <b>{% if review.package.state == "picked_up" %}Recogido{% else %}Entregado{% endif %}</b>
+          el {{ review.package.received_on|date:"j" }} de {{ review.package.received_on|date:"F" }}
+        </span>
+      {% endif %}
       {% if review.title %}<span><b>Título de la reseña</b> «{{ review.title }}»</span>{% endif %}
       {% if review.rating %}<span><b>Puntuación</b> {{ review.rating }}★</span>{% endif %}
       {% if review.approved_on %}<span><b>Aprobada</b> el {{ review.approved_on|date:"j" }} de {{ review.approved_on|date:"F" }}</span>{% endif %}

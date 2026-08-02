@@ -184,6 +184,11 @@ section in place, no URL change.{% endcomment %}
     .rev-headline { font-size: .74rem; font-style: italic; color: var(--muted); text-align: left; }
     .rev-meta { font-size: .72rem; color: var(--muted); }
     .rev-row.is-due .rev-meta, .rev .rev-row-btn.is-due .rev-meta { color: var(--danger); font-weight: 600; }
+    /* The product's own dates — ordered, and the day it reached his hands.
+       Deliberately not .rev-meta: in the ⚠ group that one turns red, and red
+       is the deadline talking, not a date that's merely a fact. Quieter than
+       the line above it for the same reason. */
+    .rev-dates { font-size: .68rem; color: var(--muted); }
 
     .rev-empty { margin: 0; font-size: .82rem; color: var(--muted); }
 

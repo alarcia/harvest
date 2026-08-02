@@ -18,15 +18,25 @@ from .models import ReferenceReview, Review, VineCycle
 from .suggest import SuggestionUnavailable, suggest_draft
 
 
-def _package(ordered_on=None, picked_up_on=None, is_vine=True, description="Producto de prueba"):
+def _package(ordered_on=None, picked_up_on=None, state=None, is_vine=True,
+             description="Producto de prueba"):
+    """A package the user already has, unless a test says otherwise.
+
+    The reviews page only ever lists products in hand (see
+    `ReviewQuerySet.received`), so "picked up" is the default and `state=` is
+    how a test builds the exception. Without a day of its own a pickup is
+    dated on the order day — near enough for a fixture, and it keeps every
+    caller that only cares about cycle placement unchanged."""
     point = PickupPoint.objects.create(
         name=f"Amazon Locker - Test {PickupPoint.objects.count()}",
         kind=PickupPoint.Kind.AMAZON_LOCKER,
     )
+    if state is None:
+        state = Package.State.PICKED_UP
+        picked_up_on = picked_up_on or ordered_on
     return Package.objects.create(
         pickup_point=point, description=description, is_vine=is_vine,
-        ordered_on=ordered_on, picked_up_on=picked_up_on,
-        state=Package.State.PICKED_UP if picked_up_on else Package.State.IN_TRANSIT,
+        ordered_on=ordered_on, picked_up_on=picked_up_on, state=state,
     )
 
 
@@ -80,6 +90,8 @@ class ReviewsListViewTests(TestCase):
         # way there's no order date, so its cycle is unknowable. Must not
         # show as pending anywhere: it surfaces on its own once the
         # "Gracias por tu reseña" email closes it into "Reseñas escritas".
+        # The second one is in his hands (default), so the order date is the
+        # only thing keeping it out.
         Review.objects.create(product_title="Sin paquete conocido", status=Review.Status.PENDING)
         pkg = _package(ordered_on=None)
         Review.objects.create(package=pkg, product_title=pkg.description,
@@ -95,6 +107,80 @@ class ReviewsListViewTests(TestCase):
                                         status=Review.Status.PENDING)
         response = self._get()
         self.assertIn(review, response.context["pendientes"])
+
+    def test_review_of_a_package_not_yet_in_hand_is_hidden(self):
+        # The bug (2026-08-02): rows ingestion created before it learned to
+        # wait for the pickup are still `pending` against packages that never
+        # arrived, and they were showing up in the backlog dateless — nothing
+        # to review, and no due date to close them by. Same for a package that
+        # regressed out of `picked_up`.
+        for state in (Package.State.IN_TRANSIT, Package.State.AWAITING_PICKUP,
+                       Package.State.RETURNED):
+            with self.subTest(state=state):
+                pkg = _package(ordered_on=self._in_current(), state=state,
+                                description=f"Todavía no lo tengo ({state})")
+                review = Review.objects.create(package=pkg, product_title=pkg.description,
+                                                status=Review.Status.PENDING)
+                response = self._get()
+                self.assertNotIn(review, response.context["pendientes"])
+                self.assertNotIn(review, response.context["vencidas"])
+                self.assertNotContains(response, pkg.description)
+
+    def test_it_joins_the_backlog_once_the_package_is_received(self):
+        # And the stored row needs no fixing to get there: the same review
+        # shows the moment its package does.
+        pkg = _package(ordered_on=self._in_current(), state=Package.State.AWAITING_PICKUP)
+        review = Review.objects.create(package=pkg, product_title=pkg.description,
+                                        status=Review.Status.PENDING)
+        self.assertNotIn(review, self._get().context["pendientes"])
+
+        pkg.state = Package.State.PICKED_UP
+        pkg.picked_up_on = self.today
+        pkg.save()
+        self.assertIn(review, self._get().context["pendientes"])
+
+    def test_a_home_delivery_counts_as_received(self):
+        # No trip to make: "entregado" is the end of the line, and the product
+        # is just as much in his hands as a picked-up one.
+        pkg = _package(ordered_on=self._in_current(), state=Package.State.DELIVERED)
+        pkg.actual_arrival = self.today
+        pkg.save()
+        review = Review.objects.create(package=pkg, product_title=pkg.description,
+                                        status=Review.Status.PENDING)
+        response = self._get()
+        self.assertIn(review, response.context["pendientes"])
+        self.assertContains(response, "Entregado el")
+
+    def test_the_badge_never_counts_a_package_he_does_not_have(self):
+        # A due_on typed into the admin on an unreceived row would otherwise
+        # nag from the top bar with nothing on the list to act on.
+        pkg = _package(ordered_on=self._in_current(), state=Package.State.IN_TRANSIT)
+        Review.objects.create(package=pkg, product_title=pkg.description,
+                               status=Review.Status.PENDING,
+                               due_on=self.today - timedelta(days=1))
+        response = self._get()
+        self.assertEqual(response.context["vencidas_count"], 0)
+        self.assertEqual(list(response.context["vencidas"]), [])
+
+    def test_the_row_says_when_it_was_ordered_and_since_when_he_has_it(self):
+        pkg = _package(ordered_on=self._in_current(), picked_up_on=self._in_current(3))
+        Review.objects.create(package=pkg, product_title=pkg.description,
+                               status=Review.Status.PENDING)
+        response = self._get()
+        self.assertContains(response, f"Pedido el {self._in_current().day} de")
+        self.assertContains(response, f"Recogido el {self._in_current(3).day} de")
+
+    def test_a_draft_row_carries_those_dates_too(self):
+        # It used to print no date at all — the one row where he has already
+        # spent time on the product said the least about it (user, 2026-08-02).
+        pkg = _package(ordered_on=self._in_current(), picked_up_on=self._in_current(3))
+        Review.objects.create(package=pkg, product_title=pkg.description,
+                               status=Review.Status.DRAFT,
+                               title="Un titular", rating=4, text="Cuerpo.")
+        response = self._get()
+        self.assertEqual(len(response.context["borradores"]), 1)
+        self.assertContains(response, f"Pedido el {self._in_current().day} de")
+        self.assertContains(response, f"Recogido el {self._in_current(3).day} de")
 
     def test_overdue_review_is_urgent_only_on_current_cycle(self):
         pkg = _package(ordered_on=self._in_current(), picked_up_on=self._in_current())

@@ -6,6 +6,8 @@ from django.db.models import Exists, OuterRef, Q
 from django.db.models.functions import Coalesce, TruncDate
 from django.utils import timezone
 
+from packages.models import Package
+
 
 def _six_months_later(d):
     month = d.month - 1 + 6
@@ -111,10 +113,13 @@ class VineCycle(models.Model):
         if reached by a hand-typed URL.
 
         The two halves mirror the two lists `reviews_list` renders, exactly:
-        a pending review with no order date is hidden there, so it must not
-        make a cycle navigable here either — it would land you on an empty
-        page, which is the very thing this method exists to prevent."""
-        ordered_in = Review.objects.filter(
+        a pending review with no order date is hidden there, and so is one
+        whose package isn't in the user's hands yet, so neither may make a
+        cycle navigable here — it would land you on an empty page, which is
+        the very thing this method exists to prevent. (A *written* review of a
+        package still in transit is reachable all the same: `written_in` files
+        it by `_cycle_date`, which starts at the same `ordered_on`.)"""
+        ordered_in = Review.objects.received().filter(
             package__ordered_on__gte=OuterRef("starts_on"),
             package__ordered_on__lte=OuterRef("ends_on"),
         )
@@ -136,6 +141,31 @@ class ReviewQuerySet(models.QuerySet):
             return self
         return self.filter(Q(package__isnull=True) | Q(package__is_vine=True))
 
+    def received(self):
+        """Only reviews of products the user actually has in his hands.
+
+        A review is owed for something he can try out: while the package is
+        still on its way — or still sitting on a counter waiting for the trip —
+        there is nothing to say about it, and its `due_on` (pickup + 30 days)
+        doesn't even exist yet, so the row would sit in the backlog dateless
+        and impossible to close.
+
+        Ingestion only creates a review this late since 2026-07-30, but the
+        rows it created *before* that are still in the database: `pending`,
+        against packages that hadn't arrived. The rule belongs here rather
+        than in a one-off cleanup — it fixes those without touching them (each
+        reappears, dated, the day its package is finally received) and it also
+        covers the case that survives the creation guard: a package regressing
+        out of `picked_up`, when an "Entregado" is forwarded after a bulk
+        pickup sweep had already swept it.
+
+        A package-less row never matches, which is right: those are the
+        historical import and the ones the "Gracias por tu reseña" email
+        creates on its own — written reviews, and `written()` is what the
+        history is built from."""
+        return self.filter(package__state__in=[Package.State.PICKED_UP,
+                                                Package.State.DELIVERED])
+
     def written(self):
         """The ones that are *on Amazon* — the "Reseñas escritas" history.
         A `draft` has text too, but it's still a chore: it belongs with the
@@ -151,9 +181,14 @@ class ReviewQuerySet(models.QuerySet):
         )
 
     def vencidas(self, today=None, cycle=None):
-        """Pending, overdue, and ordered inside the given (default: current)
-        VineCycle — the only ones that nag. No current cycle configured ⇒
-        nothing is urgent.
+        """Pending, in hand, overdue, and ordered inside the given (default:
+        current) VineCycle — the only ones that nag. No current cycle
+        configured ⇒ nothing is urgent.
+
+        `received()` is redundant in practice (a `due_on` is only ever set on
+        receipt) and kept anyway: the badge must never count a row the ⚠ list
+        doesn't show, and the list filters the same way. One hand-typed
+        `due_on` in the admin is all it would take.
 
         `draft` is deliberately *not* counted: writing the review is the work,
         and once it's written the red badge has done its job — the row moves
@@ -164,7 +199,7 @@ class ReviewQuerySet(models.QuerySet):
         cycle = cycle if cycle is not None else VineCycle.current(today)
         if cycle is None:
             return self.none()
-        return self.filter(
+        return self.received().filter(
             status=Review.Status.PENDING, due_on__isnull=False, due_on__lte=today,
             package__ordered_on__gte=cycle.starts_on, package__ordered_on__lte=cycle.ends_on,
         )

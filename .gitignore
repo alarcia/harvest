@@ -13,6 +13,10 @@ __pycache__/
 # Django
 db.sqlite3
 db.sqlite3-journal
+# Working copies left by pull_prod_db.sh: the previous local database (.bak)
+# and the in-flight download (.tmp). Real production data, never committed.
+db.sqlite3.*
+pull_prod_db.sh
 staticfiles/
 
 # Environment

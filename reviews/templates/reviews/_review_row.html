@@ -1,13 +1,21 @@
 {% comment %}One row in the open backlog. mode: "urgent" | "pending" | "draft" —
-it decides the meta line and the badge, the only things that differ between the
-three lists. The whole row is a button opening the review's detail card (same
-#modal as the written reviews).
+it decides the badge and the first meta line, the only things that differ
+between the three lists. The whole row is a button opening the review's detail
+card (same #modal as the written reviews).
 
 A draft row also shows its headline, like a written one: it *is* written, and
 recognising it at a glance is the point. It keeps saying how late it is, in
 danger red when it's past due — it left the ⚠ group by writing the draft, not
-by stopping being owed. The view only ever passes rows with a known order date;
-the last branch below is a defensive fallback, not a real case.{% endcomment %}
+by stopping being owed.
+
+Two lines, on purpose. The first is about the *review* — what's owed and by
+when — and it's the one that turns red in the ⚠ group. The second is about the
+*product*: when it was ordered and, above all, since when he has it (user,
+2026-08-02), which is what tells him whether he's had time to try it. It shows
+on every row, drafts included: a draft used to print no date at all, so the one
+row where he's already spent time on the product said the least about it. The
+view only ever passes rows with a known order date and a package in hand; the
+last branch is a defensive fallback, not a real case.{% endcomment %}
 <li>
   <button type="button" class="rev-row-btn{% if mode == "urgent" %} is-due{% endif %}"
           hx-get="{% url 'review_detail' r.pk %}" hx-target="#modal" hx-swap="innerHTML">
@@ -15,22 +23,23 @@ the last branch below is a defensive fallback, not a real case.{% endcomment %}
     <div class="rev-body">
       <span class="rev-name">{{ r.product_title|default:"Producto desconocido" }}{% if r.is_vine %} <i class="vine-badge">Vine</i>{% endif %}</span>
       {% if mode == "draft" and r.title %}<span class="rev-headline">«{{ r.title }}»</span>{% endif %}
-      <span class="rev-meta">
-        {% if mode == "draft" %}
+      {% if mode == "draft" %}
+        <span class="rev-meta">
           <i class="status-badge status-draft">Borrador</i>
           {% if r.rating %}· {{ r.rating }}★{% endif %}
           {% if r.due_on and r.due_on <= today %}
             · <span class="rev-late">vencida desde el {{ r.due_on|date:"j" }} de {{ r.due_on|date:"F" }}</span>
           {% endif %}
-        {% elif mode == "urgent" %}
-          Vencida desde el {{ r.due_on|date:"j" }} de {{ r.due_on|date:"F" }}
-        {% elif r.due_on %}
-          Reseña antes del {{ r.due_on|date:"j" }} de {{ r.due_on|date:"F" }}
-        {% elif r.package.ordered_on %}
-          Pedido el {{ r.package.ordered_on|date:"j" }} de {{ r.package.ordered_on|date:"F" }}
-        {% else %}
-          Sin fecha de pedido
-        {% endif %}
+        </span>
+      {% elif mode == "urgent" %}
+        <span class="rev-meta">Vencida desde el {{ r.due_on|date:"j" }} de {{ r.due_on|date:"F" }}</span>
+      {% elif r.due_on %}
+        <span class="rev-meta">Reseña antes del {{ r.due_on|date:"j" }} de {{ r.due_on|date:"F" }}</span>
+      {% endif %}
+      <span class="rev-dates">
+        {% if r.package.ordered_on %}Pedido el {{ r.package.ordered_on|date:"j" }} de {{ r.package.ordered_on|date:"F" }}{% endif %}
+        {% if r.package.received_on %}{% if r.package.ordered_on %} · {% endif %}{% if r.package.state == "picked_up" %}Recogido{% else %}Entregado{% endif %} el {{ r.package.received_on|date:"j" }} de {{ r.package.received_on|date:"F" }}{% endif %}
+        {% if not r.package.ordered_on and not r.package.received_on %}Sin fecha de pedido{% endif %}
       </span>
     </div>
   </button>

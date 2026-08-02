@@ -57,13 +57,15 @@ def _find_cycle(raw):
 def reviews_list(request):
     """The reviews module's landing page: the *current* Vine cycle's backlog
     by default — urgent first, then the plain backlog (oldest order first) —
-    with the reviews written *in that same cycle* at the bottom. A past cycle
-    is reachable via
-    ?cycle=<starts_on>, deliberately out of the way (this is rare, "hacer
-    reseñas pasadas" territory): its backlog shows too, just never as
-    urgent — urgency is a current-cycle concept. Full page normally, bare
-    fragment for the Calendario/Reseñas nav-pill swap and for the cycle/
-    toggle controls.
+    with the reviews written *in that same cycle* at the bottom. The backlog
+    is only ever products he already has: a package still on its way, or still
+    waiting at a counter, owes nothing yet.
+
+    A past cycle is reachable via ?cycle=<starts_on>, deliberately out of the
+    way (this is rare, "hacer reseñas pasadas" territory): its backlog shows
+    too, just never as urgent — urgency is a current-cycle concept. Full page
+    normally, bare fragment for the Calendario/Reseñas nav-pill swap and for
+    the cycle/toggle controls.
 
     A ?cycle= that isn't a *navigable* cycle — one that either doesn't exist
     as a row (hand-typed, a stale bookmark, a boundary predating the seed) or
@@ -111,8 +113,13 @@ def reviews_list(request):
     # straight from a review-published match). Rather than guess, it stays
     # off this list entirely; the review-published email closes it into
     # "Reseñas escritas" on its own whenever it arrives.
+    #
+    # And a review is only owed once the product is in his hands: `received()`
+    # keeps out everything still travelling or still waiting on a counter,
+    # including the rows ingestion created too early before 2026-07-30 (see
+    # the method — they come back on their own, dated, once picked up).
     open_reviews = base.filter(status__in=Review.EDITABLE,
-                                package__ordered_on__isnull=False)
+                                package__ordered_on__isnull=False).received()
     open_reviews = list(
         open_reviews.filter(package__ordered_on__gte=cycle.starts_on,
                              package__ordered_on__lte=cycle.ends_on)

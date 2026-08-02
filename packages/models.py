@@ -376,6 +376,28 @@ class Package(models.Model):
         return self.description or f"Package #{self.pk}"
 
     @property
+    def is_received(self):
+        """The product is in the user's hands: he drove out for it
+        (`picked_up`), or Amazon left it at a door (`delivered`). Anything
+        else — still coming, still sitting on a counter, returned — is not,
+        however far along it looks."""
+        return self.state in (self.State.PICKED_UP, self.State.DELIVERED)
+
+    @property
+    def received_on(self):
+        """The day it reached him, or None while it hasn't.
+
+        Everything that counts from "since when do I have this" hangs off it:
+        the review's 30-day clock (`ingest.set_review_due`) and the line the
+        review row prints. A home delivery falls back to its estimated day for
+        the rows delivered before `actual_arrival` was being written."""
+        if self.state == self.State.PICKED_UP:
+            return self.picked_up_on
+        if self.state == self.State.DELIVERED:
+            return self.actual_arrival or self.estimated_arrival
+        return None
+
+    @property
     def carrier_tracking_url(self):
         """Direct link to the carrier's own locator (office + hours) — the
         one thing the delivery-attempt email never provides. Only UPS is
