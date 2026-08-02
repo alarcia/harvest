@@ -39,7 +39,25 @@ twenty minutes of writing, and on a phone the backdrop is most of the screen.
         {% if review.notes %}<span class="rev-dot">●</span>{% endif %}
       </button>
 
-      <label class="confirm-label" for="rev-title">Título</label>
+      <div class="rev-label-row">
+        <label class="confirm-label" for="rev-title">Título</label>
+        <button type="button" class="rev-copy-btn" title="Copiar título" aria-label="Copiar título"
+                onclick="
+                  var v = document.getElementById('rev-title').value;
+                  if(!v) return;
+                  var el = this;
+                  navigator.clipboard.writeText(v).then(function() {
+                    el.classList.add('copied');
+                    if(el._t) clearTimeout(el._t);
+                    el._t = setTimeout(function(){ el.classList.remove('copied'); }, 5000);
+                  });
+                ">
+          <svg class="ico-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          <svg class="ico-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+          <span class="txt-copy">Copiar</span>
+          <span class="txt-check">¡Copiado!</span>
+        </button>
+      </div>
       <input type="text" id="rev-title" name="title" maxlength="255" required
              autocomplete="off" placeholder="Una frase que resuma la opinión"
              value="{{ title }}">
@@ -60,11 +78,36 @@ twenty minutes of writing, and on a phone the backdrop is most of the screen.
         {% endfor %}
       </div>
 
-      <label class="confirm-label" for="rev-text">Reseña</label>
+      <div class="rev-label-row">
+        <label class="confirm-label" for="rev-text">Reseña</label>
+        <button type="button" class="rev-copy-btn" title="Copiar reseña" aria-label="Copiar reseña"
+                onclick="
+                  var v = document.getElementById('rev-text').value;
+                  if(!v) return;
+                  var el = this;
+                  navigator.clipboard.writeText(v).then(function() {
+                    el.classList.add('copied');
+                    if(el._t) clearTimeout(el._t);
+                    el._t = setTimeout(function(){ el.classList.remove('copied'); }, 5000);
+                  });
+                ">
+          <svg class="ico-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          <svg class="ico-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+          <span class="txt-copy">Copiar</span>
+          <span class="txt-check">¡Copiado!</span>
+        </button>
+      </div>
       <textarea id="rev-text" name="text" rows="10" required
                 placeholder="Qué tal ha ido, qué destacarías, qué no acaba de convencerte…"
                 oninput="this.nextElementSibling.textContent = this.value.length + ' caracteres'">{{ text }}</textarea>
       <p class="rev-charcount">{{ text|length }} caracteres</p>
+      {% if review.asin %}
+        <a class="rev-amazon-link"
+           href="https://www.amazon.es/review/create-review?encoding=UTF&channel=vine-portal&asin={{ review.asin }}"
+           target="_blank" rel="noopener">
+          <span class="rev-ext-icon">↗</span> Escribir reseña en Amazon
+        </a>
+      {% endif %}
 
       {% if error %}<p class="confirm-error">{{ error }}</p>{% endif %}
       <div class="confirm-actions">
