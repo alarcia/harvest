@@ -63,7 +63,7 @@ from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from reviews.models import ReferenceReview, Review
+from reviews.models import Review
 
 from .models import Config, Package, PickupPoint, RawEmail
 from .parser import EmailKind, ParseError, parse_email
@@ -426,14 +426,7 @@ def _apply_review_published(parsed, sent_on):
     review.published_on = review.published_on or sent_on
     review.save()
 
-    # Validated by Amazon is exactly the bar the corpus asks for, so this is
-    # where a review the user wrote here becomes an example for the next one.
-    # `remember` decides whether it qualifies: rows this same handler filled
-    # from the email carry a truncated excerpt and are turned away.
-    remembered = ReferenceReview.remember(review)
-
-    note = "Reseña publicada" + (" (nueva)" if created else "")
-    return None, note + (" · añadida a las de referencia" if remembered else "")
+    return None, "Reseña publicada" + (" (nueva)" if created else "")
 
 
 def _apply(parsed):

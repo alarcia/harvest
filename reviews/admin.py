@@ -22,16 +22,11 @@ class ReviewAdmin(admin.ModelAdmin):
 
 @admin.register(ReferenceReview)
 class ReferenceReviewAdmin(admin.ModelAdmin):
-    """The corpus. It fills itself as reviews are validated, but the admin is
-    how the *good* old ones get in — years of reviews written straight on
-    Amazon, typed or pasted in by hand, which is the whole reason this is a
-    table of its own and not a query over `Review`."""
+    """The corpus, and the admin is the only way into it — every row is typed
+    or pasted by hand, which is the whole reason this is a table of its own and
+    not a query over `Review`. All of them go out with every proposal, so this
+    list *is* what the suggestions imitate: what's here is the whole input."""
 
-    list_display = ("product_title", "rating", "title", "is_example",
-                    "is_pinned", "added_on")
-    # Both judgements are made while reading the list of examples — "this one
-    # isn't me" and "this one always goes" — so both are editable right there.
-    list_editable = ("is_example", "is_pinned")
-    list_filter = ("is_example", "is_pinned", "rating")
+    list_display = ("product_title", "rating", "title", "added_on")
+    list_filter = ("rating",)
     search_fields = ("product_title", "title", "text")
-    raw_id_fields = ("source_review",)

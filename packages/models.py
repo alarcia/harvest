@@ -123,17 +123,6 @@ class Config(models.Model):
                   "{notas} y {ejemplos}. Vacío desactiva la función.",
     )
 
-    # How many reference reviews travel with each request. The cost is linear
-    # and small (a dozen full reviews is a couple of thousand tokens), so this
-    # is a *quality* dial, not a spending one: too many examples dilute the
-    # voice they exist to define.
-    suggestion_examples = models.PositiveIntegerField(
-        default=10,
-        verbose_name="reseñas de referencia por propuesta",
-        help_text="Cuántas reseñas de referencia se envían como ejemplo: "
-                  "primero las marcadas como fijas, luego las más recientes. "
-                  "0 no envía ninguna.",
-    )
 
     class Meta:
         verbose_name = "configuración"

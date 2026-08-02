@@ -672,10 +672,10 @@ class SuggestionBudgetTests(TestCase):
         self.assertEqual(Review.objects.get(pk=self.review.pk).notes, "Cierra bien")
 
 
-def _answer(titulo="Cumple lo que promete", texto="Un cuerpo de reseña."):
-    """What the endpoint replies, minus the opening `{"titulo":` the request
+def _answer(title="Cumple lo que promete", text="Un cuerpo de reseña."):
+    """What the endpoint replies, minus the opening `{"title":` the request
     already put in the assistant's mouth."""
-    body = json.dumps({"titulo": titulo, "texto": texto}, ensure_ascii=False)
+    body = json.dumps({"title": title, "text": text}, ensure_ascii=False)
     return {"content": [{"type": "text", "text": body.split(":", 1)[1]}]}
 
 
@@ -691,7 +691,6 @@ class SuggestDraftTests(TestCase):
         Config.objects.update_or_create(pk=1, defaults={
             "suggestion_prompt": "Producto: {producto}\nEstrellas: {estrellas}\n"
                                  "Notas: {notas}\nEjemplos:\n{ejemplos}",
-            "suggestion_examples": 2,
         })
         self.review = Review.objects.create(
             package=_package(ordered_on=timezone.localdate()),
@@ -728,26 +727,17 @@ class SuggestDraftTests(TestCase):
         self.assertNotIn("{notas}", sent)
         self.assertTrue(title and text)
 
-    def test_only_the_configured_number_of_examples_travels(self):
-        for n in range(5):
+    def test_every_reference_review_travels_every_time(self):
+        # No cap and no selection (user, 2026-08-02): the table is curated by
+        # hand and stays around a dozen rows, so all of it goes every time.
+        for n in range(12):
             ReferenceReview.objects.create(product_title=f"Cosa {n}", rating=4,
                                             title=f"Titular {n}", text=f"Texto {n}")
         with patch("reviews.suggest._post", return_value=_answer()) as post:
             suggest_draft(self.review)
         sent = post.call_args[0][0]["messages"][0]["content"]
-        # Two most recent, by `-added_on, -pk`.
-        self.assertIn("Titular 4", sent)
-        self.assertIn("Titular 3", sent)
-        self.assertNotIn("Titular 2", sent)
-
-    def test_retired_examples_stay_out(self):
-        ReferenceReview.objects.create(product_title="Vieja", rating=1,
-                                        title="No me representa", text="...",
-                                        is_example=False)
-        with patch("reviews.suggest._post", return_value=_answer()) as post:
-            suggest_draft(self.review)
-        self.assertNotIn("No me representa",
-                          post.call_args[0][0]["messages"][0]["content"])
+        for n in range(12):
+            self.assertIn(f"Titular {n}", sent)
 
     def test_a_stray_brace_in_the_template_cannot_break_it(self):
         # The template is typed into a textarea; `str.format` would raise on
@@ -803,112 +793,6 @@ class SuggestDraftTests(TestCase):
         # moves a proposal across, and only the editor saves it.
         self.assertEqual(saved.title, "")
         self.assertEqual(saved.status, Review.Status.PENDING)
-
-
-class ReferenceCorpusTests(TestCase):
-    """How the corpus fills itself. The bar is "validated by Amazon *and*
-    written here", because the rows the confirmation email creates on its own
-    hold a 250-character excerpt — as an example that would teach the model to
-    stop mid-sentence."""
-
-    def _review(self, **kwargs):
-        fields = dict(product_title="Funda", title="Buen titular", rating=4,
-                       text="Un texto completo y propio.", text_is_complete=True,
-                       status=Review.Status.PUBLISHED)
-        fields.update(kwargs)
-        return Review.objects.create(**fields)
-
-    def test_a_review_written_here_joins_the_corpus(self):
-        review = self._review()
-        remembered = ReferenceReview.remember(review)
-        self.assertIsNotNone(remembered)
-        self.assertEqual(remembered.title, "Buen titular")
-        self.assertEqual(remembered.rating, 4)
-        self.assertEqual(remembered.source_review, review)
-
-    def test_a_truncated_excerpt_never_does(self):
-        self.assertIsNone(ReferenceReview.remember(
-            self._review(text="Empieza y se corta a los 250…",
-                          text_is_complete=False)))
-        self.assertEqual(ReferenceReview.objects.count(), 0)
-
-    def test_a_review_with_no_headline_never_does(self):
-        # A proposal has to produce a headline, so an example without one
-        # teaches nothing about the half that's missing.
-        self.assertIsNone(ReferenceReview.remember(self._review(title="")))
-
-    def test_remembering_twice_keeps_one_row(self):
-        review = self._review()
-        first = ReferenceReview.remember(review)
-        second = ReferenceReview.remember(review)
-        self.assertEqual(first.pk, second.pk)
-        self.assertEqual(ReferenceReview.objects.count(), 1)
-
-    def test_the_corpus_survives_its_review_being_deleted(self):
-        review = self._review()
-        ReferenceReview.remember(review)
-        review.delete()
-        surviving = ReferenceReview.objects.get()
-        self.assertIsNone(surviving.source_review)
-        self.assertEqual(surviving.text, "Un texto completo y propio.")
-
-    def test_a_proposal_pasted_almost_as_it_came_is_kept_but_switched_off(self):
-        # The drift guard. From here on most reviews start as a proposal built
-        # from this very corpus; feeding those back in unfiltered would have
-        # the suggestions imitating their own output until the user's voice
-        # was gone from it entirely.
-        proposal = ("Este carro de la compra destaca por su buena calidad y "
-                    "diseño práctico. La estructura metálica es firme, las "
-                    "ruedas son sólidas y permiten desplazarlo sin esfuerzo, y "
-                    "el conjunto no resulta pesado. El interior está aislado.")
-        review = self._review(suggestion=proposal,
-                               text=proposal.replace("firme", "sólida"))
-        remembered = ReferenceReview.remember(review)
-        self.assertIsNotNone(remembered)          # kept — he may want it later
-        self.assertFalse(remembered.is_example)   # but never teaching on its own
-
-    def test_keeping_the_whole_proposal_and_adding_to_it_is_still_not_his(self):
-        # The realistic near-miss, and the one `autojunk` used to wave through:
-        # every word of the proposal survives, with a paragraph of his own
-        # stuck on the end. That is the proposal's voice with a postscript.
-        proposal = ("Este carro de la compra destaca por su buena calidad y "
-                    "diseño práctico. La estructura metálica es firme, las "
-                    "ruedas son sólidas y permiten desplazarlo sin esfuerzo, y "
-                    "el conjunto no resulta pesado. El interior está aislado.")
-        review = self._review(
-            suggestion=proposal,
-            text=proposal + " Lo uso a diario para la compra del mercado.")
-        self.assertFalse(ReferenceReview.remember(review).is_example)
-
-    def test_a_proposal_he_actually_rewrote_counts_as_his(self):
-        review = self._review(
-            suggestion=("Este carro de la compra destaca por su buena calidad "
-                        "y diseño práctico. La estructura metálica es firme."),
-            text=("Cogí el gris. Pesa poco y las ruedas van finas por el "
-                  "adoquinado, que es donde otros se atascan. El forro de "
-                  "dentro se me ha enganchado ya una vez con una lata."),
-        )
-        self.assertTrue(ReferenceReview.remember(review).is_example)
-
-    def test_a_review_written_with_no_proposal_at_all_is_his_by_definition(self):
-        self.assertTrue(ReferenceReview.remember(self._review(suggestion="")).is_example)
-
-    def test_pinned_examples_are_never_pushed_out_by_recent_ones(self):
-        core = ReferenceReview.objects.create(
-            product_title="La buena", rating=4, title="Mi mejor titular",
-            text="El tono que quiero que imite.", is_pinned=True)
-        for n in range(5):
-            ReferenceReview.objects.create(product_title=f"Nueva {n}", rating=4,
-                                            title=f"Reciente {n}", text=f"Texto {n}")
-        picked = list(ReferenceReview.examples(2))
-        self.assertEqual(picked[0], core)
-        self.assertEqual(picked[1].title, "Reciente 4")
-
-    def test_switched_off_examples_stay_out_even_when_pinned(self):
-        ReferenceReview.objects.create(
-            product_title="Retirada", rating=4, title="No", text="...",
-            is_pinned=True, is_example=False)
-        self.assertEqual(list(ReferenceReview.examples(5)), [])
 
 
 class VineCycleBoundaryTests(TestCase):

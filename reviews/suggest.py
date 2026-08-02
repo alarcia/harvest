@@ -50,8 +50,8 @@ _TIMEOUT_SECONDS = 45
 # than in the editable template: the parser depends on it, so a template the
 # user rewrites must not be able to break reading the answer. It says nothing
 # about how to write — that is entirely `Config.suggestion_prompt`'s job.
-_FORMAT = ('Responde únicamente con un objeto JSON con dos claves: "titulo" '
-           '(el titular de la reseña) y "texto" (el cuerpo). Sin explicaciones '
+_FORMAT = ('Responde únicamente con un objeto JSON con dos claves: "title" '
+           '(el titular de la reseña) y "text" (el cuerpo). Sin explicaciones '
            'ni texto fuera del objeto.')
 
 
@@ -86,15 +86,18 @@ def _extra_headers():
     return headers
 
 
-def _examples_block(limit):
+def _examples_block():
     """The corpus, rendered for the template's `{ejemplos}` marker.
 
-    Formatting only — every word of instruction around it comes from the
-    template. Empty string when there is nothing to show, so a fresh install
-    reads as "no examples" rather than as a stray heading.
+    **All of it, every time.** There is no cap and no selection: the table is
+    hand-curated and stays around a dozen rows, so "all of them" is both the
+    simplest rule and the right one (see `ReferenceReview`). Formatting only —
+    every word of instruction around it comes from the template. Empty string
+    when the table is empty, so a fresh install reads as "no examples" rather
+    than as a stray heading.
     """
     blocks = []
-    for example in ReferenceReview.examples(limit):
+    for example in ReferenceReview.objects.all():
         blocks.append(f"[{example.rating}/5] {example.title}\n{example.text}")
     return "\n\n".join(blocks)
 
@@ -112,7 +115,7 @@ def _prompt(review, config):
         ("{producto}", review.product_title or ""),
         ("{estrellas}", f"{stars}/5"),
         ("{notas}", review.notes or ""),
-        ("{ejemplos}", _examples_block(config.suggestion_examples)),
+        ("{ejemplos}", _examples_block()),
     ):
         filled = filled.replace(marker, value)
     return filled
@@ -168,9 +171,9 @@ def _parse(data):
         # `raw_decode` rather than `loads`: it reads the first complete object
         # and ignores whatever follows, so a stray closing line after the JSON
         # costs nothing.
-        proposal, _ = json.JSONDecoder().raw_decode('{"titulo":' + raw)
-        title = str(proposal["titulo"]).strip()
-        text = str(proposal["texto"]).strip()
+        proposal, _ = json.JSONDecoder().raw_decode('{"title":' + raw)
+        title = str(proposal["title"]).strip()
+        text = str(proposal["text"]).strip()
     except (KeyError, IndexError, TypeError, ValueError) as exc:
         logger.warning("Propuesta ilegible: %s", type(exc).__name__)
         raise SuggestionUnavailable(
@@ -219,7 +222,7 @@ def suggest_draft(review):
             # The answer is also *started* for it, so it can only carry on
             # from inside the object — belt and braces around the one thing
             # that has to hold for the reply to be readable at all.
-            {"role": "assistant", "content": '{"titulo":'},
+            {"role": "assistant", "content": '{"title":'},
         ],
     })
     return _parse(data)
