@@ -151,6 +151,26 @@ class ReviewsListViewTests(TestCase):
         self.assertIn(review, response.context["pendientes"])
         self.assertContains(response, "Entregado el")
 
+    def test_non_vine_review_is_hidden_until_received_and_needs_toggle(self):
+        pkg = _package(ordered_on=self._in_current(), state=Package.State.IN_TRANSIT,
+                       is_vine=False, description="Compra normal")
+        review = Review.objects.create(package=pkg, product_title=pkg.description,
+                                       status=Review.Status.PENDING)
+
+        response = self._get()
+        self.assertNotIn(review, response.context["pendientes"])
+        response = self._get(non_vine="1")
+        self.assertNotIn(review, response.context["pendientes"])
+
+        pkg.state = Package.State.DELIVERED
+        pkg.actual_arrival = self.today
+        pkg.save()
+
+        response = self._get(non_vine="1")
+        self.assertIn(review, response.context["pendientes"])
+        response = self._get()
+        self.assertNotIn(review, response.context["pendientes"])
+
     def test_the_badge_never_counts_a_package_he_does_not_have(self):
         # A due_on typed into the admin on an unreceived row would otherwise
         # nag from the top bar with nothing on the list to act on.

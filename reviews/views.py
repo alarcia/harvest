@@ -114,10 +114,10 @@ def reviews_list(request):
     # off this list entirely; the review-published email closes it into
     # "Reseñas escritas" on its own whenever it arrives.
     #
-    # And a review is only owed once the product is in his hands: `received()`
-    # keeps out everything still travelling or still waiting on a counter,
-    # including the rows ingestion created too early before 2026-07-30 (see
-    # the method — they come back on their own, dated, once picked up).
+    # The Review row exists from the order onward, but the chore is only shown
+    # once the product is in his hands: `received()` keeps out everything
+    # still travelling or still waiting on a counter. This is state-based, so
+    # a manual state change is reflected without needing another email.
     open_reviews = base.filter(status__in=Review.EDITABLE,
                                 package__ordered_on__isnull=False).received()
     open_reviews = list(

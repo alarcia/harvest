@@ -313,35 +313,37 @@ def _apply_cost(pkg, parsed, *, authoritative):
                        and _could_be_vine(parsed))
 
 
-def _sync_review_for_vine(pkg):
-    """Keep a package's owed review in lockstep with its Vine flag, right
-    after `_apply_cost` decides it or when state changes to picked up/delivered.
-    Vine confirmed AND package received (PICKED_UP or DELIVERED) ⇒ a pending
-    Review exists (created here on first sighting, product title/ASIN copied,
-    due_on set); Vine *refuted* by the Enviado ⇒ drop the auto-created Review,
-    but only if it's still exactly as ingestion left it — untouched by a human
-    (via admin, until R3's editor exists). Idempotent: called on every lifecycle
-    event for the package, it's a no-op once the Review already matches."""
+def _sync_review_for_package(pkg):
+    """Keep an Amazon package's Review row in lockstep with its lifecycle.
+
+    Every Amazon order is reviewable, whether Vine or not, so the row is
+    created as soon as the order enters the database.  Visibility in the
+    reviews page is a separate concern: ``ReviewQuerySet.received()`` keeps
+    it out of the backlog until the package is picked up or delivered.
+
+    A package without an order id is still allowed here for legacy/manual
+    Amazon-like packages used by the calendar; the one package type excluded
+    is Pepe y Dalda's own notice, which has no Amazon order behind it. The
+    helper is idempotent and is called both after email events and after the
+    manual pickup confirmation.
+    """
     existing = getattr(pkg, "review", None)
-    if pkg.is_vine:
-        if pkg.is_received and existing is None:
-            received_on = pkg.received_on
-            due_on = (received_on + timedelta(days=30)) if received_on else None
-            Review.objects.create(
-                package=pkg,
-                product_title=pkg.description or f"Paquete #{pkg.pk}",
-                asin=pkg.asin,
-                due_on=due_on,
-            )
-            return "reseña pendiente creada"
-        return ""
-    untouched = (existing is not None and existing.status == Review.Status.PENDING
-                 and not existing.title and not existing.text
-                 and not existing.suggestion and not existing.suggestion_title
-                 and not existing.notes and existing.rating is None)
-    if untouched:
-        existing.delete()
-        return "reseña pendiente descartada (ya no es Vine)"
+    is_shop_notice = (pkg.pickup_point.kind == PickupPoint.Kind.PEPE_Y_DALDA
+                      and not pkg.order_id)
+    if not is_shop_notice and existing is None:
+        received_on = pkg.received_on
+        due_on = (received_on + timedelta(days=30)) if received_on else None
+        Review.objects.create(
+            package=pkg,
+            product_title=pkg.description or f"Paquete #{pkg.pk}",
+            asin=pkg.asin,
+            due_on=due_on,
+        )
+        return "reseña pendiente creada"
+    if (existing is not None and existing.status == Review.Status.PENDING
+            and existing.due_on is None and pkg.received_on):
+        existing.due_on = pkg.received_on + timedelta(days=30)
+        existing.save(update_fields=["due_on", "updated_at"])
     return ""
 
 
@@ -353,6 +355,11 @@ def set_review_due(pkg, picked_up_on):
     Public because the manual "ya lo he recogido" confirmation (views.py)
     must start the same clock: a pickup is a pickup, whether an email or the
     user reported it."""
+    # An Amazon "Entregado" addressed to Pepe y Dalda becomes
+    # ``awaiting_pickup``: it has reached the counter, not the user.  The
+    # review clock must not start until the manual pickup confirmation.
+    if not pkg.is_received:
+        return
     review = getattr(pkg, "review", None)
     if review is not None and review.status == Review.Status.PENDING and not review.due_on:
         review.due_on = picked_up_on + timedelta(days=30)
@@ -531,7 +538,7 @@ def _apply(parsed):
                 notes.append(f"Recargo UE de {parsed.total}€ en el envío: sigue siendo Vine")
             elif was_vine:
                 notes.append(f"Coste real {parsed.total}€ en el envío: desmarcado como Vine")
-        review_note = _sync_review_for_vine(pkg)
+        review_note = _sync_review_for_package(pkg)
         if review_note:
             notes.append(review_note)
         return pkg, " · ".join(notes)
@@ -658,7 +665,7 @@ def _apply(parsed):
             )
             _fill(pkg, parsed)
             pkg.save()
-            _sync_review_for_vine(pkg)
+            _sync_review_for_package(pkg)
             set_review_due(pkg, picked_day)
             return pkg, ""
         for pkg in targets:
@@ -666,7 +673,7 @@ def _apply(parsed):
             pkg.picked_up_on = picked_day
             _fill(pkg, parsed)
             pkg.save()
-            _sync_review_for_vine(pkg)
+            _sync_review_for_package(pkg)
             set_review_due(pkg, picked_day)
         extra = len(targets) - len(matched_pks)
         note = "" if extra <= 0 else f"Recogida en bloque: +{extra} paquete(s) del mismo punto"
@@ -712,7 +719,7 @@ def _apply(parsed):
             # package is actually in hand), which is the point: the manual
             # confirmation starts that clock instead, same as it does for a
             # carrier pickup.
-            _sync_review_for_vine(pkg)
+            _sync_review_for_package(pkg)
             set_review_due(pkg, delivered_day)
         notes = []
         if at_shop:
@@ -860,7 +867,7 @@ def reprocess_failures():
 
 def backfill_reviews():
     """One-off: bring `reviews.Review` up to date with everything that
-    predates these hooks (2026-07-23) — real Vine packages and successfully
+    predates these hooks (2026-07-23) — real packages and successfully
     processed `review_published` RawEmails with nothing to show for them,
     since the old handler for that kind was a no-op. `reprocess_failures()`
     never reaches these: they have no `parse_error`, they parsed fine, they
@@ -868,9 +875,10 @@ def backfill_reviews():
     once if new Vine packages or review emails show up before the next
     normal ingest sweep reaches them on its own:
 
-    1. Every already-Vine package with no Review yet gets one (mirroring
-       `_sync_review_for_vine`), `due_on` backfilled too if it's already
-       past pickup (`set_review_due`'s rule, applied retroactively).
+    1. Every already-Vine package with no Review yet gets one (the historical
+       backfill remains intentionally limited to Vine packages), `due_on`
+       backfilled too if it's already past pickup (`set_review_due`'s rule,
+       applied retroactively).
     2. Every stored `review_published` RawEmail that parsed without error
        gets replayed through `_apply` — `_apply_review_published`'s
        `review_id` guard keeps a second run from ever duplicating one.

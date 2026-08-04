@@ -24,7 +24,7 @@ from reviews.models import Review
 from .ingest import (
     MANUAL_SCAN_TIMEOUT,
     Outcome,
-    _sync_review_for_vine,
+    _sync_review_for_package,
     backfill_reviews,
     process_message,
     reprocess_failures,
@@ -1015,8 +1015,8 @@ class IngestTests(TestCase):
         # it carries no total to work the flag out from.
         self.assertTrue(pkg.is_vine)
         self.assertEqual(pkg.cost, 0)
-        # …but the review is still owed only once it's actually received.
-        self.assertEqual(Review.objects.count(), 0)
+        # The row exists immediately, but the page keeps it hidden while in transit.
+        self.assertEqual(Review.objects.count(), 1)
         self.assertIn("Vine en versión preliminar", record.note)
 
     def test_estimate_update_refreshes_a_known_order(self):
@@ -1370,7 +1370,7 @@ class IngestTests(TestCase):
         self.assertTrue(pkg.is_vine)
         self.assertEqual(pkg.cost, Decimal("3.63"))  # what was really charged
         self.assertIn("Recargo UE", record.note)
-        self.assertEqual(Review.objects.filter(package=pkg).count(), 0)  # in transit, review created on pickup
+        self.assertEqual(Review.objects.filter(package=pkg).count(), 1)  # created with Pedido
 
     def test_eu_import_surcharge_amount_comes_from_config(self):
         # The figure is legislation: it changes, so it lives in the database.
@@ -1561,36 +1561,35 @@ class IngestTests(TestCase):
 
     # ---- R1: reviews follow the packages that owe them ----
 
-    def test_vine_pedido_does_not_create_pending_review_until_pickup(self):
+    def test_pedido_creates_review_but_due_date_waits_until_pickup(self):
         process_message(fixture("016-fwd-pedido-intex-64761-colchon.eml"))
         pkg = Package.objects.get()
         self.assertTrue(pkg.is_vine)
-        self.assertEqual(Review.objects.count(), 0)  # in transit, no review yet
+        review = Review.objects.get(package=pkg)
+        self.assertEqual(review.status, Review.Status.PENDING)
+        self.assertIsNone(review.due_on)
 
-        # Mark picked up -> review is created now
+        # Mark picked up -> the existing row becomes dated now.
         pkg.state = Package.State.PICKED_UP
         pkg.picked_up_on = date(2026, 7, 10)
         pkg.save()
-        _sync_review_for_vine(pkg)
+        _sync_review_for_package(pkg)
 
-        review = Review.objects.get()
+        review.refresh_from_db()
         self.assertEqual(review.package_id, pkg.pk)
         self.assertEqual(review.status, Review.Status.PENDING)
         self.assertEqual(review.asin, pkg.asin)
         self.assertEqual(review.product_title, pkg.description)
         self.assertEqual(review.due_on, date(2026, 8, 9))
 
-    def test_vine_refuted_deletes_untouched_pending_review(self):
+    def test_vine_refuted_keeps_the_review_as_a_non_vine_order(self):
         process_message(fixture("016-fwd-pedido-intex-64761-colchon.eml"))
         pkg = Package.objects.get()
-        pkg.state = Package.State.PICKED_UP
-        pkg.picked_up_on = date(2026, 7, 10)
-        pkg.save()
-        _sync_review_for_vine(pkg)
         self.assertEqual(Review.objects.count(), 1)
 
         process_message(fixture("019-fwd-enviado-intex-64761-colchon.eml"))
-        self.assertEqual(Review.objects.count(), 0)  # discarded, never Vine after all
+        self.assertEqual(Review.objects.count(), 1)
+        self.assertEqual(Review.objects.get(package=pkg).status, Review.Status.PENDING)
 
     def test_vine_refuted_keeps_review_the_user_already_touched(self):
         process_message(fixture("016-fwd-pedido-intex-64761-colchon.eml"))
@@ -1598,7 +1597,7 @@ class IngestTests(TestCase):
         pkg.state = Package.State.PICKED_UP
         pkg.picked_up_on = date(2026, 7, 10)
         pkg.save()
-        _sync_review_for_vine(pkg)
+        _sync_review_for_package(pkg)
         review = Review.objects.get()
         review.notes = "Ya lo estoy probando"
         review.save()
@@ -1609,16 +1608,37 @@ class IngestTests(TestCase):
         pkg.refresh_from_db()
         self.assertFalse(pkg.is_vine)
 
+    def test_non_vine_pedido_creates_review_before_receipt(self):
+        process_message(
+            fixture("180-fwd-pedido-amazon-basics-almohadillas-y-1-productos-mas.eml")
+        )
+        pkg = Package.objects.get()
+        self.assertFalse(pkg.is_vine)
+        review = Review.objects.get(package=pkg)
+        self.assertEqual(review.status, Review.Status.PENDING)
+        self.assertIsNone(review.due_on)
+        self.assertFalse(Review.objects.received().filter(pk=review.pk).exists())
+
+        pkg.state = Package.State.PICKED_UP
+        pkg.picked_up_on = date(2026, 8, 3)
+        pkg.save()
+        _sync_review_for_package(pkg)
+
+        review.refresh_from_db()
+        self.assertTrue(Review.objects.received().filter(pk=review.pk).exists())
+        self.assertEqual(review.due_on, date(2026, 9, 2))
+
     def test_genuine_vine_review_not_duplicated_across_lifecycle(self):
         process_message(fixture("006-fwd-pedido-cargador-inalambrico.eml"))
+        self.assertEqual(Review.objects.count(), 1)  # created with the order
         process_message(fixture("007-fwd-enviado-cargador-inalambrico.eml"))
-        self.assertEqual(Review.objects.count(), 0)  # still in transit
+        self.assertEqual(Review.objects.count(), 1)  # still in transit, hidden
 
         process_message(fixture("008-fwd-paquete-listo-para-recogida-recoger-en-amazon-counter-le.eml"))
-        self.assertEqual(Review.objects.count(), 0)  # awaiting pickup
+        self.assertEqual(Review.objects.count(), 1)  # awaiting pickup, hidden
 
         process_message(fixture("009-fwd-se-ha-recogido-cargador-inalambrico-magnetico-25w-con-us.eml"))
-        self.assertEqual(Review.objects.count(), 1)  # created on pickup!
+        self.assertEqual(Review.objects.count(), 1)  # same row, now visible
 
     def test_pickup_sets_review_due_on_30_days_out(self):
         for name in (
@@ -1652,7 +1672,7 @@ class IngestTests(TestCase):
         pkg.state = Package.State.PICKED_UP
         pkg.picked_up_on = date(2026, 7, 8)
         pkg.save()
-        _sync_review_for_vine(pkg)
+        _sync_review_for_package(pkg)
         review = Review.objects.get()
         self.assertEqual(review.status, Review.Status.PENDING)
 
@@ -1738,11 +1758,11 @@ class IngestTests(TestCase):
         msg["Message-ID"] = "<delivered-home@example.com>"
         msg.set_content(f"Entregado hoy\nASIN: B0HOMEVINE\n{point.name}")
         
-        # Or test via model transition + _sync_review_for_vine directly
+        # Or test via model transition + _sync_review_for_package directly
         pkg.state = Package.State.DELIVERED
         pkg.actual_arrival = date(2026, 7, 15)
         pkg.save()
-        _sync_review_for_vine(pkg)
+        _sync_review_for_package(pkg)
 
         review = Review.objects.get(package=pkg)
         self.assertEqual(review.status, Review.Status.PENDING)
@@ -1909,12 +1929,12 @@ class AmazonToPepeYDaldaTests(TestCase):
         )
 
     def test_the_vine_review_waits_for_the_actual_pickup(self):
-        # Delivery to the shop is not receipt: the product is still on a
-        # counter, so nothing can be reviewed yet. The manual confirmation
-        # starts the clock, exactly as a carrier pickup does.
+        # Delivery to the shop is not receipt: the row exists, but the reviews
+        # page keeps it hidden while the product is still on the counter.
         process_message(_amazon_email(self.ORDERED, _PEPE_DESTINATION))
         process_message(self._delivered())
-        self.assertEqual(Review.objects.count(), 0)
+        review = Review.objects.get()
+        self.assertFalse(Review.objects.received().filter(pk=review.pk).exists())
 
         pkg = Package.objects.get()
         today = timezone.localdate()

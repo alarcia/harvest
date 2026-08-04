@@ -150,14 +150,12 @@ class ReviewQuerySet(models.QuerySet):
         doesn't even exist yet, so the row would sit in the backlog dateless
         and impossible to close.
 
-        Ingestion only creates a review this late since 2026-07-30, but the
-        rows it created *before* that are still in the database: `pending`,
-        against packages that hadn't arrived. The rule belongs here rather
-        than in a one-off cleanup — it fixes those without touching them (each
-        reappears, dated, the day its package is finally received) and it also
-        covers the case that survives the creation guard: a package regressing
-        out of `picked_up`, when an "Entregado" is forwarded after a bulk
-        pickup sweep had already swept it.
+        Review rows are created when an Amazon order enters the database, but
+        older rows may have been created before that rule existed, and some
+        packages may have regressed out of `picked_up` when a late
+        "Entregado" was forwarded after a bulk pickup sweep. Filtering by the
+        current package state belongs here rather than in a cleanup: the same
+        row reappears, dated, as soon as the package is received.
 
         A package-less row never matches, which is right: those are the
         historical import and the ones the "Gracias por tu reseña" email
