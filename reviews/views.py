@@ -1,7 +1,7 @@
 from datetime import date
 from urllib.parse import urlencode
 
-from django.http import Http404
+from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -326,7 +326,15 @@ def review_approve(request, pk):
         review.status = Review.Status.APPROVED
         review.approved_on = timezone.localdate()
         review.save(update_fields=["status", "approved_on", "updated_at"])
-        response = _review_card(request, review)
+        # The review is done — close every modal instead of landing back on
+        # the card.  The inline script triggers the same closing animation
+        # the × button uses; the empty swap that follows clears the slot.
+        response = HttpResponse(
+            '<script>'
+            'const b=document.querySelector(".modal-slot .modal-back");'
+            'if(b){closeModal(b)}'
+            '</script>'
+        )
         response["HX-Trigger"] = "package-updated"
         return response
 

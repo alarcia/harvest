@@ -538,6 +538,9 @@ class ReviewApproveTests(TestCase):
         self.assertEqual(response["HX-Trigger"], "package-updated")
         # The text is untouched — approving says where it is, not what it says.
         self.assertEqual(self.review.text, "El cuerpo.")
+        # The modal closes instead of showing the card again.
+        self.assertIn(b"closeModal", response.content)
+        self.assertNotIn(b"modal-card", response.content)
 
     def test_an_approved_review_leaves_the_backlog_for_the_written_ones(self):
         self.client.post(self.url)
