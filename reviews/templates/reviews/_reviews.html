@@ -464,6 +464,9 @@ section in place, no URL change.{% endcomment %}
         grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));
         gap: .75rem;
       }
+      /* Review modals have room to breathe on desktop; mobile keeps the
+         compact card defined in the shared app shell. */
+      .modal-card, .modal-card.modal-wide { max-width: 60vw; }
     }
   </style>
   <div class="rev-toolbar">

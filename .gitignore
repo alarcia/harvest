@@ -4,6 +4,7 @@
 # consumption (personal workflow notes, decision history).
 ROADMAP.md
 CLAUDE.md
+/init
 
 # Python
 __pycache__/
