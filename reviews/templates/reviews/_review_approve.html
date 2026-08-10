@@ -12,7 +12,7 @@ review into the written ones and nothing in the UI brings it back.{% endcomment 
             onclick="closeModal(this)">×</button>
     <div class="modal-head">
       {% if review.package.image_url %}
-        <img class="modal-thumb" src="{{ review.package.image_url }}" alt="">
+        <img class="modal-thumb" src="{{ review.package.image_url }}" alt="" onclick="this.classList.toggle('expanded')">
       {% endif %}
       <h2>¿Ya la has publicado?</h2>
     </div>

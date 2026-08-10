@@ -16,7 +16,7 @@ twenty minutes of writing, and on a phone the backdrop is most of the screen.
             onclick="closeModal(this)">×</button>
     <div class="modal-head">
       {% if review.package.image_url %}
-        <img class="modal-thumb" src="{{ review.package.image_url }}" alt="">
+        <img class="modal-thumb" src="{{ review.package.image_url }}" alt="" onclick="this.classList.toggle('expanded')">
       {% endif %}
       <h2>{{ review.product_title|default:"Producto desconocido" }}</h2>
     </div>
@@ -101,12 +101,30 @@ twenty minutes of writing, and on a phone the backdrop is most of the screen.
                 placeholder="Qué tal ha ido, qué destacarías, qué no acaba de convencerte…"
                 oninput="this.nextElementSibling.textContent = this.value.length + ' caracteres'">{{ text }}</textarea>
       <p class="rev-charcount">{{ text|length }} caracteres</p>
-      {% if review.asin %}
-        <a class="rev-amazon-link"
-           href="https://www.amazon.es/review/create-review?encoding=UTF&channel=vine-portal&asin={{ review.asin }}"
-           target="_blank" rel="noopener">
-          <span class="rev-ext-icon">↗</span> Escribir reseña en Amazon
-        </a>
+      {% if review.asin or review.package.order_id %}
+        <div class="rev-amazon-links">
+          {% if review.asin %}
+            <a class="rev-amazon-link"
+               href="https://www.amazon.es/review/create-review?encoding=UTF&channel=vine-portal&asin={{ review.asin }}"
+               target="_blank" rel="noopener">
+              <span class="rev-ext-icon">↗</span> Escribir reseña en Amazon
+            </a>
+          {% endif %}
+          {% if review.package.order_id %}
+            <a class="rev-amazon-link"
+               href="https://www.amazon.es/gp/your-account/order-details?orderID={{ review.package.order_id }}"
+               target="_blank" rel="noopener">
+              <span class="rev-ext-icon">↗</span> Ver pedido en Amazon
+            </a>
+          {% endif %}
+          {% if review.asin %}
+            <a class="rev-amazon-link"
+               href="https://www.amazon.es/dp/{{ review.asin }}"
+               target="_blank" rel="noopener">
+              <span class="rev-ext-icon">↗</span> Ver producto en Amazon
+            </a>
+          {% endif %}
+        </div>
       {% endif %}
 
       {% if error %}<p class="confirm-error">{{ error }}</p>{% endif %}

@@ -20,7 +20,7 @@ asked for. Backdrop-close is off, same as the editor: typed content.{% endcommen
             onclick="closeModal(this)">×</button>
     <div class="modal-head">
       {% if review.package.image_url %}
-        <img class="modal-thumb" src="{{ review.package.image_url }}" alt="">
+        <img class="modal-thumb" src="{{ review.package.image_url }}" alt="" onclick="this.classList.toggle('expanded')">
       {% endif %}
       <h2>{{ review.product_title|default:"Producto desconocido" }}</h2>
     </div>

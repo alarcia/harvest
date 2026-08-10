@@ -8,7 +8,7 @@ readable without opening the editor again.{% endcomment %}
     <button type="button" class="modal-x" aria-label="Cerrar" onclick="closeModal(this)">×</button>
     <div class="modal-head">
       {% if review.package.image_url %}
-        <img class="modal-thumb" src="{{ review.package.image_url }}" alt="">
+        <img class="modal-thumb" src="{{ review.package.image_url }}" alt="" onclick="this.classList.toggle('expanded')">
       {% endif %}
       <h2>{{ review.product_title|default:"Producto desconocido" }}</h2>
     </div>
@@ -45,12 +45,37 @@ readable without opening the editor again.{% endcomment %}
       list can't hold the whole sentence.{% endcomment %}
       <p class="review-origin">Borrador: todavía sin publicar en Amazon.</p>
     {% endif %}
-    {% comment %}Everything that can still be done to this review, in the order
-    the work happens: write it, then declare it published. Notes and the
-    suggested draft are *inside* the editor, not beside it — they're help with
-    the writing, not a separate errand. Nothing here for a review already on
-    Amazon.{% endcomment %}
+    {% comment %}Quick links to the relevant Amazon pages: the review form,
+    the order tracker, and the product page. Shown on any editable review
+    (pending or draft) — once it's on Amazon there's nothing to link to.
+    Each one guards its own data: no ASIN ⇒ no review/product link, no
+    order_id ⇒ no tracking link.{% endcomment %}
     {% if can_edit %}
+      {% if review.asin or review.package.order_id %}
+        <div class="rev-amazon-links">
+          {% if review.asin %}
+            <a class="rev-amazon-link"
+               href="https://www.amazon.es/review/create-review?encoding=UTF&channel=vine-portal&asin={{ review.asin }}"
+               target="_blank" rel="noopener">
+              <span class="rev-ext-icon">↗</span> Escribir reseña en Amazon
+            </a>
+          {% endif %}
+          {% if review.package.order_id %}
+            <a class="rev-amazon-link"
+               href="https://www.amazon.es/gp/your-account/order-details?orderID={{ review.package.order_id }}"
+               target="_blank" rel="noopener">
+              <span class="rev-ext-icon">↗</span> Ver pedido en Amazon
+            </a>
+          {% endif %}
+          {% if review.asin %}
+            <a class="rev-amazon-link"
+               href="https://www.amazon.es/dp/{{ review.asin }}"
+               target="_blank" rel="noopener">
+              <span class="rev-ext-icon">↗</span> Ver producto en Amazon
+            </a>
+          {% endif %}
+        </div>
+      {% endif %}
       <button type="button" class="modal-action write"
               hx-get="{% url 'review_edit' review.pk %}"
               hx-target="#modal" hx-swap="innerHTML">

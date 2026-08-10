@@ -408,6 +408,15 @@ section in place, no URL change.{% endcomment %}
     .rev-amazon-link:hover { text-decoration: underline; }
     .rev-amazon-link .rev-ext-icon { font-size: .72rem; }
 
+    /* Container for the group of Amazon links (review, order, product). */
+    .rev-amazon-links {
+      display: flex;
+      flex-direction: column;
+      gap: .25rem;
+      margin-top: .75rem;
+    }
+    .rev-amazon-links .rev-amazon-link { margin-top: 0; }
+
     /* Stars: radios hidden behind their labels, laid out back to front so a
        plain `input:checked ~ label` fills the chosen star and every lower
        one. Reversed in the DOM (5→1) and re-reversed here, so what the user
