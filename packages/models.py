@@ -432,7 +432,7 @@ class Package(models.Model):
             return ""
         if self.shipment_id:
             return (
-                "https://www.amazon.es/progress-tracker/package"
+                "https://www.amazon.es/gp/your-account/ship-track"
                 f"?_encoding=UTF8&orderId={self.order_id}"
                 f"&packageIndex=0&shipmentId={self.shipment_id}"
             )

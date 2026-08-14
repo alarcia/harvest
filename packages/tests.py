@@ -874,7 +874,7 @@ class IngestTests(TestCase):
         # is the only way left to check status, so it's always offered here.
         self.assertEqual(
             pkg.amazon_tracking_url,
-            "https://www.amazon.es/progress-tracker/package"
+            "https://www.amazon.es/gp/your-account/ship-track"
             "?_encoding=UTF8&orderId=404-2171566-7826720"
             "&packageIndex=0&shipmentId=TCl8Nkz09",
         )
@@ -904,7 +904,7 @@ class IngestTests(TestCase):
         )
         self.assertEqual(
             pkg.amazon_tracking_url,
-            "https://www.amazon.es/progress-tracker/package"
+            "https://www.amazon.es/gp/your-account/ship-track"
             "?_encoding=UTF8&orderId=404-1111111-1111111"
             "&packageIndex=0&shipmentId=AAAA111111",
         )
@@ -1995,7 +1995,7 @@ class AmazonToPepeYDaldaTests(TestCase):
 
         card = self.client.get(reverse("package_detail", args=[pkg.pk])).content
         self.assertIn(reverse("confirm_pickup", args=[pkg.pk]).encode(), card)
-        self.assertIn("Seguimiento en Amazon".encode(), card)
+        self.assertIn("seguimiento en Amazon".encode(), card)
         self.assertIn(b"Pepe y Dalda", card)
         self.assertNotIn(b"<b>Tipo</b>", card)
 

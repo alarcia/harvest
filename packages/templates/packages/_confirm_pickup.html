@@ -15,7 +15,7 @@ for, and bounded by the input's own min/max as well as server-side.
             onclick="closeModal(this)">×</button>
     <div class="modal-head">
       {% if package.image_url %}
-        <img class="modal-thumb" src="{{ package.image_url }}" alt="">
+        <img class="modal-thumb" src="{{ package.image_url }}" alt="" onclick="this.classList.toggle('expanded')">
       {% endif %}
       <h2>¿Ya lo has recogido?</h2>
     </div>

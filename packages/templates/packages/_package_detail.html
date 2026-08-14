@@ -10,7 +10,7 @@
             onclick="closeModal(this)">×</button>
     <div class="modal-head">
       {% if package.image_url %}
-        <img class="modal-thumb" src="{{ package.image_url }}" alt="">
+        <img class="modal-thumb" src="{{ package.image_url }}" alt="" onclick="this.classList.toggle('expanded')">
       {% endif %}
       <h2>{{ label }}</h2>
     </div>
@@ -70,6 +70,16 @@
     {% if package.amazon_tracking_url %}
       <a class="modal-barcode" href="{{ package.amazon_tracking_url }}" target="_blank" rel="noopener">
         Ver seguimiento en Amazon ↗
+      </a>
+    {% endif %}
+    {% if package.order_id %}
+      <a class="modal-barcode" href="https://www.amazon.es/gp/your-account/order-details?orderID={{ package.order_id }}" target="_blank" rel="noopener">
+        Ver pedido en Amazon ↗
+      </a>
+    {% endif %}
+    {% if package.asin %}
+      <a class="modal-barcode" href="https://www.amazon.es/dp/{{ package.asin }}" target="_blank" rel="noopener">
+        Ver producto en Amazon ↗
       </a>
     {% endif %}
     {% if package.carrier_tracking_url %}
