@@ -9,6 +9,16 @@ back.{% endcomment %}
     <div class="modal-head">
       <h2 class="day-title">{{ day|date:"l j"|capfirst }} de {{ day|date:"F" }}</h2>
     </div>
+    {% if pickup_summary %}
+      <div class="day-pickup-summary">
+        <span class="summary-label">Por recoger:</span>
+        {% for item in pickup_summary %}
+          <span class="summary-item src-{{ item.source }}">
+            <b>{{ item.count }}</b> {{ item.name }}
+          </span>{% if not forloop.last %}<span class="summary-sep">·</span>{% endif %}
+        {% endfor %}
+      </div>
+    {% endif %}
     <ul class="day-list">
       {% for c in chips %}
         <li style="--i:{{ forloop.counter0 }}">

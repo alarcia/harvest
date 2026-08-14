@@ -295,6 +295,37 @@ chip behind the open card stops lying.{% endcomment %}
     /* Day modal: one day's chips at reading size. :where() keeps this at
        .pkg specificity so the kind/source rules above still paint them. */
     .day-card h2 { font-size: 1.05rem; }
+    .day-pickup-summary {
+      margin: .4rem 0 .6rem;
+      padding: .45rem .65rem;
+      background: color-mix(in srgb, var(--fg) 4%, transparent);
+      border: 1px solid var(--border);
+      border-radius: .6rem;
+      font-size: .82rem;
+      line-height: 1.45;
+    }
+    .day-pickup-summary .summary-label {
+      font-weight: 700;
+      color: var(--muted);
+      margin-right: .25rem;
+    }
+    .day-pickup-summary .summary-item {
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .day-pickup-summary .summary-item.src-amazon { color: var(--amazon); }
+    .day-pickup-summary .summary-item.src-store { color: var(--store); }
+    .day-pickup-summary .summary-item.src-pepe { color: var(--pepe); }
+    .day-pickup-summary .summary-item b {
+      font-weight: 700;
+    }
+    .day-pickup-summary .summary-sep {
+      color: var(--muted);
+      opacity: .6;
+      font-size: .75rem;
+      margin: 0 .2rem;
+      user-select: none;
+    }
     .day-list {
       list-style: none;
       margin: .3rem 0 0;

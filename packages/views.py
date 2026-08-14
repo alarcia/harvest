@@ -372,6 +372,8 @@ def _chips(start, end, today):
             {"date": day, "kind": kind, "tag": STATE_TAGS[kind], "note": note,
              "label": label, "source": source, "detail_url": detail_url,
              "point_id": pkg.pickup_point_id,
+             "point_kind": pkg.pickup_point.kind,
+             "point_name": pkg.pickup_point.label,
              # Drawn on a day the shop is shut: earns a ⚠ on the chip itself,
              # since the grid gets read without opening anything. Only marks
              # a chip you'd act on — a pickup already made needs no warning.
@@ -435,6 +437,33 @@ def _day_chips(chips, day):
         todays = rest + collapsed
 
     return sorted(todays, key=lambda c: _URGENCY[c["kind"]])
+
+
+_AWAITING_PICKUP_KINDS = frozenset({"waiting", "deadline", "leaves", "action_needed"})
+
+
+def _day_pickup_summary(chips):
+    """Summarize points to visit for packages awaiting pickup on a day.
+
+    Returns a list of dicts: [{'name': 'Morera', 'count': 4, 'source': 'amazon'}, ...]
+    ordered by count descending, then point name.
+    Ignores home deliveries (no trip needed) and packages not awaiting pickup.
+    """
+    counts_by_point = {}
+    for c in chips:
+        if c.get("kind") in _AWAITING_PICKUP_KINDS and c.get("point_kind") != PickupPoint.Kind.HOME:
+            pid = c["point_id"]
+            if pid not in counts_by_point:
+                counts_by_point[pid] = {
+                    "name": c.get("point_name", ""),
+                    "count": 0,
+                    "source": c.get("source", "amazon"),
+                }
+            counts_by_point[pid]["count"] += 1
+
+    summary = list(counts_by_point.values())
+    summary.sort(key=lambda item: (-item["count"], item["name"]))
+    return summary
 
 
 def _monday(day):
@@ -548,9 +577,11 @@ def day_detail(request, day):
     if the_day is None:
         raise Http404("Bad date")
     today = timezone.localdate()
+    raw_chips = _chips(the_day, the_day, today)
     return render(request, "packages/_day_detail.html", {
         "day": the_day,
-        "chips": _day_chips(_chips(the_day, the_day, today), the_day),
+        "chips": _day_chips(raw_chips, the_day),
+        "pickup_summary": _day_pickup_summary(raw_chips),
     })
 
 

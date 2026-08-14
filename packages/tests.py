@@ -2372,13 +2372,25 @@ class CalendarViewTests(TestCase):
     """The calendar's rendering rules: the unknown-item placeholder and the one
     consolidated chip that stands in for a day's whole pickup haul."""
 
-    def _point(self, name, kind):
-        return PickupPoint.objects.create(name=name, kind=kind)
+    def _point(self, name, kind, display_name=""):
+        return PickupPoint.objects.create(name=name, kind=kind, display_name=display_name)
 
     def _picked(self, point, description, day):
         return Package.objects.create(
             pickup_point=point, state=Package.State.PICKED_UP,
             picked_up_on=day, description=description,
+        )
+
+    def _awaiting(self, point, description, deadline=None):
+        return Package.objects.create(
+            pickup_point=point, state=Package.State.AWAITING_PICKUP,
+            description=description, deadline=deadline,
+        )
+
+    def _delivered(self, point, description, day):
+        return Package.objects.create(
+            pickup_point=point, state=Package.State.DELIVERED,
+            actual_arrival=day, description=description,
         )
 
     def test_carrier_pickup_gets_the_action_needed_chip(self):
@@ -2961,6 +2973,37 @@ class CalendarViewTests(TestCase):
 
     def test_day_detail_rejects_a_bad_date(self):
         self.assertEqual(self.client.get("/day/not-a-date/").status_code, 404)
+
+    def test_day_detail_shows_pickup_summary(self):
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER,
+                              display_name="Les Mesures")
+        pepe = self._point("Pepe y Dalda", PickupPoint.Kind.PEPE_Y_DALDA)
+
+        # 2 packages awaiting pickup at Les Mesures, 1 at Pepe y Dalda
+        self._awaiting(counter, "Filtro de agua 1", today)
+        self._awaiting(counter, "Filtro de agua 2", today)
+        self._awaiting(pepe, "Libro de historietas", today)
+
+        html = self.client.get(reverse("day_detail", args=[today.isoformat()])).content.decode()
+        self.assertIn("Por recoger:", html)
+        self.assertIn("2</b> Les Mesures", html)
+        self.assertIn("1</b> Pepe y Dalda", html)
+
+    def test_day_detail_pickup_summary_ignores_home_and_picked(self):
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER,
+                              display_name="Les Mesures")
+        home_pt = self._point("Casa", PickupPoint.Kind.HOME)
+
+        # 1 picked up package at counter, 1 awaiting home delivery
+        self._picked(counter, "Paquete recogido", today)
+        self._delivered(home_pt, "Paquete a domicilio", today)
+
+        html = self.client.get(reverse("day_detail", args=[today.isoformat()])).content.decode()
+        self.assertNotIn("Por recoger:", html)
 
     def test_package_detail_from_day_offers_the_way_back(self):
         today = timezone.localdate()

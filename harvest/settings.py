@@ -52,6 +52,8 @@ if not SECRET_KEY:
     SECRET_KEY = 'django-insecure-ve-zktzror9t3utu8+)yakto*9r#paz*%-dw9u69w)3jhge9il'
 
 ALLOWED_HOSTS = [h for h in os.environ.get('DJANGO_ALLOWED_HOSTS', '').split(',') if h]
+if DEBUG and not ALLOWED_HOSTS:
+    ALLOWED_HOSTS = ['*']
 
 # The Cloudflare Tunnel terminates TLS and forwards plain HTTP, so Django needs
 # this header to know the original request was HTTPS (affects CSRF checks and
