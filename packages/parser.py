@@ -198,7 +198,9 @@ _KIND_PATTERNS = [
     # the body is the Pedido template with the headline swapped.
     (EmailKind.ESTIMATE_UPDATED,
      r"actualizaci[oó]n sobre la fecha estimada de entrega"
-     r"|actualizaci[oó]n de la estimaci[oó]n de entrega"),
+     r"|actualizaci[oó]n de la estimaci[oó]n de entrega"
+     r"|actualizaci[oó]n de entrega"
+     r"|tu paquete llega con retraso"),
     # Pepe y Dalda writes both of these by hand, so match either the subject
     # ("Recepción carta", "Recepción de paquete") or the body line ("Hemos
     # recibido 1 carta para ti"). The phrase alone doesn't prove it's *that*
@@ -270,16 +272,24 @@ _ASIN_ANY = re.compile(r"/dp/([A-Z0-9]{10})")
 _REVIEW_ID = re.compile(r"/review/(R[A-Z0-9]+)")
 _TOTAL = re.compile(r"Total\s+(\d+[.,]\d{2})\s*€")
 # "Llega el lunes", and the future tense the estimate-update template uses:
-# "Llegará el martes, 4 de agosto de 2026". "entre" is excluded so the window
+# "Llegará el martes, 4 de agosto de 2026", as well as delay notices:
+# "Se estima que llegará el 4 de septiembre". "entre" is excluded so the window
 # variant below keeps its own line rather than being read as one long day
 # phrase — dateparser would make nonsense of it.
-_ARRIVES = re.compile(r"^Llega(?:rá)? (?!entre\b)(.+)$")
+_ARRIVES = re.compile(
+    r"^(?:(?:se estima que )?llegar[aá]|llega) (?!entre\b)(.+)$",
+    re.IGNORECASE,
+)
 # A delivery-window variant of the arrival line: "Llegada entre el 24 de julio
-# y el 28 de julio". The start is the estimate proper (that's the day the
-# calendar marks); the end is kept alongside it so the card can word the window
-# honestly instead of pretending Amazon promised the first day. The later
-# Enviado email replaces both with a single firm day.
-_ARRIVES_RANGE = re.compile(r"^Llega(?:da|rá) entre el (.+?) y el (.+)$")
+# y el 28 de julio" or "Se estima que llegará entre el 24 y el 28 de julio".
+# The start is the estimate proper (that's the day the calendar marks); the
+# end is kept alongside it so the card can word the window honestly instead
+# of pretending Amazon promised the first day. The later Enviado email replaces
+# both with a single firm day.
+_ARRIVES_RANGE = re.compile(
+    r"^(?:(?:se estima que )?llegar[aá]|llega(?:da)?)\s+entre\s+el\s+(.+?)\s+y\s+el\s+(.+)$",
+    re.IGNORECASE,
+)
 _BEFORE = re.compile(r"antes del (.+)$")
 _PICKED = re.compile(r"^Recogido (.+)$")
 # Searched over the joined text: the value may sit in its own tag (own line).

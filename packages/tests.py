@@ -523,6 +523,23 @@ class ParseEmailTests(SimpleTestCase):
         self.assertTrue(parsed.item_title.startswith("Braun Mini Depiladora"))
         self.assertEqual(parsed.asin, "B0H1CWKZ8J")
 
+    def test_estimate_updated_delivery_delay(self):
+        # A delivery delay notification ("Actualización de entrega: “…”",
+        # "Tu paquete llega con retraso", "Se estima que llegará el 4 de septiembre")
+        # is another phrasing of ESTIMATE_UPDATED.
+        parsed = parse_email(
+            fixture("313-actualizacion-de-entrega-despertador-amanecer.eml")
+        )
+        self.assertEqual(parsed.kind, EmailKind.ESTIMATE_UPDATED)
+        self.assertEqual(parsed.order_id, "407-9708753-0364306")
+        self.assertEqual(parsed.shipment_id, "TGNKS0JPw")
+        self.assertEqual(parsed.sent_at.date(), date(2026, 8, 31))
+        self.assertEqual(parsed.estimated_arrival, date(2026, 9, 4))
+        self.assertIsNone(parsed.estimated_arrival_end)
+        self.assertEqual(parsed.pickup_location, "Charo - Torrevieja, Alicante")
+        self.assertTrue(parsed.item_title.startswith("Despertador Amanecer"))
+        self.assertEqual(parsed.asin, "B0H32DSDDK")
+
     def test_estimate_updated_without_the_item_fails_loudly(self):
         # This email creates the package outright, so a layout change that
         # hides the item block must reach the banner: the fallback description
@@ -1038,6 +1055,27 @@ class IngestTests(TestCase):
         pkg.refresh_from_db()
         self.assertEqual(pkg.estimated_arrival, date(2026, 8, 4))
         self.assertEqual(pkg.ordered_on, date(2026, 7, 25))  # the real one wins
+        self.assertEqual(pkg.state, Package.State.IN_TRANSIT)
+
+    def test_delivery_delay_updates_estimated_arrival(self):
+        # When a delivery delay notice arrives for an existing package in transit,
+        # its estimated_arrival is updated to the newly announced date.
+        point = PickupPoint.objects.create(
+            name="Charo - Torrevieja, Alicante", kind=PickupPoint.Kind.HOME,
+        )
+        pkg = Package.objects.create(
+            pickup_point=point, order_id="407-9708753-0364306",
+            shipment_id="TGNKS0JPw",
+            description="Despertador Amanecer", state=Package.State.IN_TRANSIT,
+            ordered_on=date(2026, 8, 20), estimated_arrival=date(2026, 8, 30),
+        )
+        process_message(
+            fixture("313-actualizacion-de-entrega-despertador-amanecer.eml")
+        )
+        self.assertEqual(Package.objects.count(), 1)
+        pkg.refresh_from_db()
+        self.assertEqual(pkg.estimated_arrival, date(2026, 9, 4))
+        self.assertEqual(pkg.ordered_on, date(2026, 8, 20))
         self.assertEqual(pkg.state, Package.State.IN_TRANSIT)
 
     def test_estimate_update_never_undoes_a_shipped_price(self):
@@ -3150,7 +3188,10 @@ class ManualPickupTests(TestCase):
         self.assertIn(b"Recogido", response.content)
         self.assertEqual(response["HX-Trigger"], "package-updated")
 
-        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+        html = self.client.get(
+            reverse("home") + f"?anchor={yesterday.isoformat()}",
+            HTTP_HX_REQUEST="true",
+        ).content
         self.assertIn(b'is-picked"', html)
         self.assertNotIn(b'is-action_needed"', html)
 
