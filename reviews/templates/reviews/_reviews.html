@@ -312,6 +312,124 @@ section in place, no URL change.{% endcomment %}
     }
     .rev-proposal .rev-headline { display: block; margin: .35rem 0 0; }
 
+    /* ---- segmented tabs for review modal (Reseña / Notas y sugerencia) ---- */
+    .rev-tabs {
+      display: flex;
+      align-items: stretch;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 3px;
+      margin: .75rem 0 .9rem;
+      gap: 3px;
+      box-sizing: border-box;
+    }
+    .rev-tab {
+      flex: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: .35rem;
+      width: auto !important;
+      margin: 0 !important;
+      padding: .35rem .6rem;
+      border-radius: 999px;
+      border: none;
+      background: none;
+      color: var(--muted);
+      font: inherit;
+      font-size: .8rem;
+      font-weight: 600;
+      line-height: 1.2;
+      cursor: pointer;
+      transition: color .15s ease, background-color .15s ease, box-shadow .15s ease;
+      white-space: nowrap;
+      -webkit-tap-highlight-color: transparent;
+      box-sizing: border-box;
+    }
+    .rev-tab:hover { color: var(--fg); }
+    .rev-tab.active {
+      background: var(--card);
+      color: var(--fg);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, .08);
+    }
+    @media (prefers-color-scheme: dark) {
+      .rev-tab.active {
+        box-shadow: 0 1px 4px rgba(0, 0, 0, .35);
+      }
+    }
+    .rev-tab-pane {
+      display: flex;
+      flex-direction: column;
+    }
+    .rev-tab-pane[hidden] {
+      display: none !important;
+    }
+    .rev-read-block {
+      margin-top: .4rem;
+    }
+    .rev-read-label-row {
+      display: inline-flex;
+      align-items: center;
+      gap: .55rem;
+      margin: .65rem 0 .25rem;
+    }
+    .rev-read-label-row .confirm-label {
+      margin: 0;
+      font-weight: 600;
+    }
+    .rev-read-title {
+      margin: .15rem 0 .4rem;
+      font-size: .92rem;
+      font-weight: 600;
+      line-height: 1.35;
+      color: var(--fg);
+    }
+    .rev-notes-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: .4rem;
+    }
+    .rev-save-notes {
+      width: auto !important;
+      margin: 0 !important;
+      padding: .25rem .55rem !important;
+      font-size: .74rem;
+      font-weight: 600;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--card);
+      cursor: pointer;
+      transition: color .2s ease, border-color .2s ease, background-color .2s ease;
+    }
+    .rev-save-notes:hover {
+      color: var(--fg);
+      border-color: var(--muted);
+    }
+    .rev-save-notes:active {
+      transform: scale(.97);
+    }
+    .rev-btn-incorporate {
+      background: var(--success) !important;
+      color: var(--card) !important;
+      border: none !important;
+      box-shadow: 0 2px 6px rgba(74, 124, 89, .25);
+    }
+    .rev-btn-incorporate:hover {
+      filter: brightness(1.05);
+    }
+    .rev-incorporated-note {
+      margin: .65rem 0 .4rem;
+      font-size: .8rem;
+      font-weight: 600;
+      color: var(--success);
+      display: inline-flex;
+      align-items: center;
+      gap: .3rem;
+    }
+
     /* ---- draft editor (modal, so styled outside .rev on purpose) ---- */
     /* Wider than a fact card and allowed to scroll: it holds ~1.000
        characters of writing, not five rows of dates. */

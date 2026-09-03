@@ -426,6 +426,17 @@ class ReviewDetailViewTests(TestCase):
         self.assertContains(response, "4★")
         self.assertContains(response, "Editar borrador")
 
+    def test_draft_card_provides_copy_buttons_for_title_and_text(self):
+        review = Review.objects.create(
+            product_title="Algo", status=Review.Status.DRAFT,
+            title="Mi titular", rating=4, text="Mi texto completo.",
+        )
+        response = self.client.get(reverse("review_detail", args=[review.pk]))
+        self.assertContains(response, 'title="Copiar título"')
+        self.assertContains(response, 'title="Copiar reseña"')
+        self.assertContains(response, 'id="raw-rev-title"')
+        self.assertContains(response, 'id="raw-rev-text"')
+
     def test_published_card_has_no_editor(self):
         review = Review.objects.create(product_title="Algo", status=Review.Status.PUBLISHED)
         response = self.client.get(reverse("review_detail", args=[review.pk]))
@@ -509,6 +520,11 @@ class ReviewEditorTests(TestCase):
         self.review.save()
         self.assertEqual(self.client.get(self.url).status_code, 404)
         self.assertEqual(self._post().status_code, 404)
+
+    def test_editor_does_not_contain_copy_buttons(self):
+        response = self.client.get(self.url)
+        self.assertNotContains(response, "Copiar título")
+        self.assertNotContains(response, "Copiar reseña")
 
 
 class ReviewApproveTests(TestCase):
@@ -596,10 +612,9 @@ class ReviewSuggestTests(TestCase):
         self.assertNotContains(response, 'for="rev-title"')
 
     def test_the_editor_is_reached_from_here_not_the_card(self):
-        # The panel lives inside the editor (user, 2026-08-01), so the card
-        # only ever offers the editor, and every exit here lands back in it.
+        # With the tabbed modal, the card offers "Notas y sugerencia" directly.
         card = self.client.get(reverse("review_detail", args=[self.review.pk]))
-        self.assertNotContains(card, "Notas y sugerencia")
+        self.assertContains(card, "Notas y sugerencia")
         editor = self.client.get(reverse("review_edit", args=[self.review.pk]))
         self.assertContains(editor, "Notas y sugerencia")
         self.assertContains(editor, self.url)
@@ -637,9 +652,9 @@ class ReviewSuggestTests(TestCase):
         # in the editor is still unsaved.
         self.assertEqual(self.review.status, Review.Status.PENDING)
         self.assertEqual(self.review.text, "")
-        # Back in the editor with the work still there.
-        self.assertContains(response, "Guardar borrador")
-        self.assertContains(response, "Titular a medias")
+        # With tabs, saving notes stays on the card's suggest tab.
+        self.assertContains(response, "Se enreda un poco con el uso")
+        self.assertContains(response, "Guardar notas")
 
     def test_suggesting_needs_the_stars_first(self):
         response = self.client.post(self.url, {
@@ -703,8 +718,8 @@ class ReviewSuggestTests(TestCase):
         self.assertIn("Incorporar al borrador", panel)
         incorporate = panel[panel.index('value="incorporate"'):]
         self.assertNotIn("spark", incorporate[:incorporate.index("</button>")])
-        # Exactly one marked action on the panel: asking for the proposal.
-        self.assertEqual(panel.count('class="spark"'), 1)
+        # Two sparks: one on the tab header and one on the proposal action button.
+        self.assertEqual(panel.count('class="spark"'), 2)
 
     def test_asking_for_a_proposal_cannot_be_double_clicked(self):
         # It's the one request that takes seconds *and* costs money, so it
@@ -724,6 +739,17 @@ class ReviewSuggestTests(TestCase):
         self.assertNotContains(blank, "Sustituirá")
         started = self._open(title="Lo mío", text="Mi texto")
         self.assertContains(started, "Sustituirá")
+
+    def test_panel_shows_incorporated_state_when_matching_draft(self):
+        self._with_proposal()
+        matching = self._open(
+            title=self.review.suggestion_title,
+            text=self.review.suggestion,
+        )
+        self.assertContains(matching, "Ya incorporada al borrador")
+        self.assertContains(matching, "Ver borrador")
+        self.assertNotContains(matching, 'value="incorporate"')
+        self.assertNotContains(matching, "Sustituirá")
 
     def test_panel_is_closed_once_the_review_is_on_amazon(self):
         self.review.status = Review.Status.PUBLISHED

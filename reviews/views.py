@@ -183,21 +183,48 @@ def reviews_list(request):
     return render(request, template, context)
 
 
-def _review_card(request, review):
-    """Renders the review card. Shared by the tapped row and by every action
-    that lands back on it after doing its bit — the same idiom the calendar's
-    manual pickup confirmation follows."""
+def _review_card(
+    request, review, active_tab="review", error=None, notes=None, rating=None,
+    draft_title=None, draft_text=None,
+):
+    """Renders the review card. When editable (pending or draft), it provides
+    both the Reseña reading view and the Notas y sugerencia panel behind
+    segmented tabs."""
     is_draft = review.status == Review.Status.DRAFT
+    can_edit = review.status in Review.EDITABLE
+    current_title = (draft_title if draft_title is not None else review.title).strip()
+    current_text = (draft_text if draft_text is not None else review.text).strip()
+    sug_title = review.suggestion_title.strip()
+    sug_text = review.suggestion.strip()
+    is_incorporated = bool(
+        sug_text
+        and current_title == sug_title
+        and current_text == sug_text
+    )
+    would_replace = bool(
+        not is_incorporated
+        and (current_title or current_text)
+    )
     return render(request, "reviews/_review_detail.html", {
         "review": review,
         "status_label": STATUS_LABELS.get(review.status, review.status),
         # Pending ⇒ nothing written yet, draft ⇒ rewrite what's there. Past
         # that the text is a record of what's on Amazon, not a working copy.
-        "can_edit": review.status in Review.EDITABLE,
+        "can_edit": can_edit,
         "has_draft": is_draft,
         # Only a draft can be closed by hand: there has to be something
         # written before "ya la he publicado" can mean anything.
         "can_approve": is_draft,
+        "active_tab": active_tab,
+        "stars": STAR_VALUES,
+        "rating": rating if rating is not None else review.rating,
+        "notes": notes if notes is not None else review.notes,
+        "draft_title": draft_title if draft_title is not None else review.title,
+        "draft_text": draft_text if draft_text is not None else review.text,
+        "suggestions_enabled": is_configured(),
+        "error": error,
+        "is_incorporated": is_incorporated,
+        "would_replace": would_replace,
     })
 
 
@@ -236,7 +263,8 @@ def review_detail(request, pk):
     review = get_object_or_404(
         Review.objects.select_related("package", "package__pickup_point"), pk=pk
     )
-    return _review_card(request, review)
+    tab = request.GET.get("tab", "review")
+    return _review_card(request, review, active_tab=tab)
 
 
 def review_edit(request, pk):
@@ -414,23 +442,15 @@ def review_suggest(request, pk):
     elif action == "incorporate" and review.suggestion:
         draft_title, draft_text = review.suggestion_title, review.suggestion
 
-    if action in ("back", "save", "incorporate"):
+    if action in ("back", "incorporate"):
         response = _editor(request, review, draft_title, rating, draft_text)
-        # `rating` may have moved, and it shows on the draft's row.
         response["HX-Trigger"] = "package-updated"
         return response
 
-    return render(request, "reviews/_review_suggest.html", {
-        "review": review,
-        "notes": notes,
-        "rating": rating,
-        "stars": STAR_VALUES,
-        "suggestions_enabled": is_configured(),
-        "error": error,
-        # Handed back out unchanged on every exit.
-        "draft_title": draft_title,
-        "draft_text": draft_text,
-        # Incorporating would overwrite something already written, so the
-        # panel says so before he presses it rather than after.
-        "would_replace": bool(draft_title or draft_text),
-    })
+    response = _review_card(
+        request, review, active_tab="suggest", error=error, notes=notes, rating=rating,
+        draft_title=draft_title, draft_text=draft_text,
+    )
+    if action in ("save", "suggest"):
+        response["HX-Trigger"] = "package-updated"
+    return response
