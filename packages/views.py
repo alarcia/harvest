@@ -429,6 +429,8 @@ def _day_chips(chips, day):
                     "label": f"{len(group)} productos",
                     "source": group[0]["source"],
                     "point_id": point_id,
+                    "point_kind": group[0].get("point_kind"),
+                    "point_name": group[0].get("point_name"),
                     "detail_url": reverse("delivered_detail", args=[day.isoformat(), point_id]),
                     "closed": False,
                 })

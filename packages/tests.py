@@ -3009,6 +3009,25 @@ class CalendarViewTests(TestCase):
         want = f"{reverse('package_detail', args=[pkg.pk])}?from_day={today.isoformat()}"
         self.assertIn(want.encode(), html)
 
+    def test_day_detail_shows_pickup_point_and_home_emoji(self):
+        today = timezone.localdate()
+        locker = self._point("Amazon Locker - Bismuto",
+                             PickupPoint.Kind.AMAZON_LOCKER,
+                             display_name="Bismuto (Habaneras)")
+        home = self._point("Charo - Torrevieja, Alicante",
+                           PickupPoint.Kind.HOME,
+                           display_name="Charo, Torrevieja")
+        Package.objects.create(pickup_point=locker, description="Nebalia Pack de 2 Medias",
+                               state=Package.State.IN_TRANSIT, estimated_arrival=today)
+        Package.objects.create(pickup_point=home, description="Cargador Inalámbrico Coche",
+                               state=Package.State.IN_TRANSIT, estimated_arrival=today)
+
+        html = self.client.get(reverse("day_detail", args=[today.isoformat()])).content.decode()
+        self.assertIn("Bismuto (Habaneras)", html)
+        self.assertIn("🏠 Charo, Torrevieja", html)
+        self.assertIn("pkg-meta", html)
+        self.assertIn("pkg-name", html)
+
     def test_day_detail_rejects_a_bad_date(self):
         self.assertEqual(self.client.get("/day/not-a-date/").status_code, 404)
 

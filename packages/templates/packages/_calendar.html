@@ -334,19 +334,44 @@ chip behind the open card stops lying.{% endcomment %}
       gap: .5rem;
     }
     :where(.day-list) .pkg {
-      display: block;
+      display: flex;
+      flex-direction: column;
+      gap: .25rem;
       width: 100%;
       margin: 0;
-      padding: .7rem .8rem;
+      padding: .65rem .85rem;
       border-radius: .6rem;
       background: color-mix(in srgb, currentColor 8%, transparent);
-      font-size: .85rem;
-      font-weight: 600;
-      line-height: 1.35;
       text-align: left;
       cursor: pointer;
       animation: row-in .3s ease-out both;
       animation-delay: calc(var(--i, 0) * 35ms);
+    }
+    .day-list .pkg::before { display: none; }
+    .day-list .pkg-meta {
+      display: flex;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: .3rem;
+      font-size: .8rem;
+      line-height: 1.25;
+    }
+    .day-list .pkg-tag {
+      font-weight: 700;
+    }
+    .day-list .pkg-sep {
+      opacity: .5;
+      user-select: none;
+    }
+    .day-list .pkg-loc {
+      font-weight: 600;
+      opacity: .9;
+    }
+    .day-list .pkg-name {
+      font-size: .85rem;
+      font-weight: 400;
+      line-height: 1.35;
+      opacity: .92;
     }
     .day-list .pkg:active { transform: scale(.98); }
     .day-empty { color: var(--muted); font-size: .85rem; }

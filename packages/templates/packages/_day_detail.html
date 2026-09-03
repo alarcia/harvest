@@ -25,7 +25,14 @@ back.{% endcomment %}
           <button class="pkg src-{{ c.source }} is-{{ c.kind }}{% if c.closed %} pkg-closed{% endif %}"
                   hx-get="{{ c.detail_url }}?from_day={{ day|date:'Y-m-d' }}"
                   hx-target="#modal" hx-swap="innerHTML">
-            <b>{{ c.tag }}{% if c.note %} ({{ c.note }}){% endif %}</b> · {{ c.label }}
+            <span class="pkg-meta">
+              <span class="pkg-tag">{% if c.closed or c.kind == "action_needed" %}⚠ {% elif c.kind == "picked" %}✓ {% endif %}<b>{{ c.tag }}{% if c.note %} ({{ c.note }}){% endif %}</b></span>
+              {% if c.point_name %}
+                <span class="pkg-sep">·</span>
+                <span class="pkg-loc">{% if c.point_kind == "home" %}🏠 {% endif %}{{ c.point_name }}</span>
+              {% endif %}
+            </span>
+            <span class="pkg-name">{{ c.label }}</span>
           </button>
         </li>
       {% empty %}
