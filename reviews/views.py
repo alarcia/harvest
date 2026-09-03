@@ -135,7 +135,7 @@ def reviews_list(request):
                          key=lambda r: _ordered_on(r, date.max))
 
     if is_current:
-        vencidas = sorted((r for r in pending if r.due_on and r.due_on <= today),
+        vencidas = sorted((r for r in pending if r.is_vine and r.due_on and r.due_on <= today),
                            key=lambda r: r.due_on)
         vencidas_ids = {r.pk for r in vencidas}
         pendientes = sorted((r for r in pending if r.pk not in vencidas_ids),

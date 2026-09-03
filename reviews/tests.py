@@ -228,9 +228,10 @@ class ReviewsListViewTests(TestCase):
         self.assertLess(body.index("Borradores"), body.index("Pendientes"))
         self.assertIn("Un titular", body)  # recognisable without opening it
 
-    def test_overdue_draft_leaves_the_urgent_group_and_the_badge(self):
-        # Writing the draft is the work the badge nags about, so it stops
-        # counting — but the row keeps saying how late it is where it lands.
+    def test_overdue_draft_leaves_the_urgent_group_but_counts_in_badge(self):
+        # A draft row sits in "Borradores" rather than "Urgentes" so its
+        # headline is visible, but until it is submitted to Amazon it remains
+        # an overdue chore and counts towards the urgent badge in the top bar.
         pkg = _package(ordered_on=self._in_current(), picked_up_on=self._in_current())
         draft = Review.objects.create(
             package=pkg, product_title=pkg.description, status=Review.Status.DRAFT,
@@ -240,8 +241,28 @@ class ReviewsListViewTests(TestCase):
         response = self._get()
         self.assertIn(draft, response.context["borradores"])
         self.assertEqual(list(response.context["vencidas"]), [])
-        self.assertEqual(response.context["vencidas_count"], 0)
+        self.assertEqual(response.context["vencidas_count"], 1)
         self.assertContains(response, "vencida desde el")
+
+    def test_overdue_non_vine_review_never_counts_in_badge_nor_urgent_group(self):
+        # Non-Vine purchases are voluntary, so they must never nag via the badge
+        # nor join the "Urgentes" section, even when overdue or with non_vine toggle on.
+        pkg = _package(ordered_on=self._in_current(), picked_up_on=self._in_current(),
+                       is_vine=False, description="Compra normal")
+        review = Review.objects.create(
+            package=pkg, product_title=pkg.description, status=Review.Status.PENDING,
+            due_on=self.today - timedelta(days=5),
+        )
+        response = self._get()
+        self.assertEqual(response.context["vencidas_count"], 0)
+        self.assertEqual(list(response.context["vencidas"]), [])
+        self.assertNotIn(review, response.context["pendientes"])
+
+        # When the user opts to see non-Vine items, it appears in "pendientes", never "vencidas".
+        response_all = self._get(non_vine="1")
+        self.assertEqual(response_all.context["vencidas_count"], 0)
+        self.assertEqual(list(response_all.context["vencidas"]), [])
+        self.assertIn(review, response_all.context["pendientes"])
 
     def test_past_cycle_backlog_shown_but_never_urgent(self):
         # The bug this guards: an item ordered *inside* the current cycle but

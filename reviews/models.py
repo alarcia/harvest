@@ -179,26 +179,24 @@ class ReviewQuerySet(models.QuerySet):
         )
 
     def vencidas(self, today=None, cycle=None):
-        """Pending, in hand, overdue, and ordered inside the given (default:
-        current) VineCycle — the only ones that nag. No current cycle
-        configured ⇒ nothing is urgent.
+        """Vine items pending or in draft, in hand, overdue, and ordered inside
+        the given (default: current) VineCycle — the only ones that nag.
+        Non-Vine packages do not count because reviews are voluntary.
+        No current cycle configured ⇒ nothing is urgent.
 
         `received()` is redundant in practice (a `due_on` is only ever set on
-        receipt) and kept anyway: the badge must never count a row the ⚠ list
-        doesn't show, and the list filters the same way. One hand-typed
-        `due_on` in the admin is all it would take.
+        receipt) and kept anyway: one hand-typed `due_on` in the admin is all
+        it would take.
 
-        `draft` is deliberately *not* counted: writing the review is the work,
-        and once it's written the red badge has done its job — the row moves
-        to its own "Borradores" group, which sits directly under the urgent
-        one and keeps saying how late it is. Counting drafts here would leave
-        the badge naming a number the ⚠ list doesn't show."""
+        Both `pending` and `draft` count: until a review is actually submitted
+        and approved, it remains an overdue obligation for the current Vine
+        evaluation cycle."""
         today = today or timezone.localdate()
         cycle = cycle if cycle is not None else VineCycle.current(today)
         if cycle is None:
             return self.none()
-        return self.received().filter(
-            status=Review.Status.PENDING, due_on__isnull=False, due_on__lte=today,
+        return self.vine(include_non_vine=False).received().filter(
+            status__in=Review.EDITABLE, due_on__isnull=False, due_on__lte=today,
             package__ordered_on__gte=cycle.starts_on, package__ordered_on__lte=cycle.ends_on,
         )
 

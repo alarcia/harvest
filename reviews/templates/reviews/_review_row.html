@@ -27,7 +27,7 @@ last branch is a defensive fallback, not a real case.{% endcomment %}
         <span class="rev-meta">
           <i class="status-badge status-draft">Borrador</i>
           {% if r.rating %}· {{ r.rating }}★{% endif %}
-          {% if r.due_on and r.due_on <= today %}
+          {% if r.is_vine and r.due_on and r.due_on <= today %}
             · <span class="rev-late">vencida desde el {{ r.due_on|date:"j" }} de {{ r.due_on|date:"F" }}</span>
           {% endif %}
         </span>
