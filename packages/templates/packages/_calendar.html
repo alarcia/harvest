@@ -313,6 +313,17 @@ chip behind the open card stops lying.{% endcomment %}
       font-weight: 600;
       white-space: nowrap;
     }
+    .day-pickup-summary .pickup-point-link {
+      color: inherit;
+      text-decoration: underline;
+      text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+      text-underline-offset: 2px;
+      transition: text-decoration-color .15s ease, opacity .15s ease;
+    }
+    .day-pickup-summary .pickup-point-link:hover {
+      text-decoration-color: currentColor;
+      opacity: .85;
+    }
     .day-pickup-summary .summary-item.src-amazon { color: var(--amazon); }
     .day-pickup-summary .summary-item.src-store { color: var(--store); }
     .day-pickup-summary .summary-item.src-pepe { color: var(--pepe); }

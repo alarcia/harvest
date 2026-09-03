@@ -397,6 +397,17 @@
     .modal-point.amazon { color: var(--amazon); }
     .modal-point.store { color: var(--store); }
     .modal-point.pepe { color: var(--pepe); }
+    .point-maps-link {
+      color: inherit;
+      text-decoration: underline;
+      text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+      text-underline-offset: 2px;
+      transition: text-decoration-color .15s ease, opacity .15s ease;
+    }
+    .point-maps-link:hover {
+      text-decoration-color: currentColor;
+      opacity: .85;
+    }
     .modal-rows { display: grid; gap: .3rem; font-size: .82rem; }
     .modal-rows b { font-weight: 600; color: var(--muted); }
     .vine-badge {

@@ -11,7 +11,13 @@
     <div class="modal-head">
       <h2>Entregado el {{ day|date:"j" }} de {{ day|date:"F" }}</h2>
     </div>
-    <p class="modal-point">{{ point_label }}</p>
+    <p class="modal-point">
+      {% if point_maps_url %}
+        <a href="{{ point_maps_url }}" target="_blank" rel="noopener" class="point-maps-link" title="Abrir ruta en Google Maps">{{ point_label }} ↗</a>
+      {% else %}
+        {{ point_label }}
+      {% endif %}
+    </p>
     <ul class="picked-list">
       {% for it in items %}
         <li class="picked-item">

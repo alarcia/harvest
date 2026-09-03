@@ -20,7 +20,13 @@ for, and bounded by the input's own min/max as well as server-side.
       <h2>¿Ya lo has recogido?</h2>
     </div>
     <p class="confirm-item">{{ label }}</p>
-    <p class="modal-point {{ source }}">{{ point_label }}</p>
+    <p class="modal-point {{ source }}">
+      {% if point_maps_url %}
+        <a href="{{ point_maps_url }}" target="_blank" rel="noopener" class="point-maps-link" title="Abrir ruta en Google Maps">{{ point_label }} ↗</a>
+      {% else %}
+        {{ point_label }}
+      {% endif %}
+    </p>
     <form hx-post="{% url 'confirm_pickup' package.pk %}"
           hx-target="#modal" hx-swap="innerHTML">
       {% csrf_token %}

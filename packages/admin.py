@@ -26,8 +26,8 @@ class PickupPointAdmin(admin.ModelAdmin):
     # `display_name` is editable from the list: it's filled in once per venue,
     # reading the full name in the column beside it, which is exactly the
     # comparison the user is making when he shortens it.
-    list_display = ("name", "display_name", "kind")
-    list_editable = ("display_name",)
+    list_display = ("name", "display_name", "kind", "maps_url")
+    list_editable = ("display_name", "maps_url")
     list_filter = ("kind",)
     search_fields = ("name", "display_name")
 

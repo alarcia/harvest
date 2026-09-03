@@ -19,7 +19,13 @@
           {% endif %}
           <div class="picked-body">
             <span class="picked-name">{{ it.label }}{% if it.package.is_vine %} <i class="vine-badge">Vine</i>{% endif %}</span>
-            <span class="picked-point {{ it.source }}">{{ it.point_label }}</span>
+            <span class="picked-point {{ it.source }}">
+              {% if it.point_maps_url %}
+                <a href="{{ it.point_maps_url }}" target="_blank" rel="noopener" class="point-maps-link" title="Abrir ruta en Google Maps">{{ it.point_label }} ↗</a>
+              {% else %}
+                {{ it.point_label }}
+              {% endif %}
+            </span>
           </div>
         </li>
       {% empty %}

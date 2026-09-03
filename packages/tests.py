@@ -31,7 +31,7 @@ from .ingest import (
     scan_inbox,
     scan_now,
 )
-from .models import Config, Package, PickupPoint, RawEmail
+from .models import Config, Package, PickupPoint, RawEmail, normalize_maps_url
 from .parser import EmailKind, ParseError, _resolve_date, parse_email
 from .views import _estimate_line, _estimate_note, _marks
 
@@ -2406,12 +2406,50 @@ class EstimateWordingTests(SimpleTestCase):
         self.assertEqual(_estimate_note(Package(), date(2026, 7, 25)), "")
 
 
+class MapsUrlNormalizationTests(SimpleTestCase):
+    def test_empty_or_none(self):
+        self.assertEqual(normalize_maps_url(""), "")
+        self.assertEqual(normalize_maps_url(None), "")
+        self.assertEqual(normalize_maps_url("   "), "")
+
+    def test_already_clean_directions_url(self):
+        url = "https://www.google.com/maps/dir/?api=1&destination=42.3551436,1.4561642"
+        self.assertEqual(normalize_maps_url(url), url)
+
+    def test_dirty_directions_url_with_origin(self):
+        url = (
+            "https://www.google.com/maps/dir/37.9669299,-0.7039628/"
+            "CARLIN+LA+SEU,+Avinguda+del+Sal%C3%B2ria,+30,+25700+La+Seu+d'Urgell,+Lleida/"
+            "@40.1682172,0.5233692,7z/data=!3m1!4b1!4m10!4m9!1m1!4e1!1m5!1m1!"
+            "0x12a5ed908fcd3363:0x89320641dcb3d28c!2m2!1d1.4561642!2d42.3551436!3e0"
+        )
+        self.assertEqual(
+            normalize_maps_url(url),
+            "https://www.google.com/maps/dir/?api=1&destination=42.3551436,1.4561642",
+        )
+
+    def test_place_url_with_at_coordinates(self):
+        url = "https://www.google.com/maps/place/CARLIN/@42.3551436,1.4561642,17z/data=..."
+        self.assertEqual(
+            normalize_maps_url(url),
+            "https://www.google.com/maps/dir/?api=1&destination=42.3551436,1.4561642",
+        )
+
+    def test_raw_coordinates_string(self):
+        self.assertEqual(
+            normalize_maps_url("42.3551436, 1.4561642"),
+            "https://www.google.com/maps/dir/?api=1&destination=42.3551436,1.4561642",
+        )
+
+
 class CalendarViewTests(TestCase):
     """The calendar's rendering rules: the unknown-item placeholder and the one
     consolidated chip that stands in for a day's whole pickup haul."""
 
-    def _point(self, name, kind, display_name=""):
-        return PickupPoint.objects.create(name=name, kind=kind, display_name=display_name)
+    def _point(self, name, kind, display_name="", maps_url=""):
+        return PickupPoint.objects.create(
+            name=name, kind=kind, display_name=display_name, maps_url=maps_url
+        )
 
     def _picked(self, point, description, day):
         return Package.objects.create(
@@ -3061,6 +3099,47 @@ class CalendarViewTests(TestCase):
 
         html = self.client.get(reverse("day_detail", args=[today.isoformat()])).content.decode()
         self.assertNotIn("Por recoger:", html)
+
+    def test_day_detail_shows_pickup_summary_maps_link(self):
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER,
+                              display_name="Les Mesures",
+                              maps_url="https://www.google.com/maps/dir/?api=1&destination=42.3551436,1.4561642")
+        self._awaiting(counter, "Filtro de agua", today)
+        html = self.client.get(reverse("day_detail", args=[today.isoformat()])).content.decode()
+        self.assertIn("Por recoger:", html)
+        self.assertIn('href="https://www.google.com/maps/dir/?api=1&amp;destination=42.3551436,1.4561642"', html)
+        self.assertIn('target="_blank"', html)
+        self.assertIn('class="pickup-point-link"', html)
+        self.assertIn("Les Mesures ↗</a>", html)
+
+    def test_package_detail_shows_maps_link(self):
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER,
+                              display_name="Les Mesures",
+                              maps_url="https://www.google.com/maps/dir/?api=1&destination=42.3551436,1.4561642")
+        pkg = self._awaiting(counter, "Filtro de agua", today)
+        html = self.client.get(reverse("package_detail", args=[pkg.pk])).content.decode()
+        self.assertIn('class="point-maps-link"', html)
+        self.assertIn('href="https://www.google.com/maps/dir/?api=1&amp;destination=42.3551436,1.4561642"', html)
+        self.assertIn("Cómo llegar en Google Maps ↗", html)
+
+    def test_pickuppoint_save_normalizes_maps_url(self):
+        dirty = (
+            "https://www.google.com/maps/dir/37.9669299,-0.7039628/"
+            "CARLIN/@40.1,0.5,7z/data=!3m1!4b1!4m10!4m9!1m1!4e1!1m5!1m1!1s0x0:0x0"
+            "!2m2!1d1.4561642!2d42.3551436"
+        )
+        point = PickupPoint.objects.create(
+            name="Test Point", kind=PickupPoint.Kind.AMAZON_COUNTER, maps_url=dirty
+        )
+        point.refresh_from_db()
+        self.assertEqual(
+            point.maps_url,
+            "https://www.google.com/maps/dir/?api=1&destination=42.3551436,1.4561642",
+        )
 
     def test_package_detail_from_day_offers_the_way_back(self):
         today = timezone.localdate()

@@ -374,6 +374,7 @@ def _chips(start, end, today):
              "point_id": pkg.pickup_point_id,
              "point_kind": pkg.pickup_point.kind,
              "point_name": pkg.pickup_point.label,
+             "point_maps_url": pkg.pickup_point.maps_url,
              # Drawn on a day the shop is shut: earns a ⚠ on the chip itself,
              # since the grid gets read without opening anything. Only marks
              # a chip you'd act on — a pickup already made needs no warning.
@@ -460,6 +461,7 @@ def _day_pickup_summary(chips):
                     "name": c.get("point_name", ""),
                     "count": 0,
                     "source": c.get("source", "amazon"),
+                    "maps_url": c.get("point_maps_url", ""),
                 }
             counts_by_point[pid]["count"] += 1
 
@@ -618,6 +620,7 @@ def _package_card(request, pkg, back_day):
         "package": pkg,
         "label": _label(pkg),
         "point_label": _point_label(point),
+        "point_maps_url": point.maps_url,
         "source": _source(point),
         "state_label": _state_label(pkg),
         # The card is where the delivery window gets spelled out in full: the
@@ -717,6 +720,7 @@ def confirm_pickup(request, pk):
         "package": pkg,
         "label": _label(pkg),
         "point_label": _point_label(pkg.pickup_point),
+        "point_maps_url": pkg.pickup_point.maps_url,
         "source": _source(pkg.pickup_point),
         "day": day,
         "today": today,
@@ -741,6 +745,7 @@ def picked_detail(request, day):
         "package": pkg,
         "label": _label(pkg),
         "point_label": _point_label(pkg.pickup_point),
+        "point_maps_url": pkg.pickup_point.maps_url,
         "source": _source(pkg.pickup_point),
     } for pkg in packages]
     return render(request, "packages/_picked_detail.html", {
@@ -769,6 +774,7 @@ def delivered_detail(request, day, point_id):
     return render(request, "packages/_delivered_detail.html", {
         "day": the_day,
         "point_label": _point_label(packages[0].pickup_point) if packages else "",
+        "point_maps_url": packages[0].pickup_point.maps_url if packages else "",
         "items": items,
         "back_day": _parse_anchor(request.GET.get("from_day"), None),
     })

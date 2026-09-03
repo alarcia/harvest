@@ -1,5 +1,6 @@
 import re
 import unicodedata
+import urllib.parse
 from decimal import Decimal
 
 from django.db import models, transaction
@@ -203,6 +204,46 @@ class Config(models.Model):
         return any(_fold(marker) in haystack for marker in markers if marker)
 
 
+def normalize_maps_url(url: str) -> str:
+    """Extract destination coordinates or query from any Google Maps URL,
+    stripping any origin, so opening it triggers directions from the user's
+    current location directly.
+    """
+    url = (url or "").strip()
+    if not url:
+        return ""
+    # If already a universal directions URL without origin:
+    if "google.com/maps/dir/" in url and "destination=" in url and "origin=" not in url:
+        return url
+
+    # 1. Look for destination coordinates in data parameter !2m2!1d<lng>!2d<lat>
+    m = re.search(r'!2m2!1d(-?\d+(?:\.\d+)?)(?:!2d|-?\d+)?!2d(-?\d+(?:\.\d+)?)', url)
+    if not m:
+        m = re.search(r'!1d(-?\d+(?:\.\d+)?)[^!]*!2d(-?\d+(?:\.\d+)?)', url)
+    if m:
+        lng, lat = m.group(1), m.group(2)
+        return f"https://www.google.com/maps/dir/?api=1&destination={lat},{lng}"
+
+    # 2. Look for @lat,lng in URL (e.g. /maps/place/.../@42.3551436,1.4561642,17z)
+    m = re.search(r'@(-?\d+\.\d+),(-?\d+\.\d+)', url)
+    if m:
+        lat, lng = m.group(1), m.group(2)
+        return f"https://www.google.com/maps/dir/?api=1&destination={lat},{lng}"
+
+    # 3. Look for /dir/<origin>/<destination>/
+    m = re.search(r'/maps/dir/([^/]+)/([^/@?]+)', url)
+    if m:
+        dest = m.group(2)
+        return f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(urllib.parse.unquote(dest))}"
+
+    # 4. Raw coordinates "lat, lng"
+    m = re.match(r'^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$', url)
+    if m:
+        return f"https://www.google.com/maps/dir/?api=1&destination={m.group(1)},{m.group(2)}"
+
+    return url
+
+
 class PickupPoint(models.Model):
     """Where a package ends up: an Amazon locker/counter, the alt store, or a
     home address (a relative's place). "Pickup point" is a slight misnomer for
@@ -261,12 +302,24 @@ class PickupPoint(models.Model):
     # the one token both templates agree on, so it's the dedup key instead of
     # the free-text name. Blank for HOME/ALT_STORE points, which dedup by name.
     location_key = models.CharField(max_length=5, blank=True, db_index=True)
+    maps_url = models.URLField(
+        max_length=500, blank=True,
+        verbose_name="enlace de Google Maps",
+        help_text="Enlace de Google Maps para navegar al punto. Si se "
+                  "pega un enlace con origen o búsqueda, se limpiará "
+                  "automáticamente para iniciar la ruta hacia el destino.",
+    )
 
     class Meta:
         ordering = ["name"]
 
     def __str__(self):
         return self.label
+
+    def save(self, *args, **kwargs):
+        if self.maps_url:
+            self.maps_url = normalize_maps_url(self.maps_url)
+        super().save(*args, **kwargs)
 
     @property
     def label(self):
