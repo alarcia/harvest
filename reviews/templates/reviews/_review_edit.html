@@ -65,11 +65,11 @@ twenty minutes of writing, and on a phone the backdrop is most of the screen.
                 placeholder="Qué tal ha ido, qué destacarías, qué no acaba de convencerte…"
                 oninput="this.nextElementSibling.textContent = this.value.length + ' caracteres'">{{ text }}</textarea>
       <p class="rev-charcount">{{ text|length }} caracteres</p>
-      {% if review.asin or review.package.order_id %}
+      {% if review.product_asin or review.package.order_id %}
         <div class="rev-amazon-links">
-          {% if review.asin %}
+          {% if review.product_asin %}
             <a class="rev-amazon-link"
-               href="https://www.amazon.es/review/create-review?encoding=UTF&channel=vine-portal&asin={{ review.asin }}"
+               href="https://www.amazon.es/review/create-review?encoding=UTF&channel=vine-portal&asin={{ review.product_asin }}"
                target="_blank" rel="noopener">
               <span class="rev-ext-icon">↗</span> Escribir reseña en Amazon
             </a>
@@ -81,9 +81,9 @@ twenty minutes of writing, and on a phone the backdrop is most of the screen.
               <span class="rev-ext-icon">↗</span> Ver pedido en Amazon
             </a>
           {% endif %}
-          {% if review.asin %}
+          {% if review.product_asin %}
             <a class="rev-amazon-link"
-               href="https://www.amazon.es/dp/{{ review.asin }}"
+               href="https://www.amazon.es/dp/{{ review.product_asin }}"
                target="_blank" rel="noopener">
               <span class="rev-ext-icon">↗</span> Ver producto en Amazon
             </a>

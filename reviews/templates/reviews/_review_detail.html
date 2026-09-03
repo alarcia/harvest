@@ -101,37 +101,43 @@ For closed reviews (approved/published), it displays the read-only review with c
         <p class="review-origin">Borrador: todavía sin publicar en Amazon.</p>
       {% endif %}
 
-      {% comment %}Quick links to the relevant Amazon pages: the review form,
-      the order tracker, and the product page. Shown on any editable review
-      (pending or draft) — once it's on Amazon there's nothing to link to.
+      {% comment %}Quick links to the relevant Amazon pages: the review form or
+      consultation link, the order tracker, and the product page. Shown on both
+      open reviews (pending/draft) and written reviews (approved/published).
       Each one guards its own data: no ASIN ⇒ no review/product link, no
       order_id ⇒ no tracking link.{% endcomment %}
+      {% if review.product_asin or review.package.order_id or review.amazon_review_url %}
+        <div class="rev-amazon-links">
+          {% if can_edit and review.product_asin %}
+            <a class="rev-amazon-link"
+               href="https://www.amazon.es/review/create-review?encoding=UTF&channel=vine-portal&asin={{ review.product_asin }}"
+               target="_blank" rel="noopener">
+              <span class="rev-ext-icon">↗</span> Escribir reseña en Amazon
+            </a>
+          {% elif not can_edit and review.amazon_review_url %}
+            <a class="rev-amazon-link"
+               href="{{ review.amazon_review_url }}"
+               target="_blank" rel="noopener">
+              <span class="rev-ext-icon">↗</span> Ver reseña en Amazon
+            </a>
+          {% endif %}
+          {% if review.package.order_id %}
+            <a class="rev-amazon-link"
+               href="https://www.amazon.es/gp/your-account/order-details?orderID={{ review.package.order_id }}"
+               target="_blank" rel="noopener">
+              <span class="rev-ext-icon">↗</span> Ver pedido en Amazon
+            </a>
+          {% endif %}
+          {% if review.product_asin %}
+            <a class="rev-amazon-link"
+               href="https://www.amazon.es/dp/{{ review.product_asin }}"
+               target="_blank" rel="noopener">
+              <span class="rev-ext-icon">↗</span> Ver producto en Amazon
+            </a>
+          {% endif %}
+        </div>
+      {% endif %}
       {% if can_edit %}
-        {% if review.asin or review.package.order_id %}
-          <div class="rev-amazon-links">
-            {% if review.asin %}
-              <a class="rev-amazon-link"
-                 href="https://www.amazon.es/review/create-review?encoding=UTF&channel=vine-portal&asin={{ review.asin }}"
-                 target="_blank" rel="noopener">
-                <span class="rev-ext-icon">↗</span> Escribir reseña en Amazon
-              </a>
-            {% endif %}
-            {% if review.package.order_id %}
-              <a class="rev-amazon-link"
-                 href="https://www.amazon.es/gp/your-account/order-details?orderID={{ review.package.order_id }}"
-                 target="_blank" rel="noopener">
-                <span class="rev-ext-icon">↗</span> Ver pedido en Amazon
-              </a>
-            {% endif %}
-            {% if review.asin %}
-              <a class="rev-amazon-link"
-                 href="https://www.amazon.es/dp/{{ review.asin }}"
-                 target="_blank" rel="noopener">
-                <span class="rev-ext-icon">↗</span> Ver producto en Amazon
-              </a>
-            {% endif %}
-          </div>
-        {% endif %}
         <button type="button" class="modal-action write"
                 hx-get="{% url 'review_edit' review.pk %}"
                 hx-target="#modal" hx-swap="innerHTML">

@@ -463,6 +463,57 @@ class ReviewDetailViewTests(TestCase):
         response = self.client.get(reverse("review_detail", args=[review.pk]))
         self.assertNotContains(response, "borrador")
 
+    def test_approved_card_shows_amazon_links_with_edit_review_url(self):
+        pkg = _package(ordered_on=date(2026, 2, 1))
+        pkg.order_id = "123-4567890-1234567"
+        pkg.save()
+        review = Review.objects.create(
+            package=pkg, product_title="Producto Aprobado",
+            asin="B0H2N4FD38", status=Review.Status.APPROVED,
+        )
+        response = self.client.get(reverse("review_detail", args=[review.pk]))
+        self.assertContains(response, "Ver reseña en Amazon")
+        self.assertContains(response, "https://www.amazon.es/review/create-review/edit?encoding=UTF&amp;channel=vine-portal&amp;asin=B0H2N4FD38")
+        self.assertContains(response, "Ver pedido en Amazon")
+        self.assertContains(response, "orderID=123-4567890-1234567")
+        self.assertContains(response, "Ver producto en Amazon")
+        self.assertContains(response, "https://www.amazon.es/dp/B0H2N4FD38")
+
+    def test_published_card_shows_amazon_links_with_customer_review_url(self):
+        pkg = _package(ordered_on=date(2026, 2, 1))
+        pkg.order_id = "123-4567890-1234567"
+        pkg.save()
+        review = Review.objects.create(
+            package=pkg, product_title="Producto Publicado",
+            asin="B0GDXR8G2J", review_id="RC0DDVU1T6HA9",
+            status=Review.Status.PUBLISHED,
+        )
+        response = self.client.get(reverse("review_detail", args=[review.pk]))
+        self.assertContains(response, "Ver reseña en Amazon")
+        self.assertContains(response, "https://www.amazon.es/gp/customer-reviews/RC0DDVU1T6HA9")
+        self.assertContains(response, "Ver pedido en Amazon")
+        self.assertContains(response, "orderID=123-4567890-1234567")
+        self.assertContains(response, "Ver producto en Amazon")
+        self.assertContains(response, "https://www.amazon.es/dp/B0GDXR8G2J")
+
+    def test_amazon_review_url_property(self):
+        # With review_id
+        r1 = Review(review_id="RC0DDVU1T6HA9", asin="B0GDXR8G2J")
+        self.assertEqual(r1.amazon_review_url, "https://www.amazon.es/gp/customer-reviews/RC0DDVU1T6HA9")
+
+        # Without review_id, with asin
+        r2 = Review(asin="B0H2N4FD38")
+        self.assertEqual(r2.amazon_review_url, "https://www.amazon.es/review/create-review/edit?encoding=UTF&channel=vine-portal&asin=B0H2N4FD38")
+
+        # Without review_id, asin from package
+        pkg = Package(asin="B0H2N4FD38")
+        r3 = Review(package=pkg)
+        self.assertEqual(r3.amazon_review_url, "https://www.amazon.es/review/create-review/edit?encoding=UTF&channel=vine-portal&asin=B0H2N4FD38")
+
+        # None available
+        r4 = Review()
+        self.assertIsNone(r4.amazon_review_url)
+
 
 class ReviewEditorTests(TestCase):
     """The draft editor: the module's first write path."""

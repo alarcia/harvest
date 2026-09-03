@@ -308,6 +308,31 @@ class Review(models.Model):
         practice, same assumption the "No vine" toggle's default rests on."""
         return self.package_id is None or self.package.is_vine
 
+    @property
+    def product_asin(self):
+        """The ASIN from the review or its linked package."""
+        if self.asin:
+            return self.asin
+        try:
+            return self.package.asin if self.package else ""
+        except Exception:
+            return ""
+
+    @property
+    def amazon_review_url(self):
+        """Link to view/edit the review on Amazon.
+
+        If published with a known review_id, points to Amazon's public review URL.
+        If approved (waiting validation), draft, or pending, points to the
+        Vine edit review portal using the product's ASIN.
+        """
+        if self.review_id:
+            return f"https://www.amazon.es/gp/customer-reviews/{self.review_id}"
+        asin = self.product_asin
+        if asin:
+            return f"https://www.amazon.es/review/create-review/edit?encoding=UTF&channel=vine-portal&asin={asin}"
+        return None
+
 
 class ReferenceReview(models.Model):
     """One review known to be good, kept as an example of how the user writes.
