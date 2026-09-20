@@ -212,6 +212,22 @@ class ReviewsListViewTests(TestCase):
         self.assertIn(review, response.context["vencidas"])
         self.assertNotIn(review, response.context["pendientes"])
 
+    def test_home_delivered_package_overdue_review_is_in_vencidas(self):
+        pkg = _package(
+            ordered_on=self._in_current(),
+            state=Package.State.DELIVERED,
+        )
+        pkg.actual_arrival = self.today - timedelta(days=31)
+        pkg.save()
+        review = Review.objects.create(
+            package=pkg, product_title=pkg.description, status=Review.Status.PENDING,
+            due_on=pkg.actual_arrival + timedelta(days=30),
+        )
+        response = self._get()
+        self.assertIn(review, response.context["vencidas"])
+        self.assertNotIn(review, response.context["pendientes"])
+        self.assertEqual(response.context["vencidas_count"], 1)
+
     def test_draft_gets_its_own_group_between_urgent_and_pending(self):
         pkg = _package(ordered_on=self._in_current())
         draft = Review.objects.create(

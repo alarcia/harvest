@@ -1,6 +1,7 @@
 import re
 import unicodedata
 import urllib.parse
+from datetime import timedelta
 from decimal import Decimal
 
 from django.db import models, transaction
@@ -424,6 +425,14 @@ class Package(models.Model):
 
     class Meta:
         ordering = ["-actual_arrival", "-estimated_arrival"]
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        if self.is_received and self.received_on:
+            review = getattr(self, "review", None)
+            if review is not None and review.due_on is None:
+                review.due_on = self.received_on + timedelta(days=30)
+                review.save(update_fields=["due_on", "updated_at"])
 
     def __str__(self):
         return self.description or f"Package #{self.pk}"

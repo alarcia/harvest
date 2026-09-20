@@ -340,7 +340,7 @@ def _sync_review_for_package(pkg):
             due_on=due_on,
         )
         return "reseña pendiente creada"
-    if (existing is not None and existing.status == Review.Status.PENDING
+    if (existing is not None
             and existing.due_on is None and pkg.received_on):
         existing.due_on = pkg.received_on + timedelta(days=30)
         existing.save(update_fields=["due_on", "updated_at"])
@@ -361,7 +361,7 @@ def set_review_due(pkg, picked_up_on):
     if not pkg.is_received:
         return
     review = getattr(pkg, "review", None)
-    if review is not None and review.status == Review.Status.PENDING and not review.due_on:
+    if review is not None and not review.due_on:
         review.due_on = picked_up_on + timedelta(days=30)
         review.save(update_fields=["due_on"])
 

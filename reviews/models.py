@@ -299,6 +299,16 @@ class Review(models.Model):
     class Meta:
         ordering = ["-created_at"]
 
+    @property
+    def effective_due_on(self):
+        """The deadline date: explicit `due_on`, or 30 days after receipt."""
+        if self.due_on:
+            return self.due_on
+        if self.package and self.package.received_on:
+            return self.package.received_on + timedelta(days=30)
+        return None
+
+
     def __str__(self):
         return self.product_title
 

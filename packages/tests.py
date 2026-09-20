@@ -1806,6 +1806,42 @@ class IngestTests(TestCase):
         self.assertEqual(review.status, Review.Status.PENDING)
         self.assertEqual(review.due_on, date(2026, 8, 14))  # 15 Jul + 30 days
 
+    def test_home_delivery_package_save_sets_existing_review_due_on(self):
+        point = PickupPoint.objects.create(name="Casa", kind=PickupPoint.Kind.HOME)
+        pkg = Package.objects.create(
+            pickup_point=point, description="Calcetines", asin="B0CALCETINES",
+            is_vine=True, state=Package.State.IN_TRANSIT,
+        )
+        review = Review.objects.create(
+            package=pkg, product_title=pkg.description, asin=pkg.asin,
+            status=Review.Status.PENDING, due_on=None,
+        )
+        # Admin or manual edit setting package to DELIVERED with actual_arrival
+        pkg.state = Package.State.DELIVERED
+        pkg.actual_arrival = date(2026, 8, 14)
+        pkg.save()
+
+        review.refresh_from_db()
+        self.assertEqual(review.due_on, date(2026, 9, 13))
+
+    def test_home_delivery_package_save_preserves_custom_due_on(self):
+        point = PickupPoint.objects.create(name="Casa", kind=PickupPoint.Kind.HOME)
+        pkg = Package.objects.create(
+            pickup_point=point, description="Custom Due Product", asin="B0CUSTOM",
+            is_vine=True, state=Package.State.IN_TRANSIT,
+        )
+        custom_date = date(2026, 10, 1)
+        review = Review.objects.create(
+            package=pkg, product_title=pkg.description, asin=pkg.asin,
+            status=Review.Status.PENDING, due_on=custom_date,
+        )
+        pkg.state = Package.State.DELIVERED
+        pkg.actual_arrival = date(2026, 8, 14)
+        pkg.save()
+
+        review.refresh_from_db()
+        self.assertEqual(review.due_on, custom_date)
+
     def test_confirm_pickup_creates_pending_review_for_vine(self):
         point = PickupPoint.objects.create(name="UPS Office", kind=PickupPoint.Kind.CARRIER)
         pkg = Package.objects.create(
