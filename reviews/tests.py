@@ -921,10 +921,9 @@ class SuggestionBudgetTests(TestCase):
 
 
 def _answer(title="Cumple lo que promete", text="Un cuerpo de reseña."):
-    """What the endpoint replies, minus the opening `{"title":` the request
-    already put in the assistant's mouth."""
+    """What the endpoint replies: the complete JSON object."""
     body = json.dumps({"title": title, "text": text}, ensure_ascii=False)
-    return {"content": [{"type": "text", "text": body.split(":", 1)[1]}]}
+    return {"content": [{"type": "text", "text": body}]}
 
 
 @override_settings(SUGGEST_API_URL="https://example.invalid/v1",
@@ -952,6 +951,8 @@ class SuggestDraftTests(TestCase):
         with patch("reviews.suggest._post", return_value=_answer()) as post:
             suggest_draft(self.review)
         payload = post.call_args[0][0]
+        self.assertEqual(len(payload["messages"]), 1)
+        self.assertEqual(payload["messages"][0]["role"], "user")
         sent = payload["messages"][0]["content"]
         self.assertIn("Funda con teclado", sent)
         self.assertIn("4/5", sent)
@@ -960,6 +961,7 @@ class SuggestDraftTests(TestCase):
         self.assertIn("Carga en una hora.", sent)
         # The model comes from the environment, never from the code.
         self.assertEqual(payload["model"], "test-model")
+
 
     def test_a_proposal_can_be_asked_for_with_no_notes(self):
         # The whole request still goes out; `{notas}` simply resolves to
@@ -1011,6 +1013,27 @@ class SuggestDraftTests(TestCase):
         with patch("reviews.suggest._post", return_value=answer):
             title, _ = suggest_draft(self.review)
         self.assertEqual(title, "Cumple lo que promete")
+
+    def test_json_wrapped_in_markdown_code_block_is_parsed(self):
+        fenced = "```json\n" + json.dumps({"title": "En bloque", "text": "Texto en bloque."}) + "\n```"
+        with patch("reviews.suggest._post", return_value={"content": [{"type": "text", "text": fenced}]}):
+            title, text = suggest_draft(self.review)
+        self.assertEqual(title, "En bloque")
+        self.assertEqual(text, "Texto en bloque.")
+
+    def test_http_error_logs_details_and_raises_unavailable(self):
+        from io import BytesIO
+        import urllib.error
+        from reviews.suggest import _post
+        err_json = json.dumps({"error": {"message": "Invalid request"}}).encode("utf-8")
+        exc = urllib.error.HTTPError("https://example.invalid", 400, "Bad Request", {}, BytesIO(err_json))
+        with patch("urllib.request.urlopen", side_effect=exc):
+            with self.assertLogs("reviews.suggest", level="WARNING") as cm:
+                with self.assertRaises(SuggestionUnavailable) as ctx:
+                    _post({})
+        self.assertIn("400", str(ctx.exception))
+        self.assertTrue(any("Invalid request" in msg for msg in cm.output))
+
 
     def test_an_unreadable_answer_says_so_instead_of_crashing(self):
         with patch("reviews.suggest._post", return_value={"content": []}):

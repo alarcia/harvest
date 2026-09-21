@@ -144,9 +144,19 @@ def _post(payload):
         with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        # Logged without the body and, above all, without the request: the key
-        # is in those headers and this line goes to `docker logs`.
-        logger.warning("Propuesta rechazada por el servicio: HTTP %s", exc.code)
+        # Extract the provider's error message without logging the request or
+        # headers (the API key is in the headers).
+        detail = ""
+        try:
+            body = exc.read().decode("utf-8")
+            data = json.loads(body)
+            detail = data.get("error", {}).get("message") or data.get("message") or ""
+        except Exception:
+            pass
+        if detail:
+            logger.warning("Propuesta rechazada por el servicio: HTTP %s (%s)", exc.code, detail)
+        else:
+            logger.warning("Propuesta rechazada por el servicio: HTTP %s", exc.code)
         raise SuggestionUnavailable(
             f"El servicio de propuestas ha respondido con un error ({exc.code}). "
             f"Inténtalo de nuevo en un momento."
@@ -161,17 +171,24 @@ def _post(payload):
 def _parse(data):
     """Pull `(title, text)` out of the answer.
 
-    The reply is asked for as a JSON object and *started* for it (see
-    `suggest_draft`), which is what makes this reliable enough to parse
-    strictly: anything else is a malformed answer, not a shape to guess at.
+    The reply is asked for as a JSON object (see `_FORMAT`), which is what
+    makes this reliable enough to parse strictly: anything else is a
+    malformed answer, not a shape to guess at.
     """
     try:
         blocks = data["content"]
-        raw = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+        raw = "".join(b.get("text", "") for b in blocks if b.get("type") == "text").strip()
+        if raw.startswith("```"):
+            raw = raw.strip("`")
+            if raw.startswith("json"):
+                raw = raw[4:].strip()
+        start = raw.find("{")
+        if start != -1:
+            raw = raw[start:]
         # `raw_decode` rather than `loads`: it reads the first complete object
         # and ignores whatever follows, so a stray closing line after the JSON
         # costs nothing.
-        proposal, _ = json.JSONDecoder().raw_decode('{"title":' + raw)
+        proposal, _ = json.JSONDecoder().raw_decode(raw)
         title = str(proposal["title"]).strip()
         text = str(proposal["text"]).strip()
     except (KeyError, IndexError, TypeError, ValueError) as exc:
@@ -219,10 +236,7 @@ def suggest_draft(review):
         "system": _FORMAT,
         "messages": [
             {"role": "user", "content": _prompt(review, config)},
-            # The answer is also *started* for it, so it can only carry on
-            # from inside the object — belt and braces around the one thing
-            # that has to hold for the reply to be readable at all.
-            {"role": "assistant", "content": '{"title":'},
         ],
     })
     return _parse(data)
+
