@@ -60,8 +60,8 @@ Three kinds of destination are handled distinctly:
   publish. `BeautifulSoup` + `dateparser` do the parsing; it's written as a pure function and
   tested against real email fixtures kept out of version control.
 - **Infrastructure** — Docker (a web container and an ingest worker) on a Raspberry Pi,
-  published through a Cloudflare Tunnel and gated by Cloudflare Access. GitHub Actions builds
-  and deploys.
+  published through a Cloudflare Tunnel and gated by Cloudflare Access. GitHub Actions builds,
+  tests and deploys.
 
 ## Calendar vocabulary
 

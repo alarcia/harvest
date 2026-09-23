@@ -36,6 +36,19 @@ jobs:
       - name: Initialize data directory
         run: mkdir -p ${{ vars.HOST_DB_PATH }}
 
-      - name: Build and Run Docker
+      - name: Build image
+        run: docker compose build
+
+      # Inside the image about to ship, before it replaces anything: a failure
+      # stops here and the running containers keep their old image. No volume,
+      # so the production database is never touched. DJANGO_DEBUG=True matches
+      # a dev run — with it off, SECURE_SSL_REDIRECT answers the test client's
+      # plain-http requests with a 301. The .eml fixtures are gitignored, so
+      # the tests built on them skip here.
+      - name: Run tests
         run: |
-          docker compose up -d --build
+          docker run --rm -e DJANGO_DEBUG=True -e DJANGO_SECRET_KEY=ci-test-only \
+            -e TZ=Europe/Madrid harvest python manage.py test --noinput
+
+      - name: Run Docker
+        run: docker compose up -d

@@ -11,6 +11,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from email.message import EmailMessage
 from pathlib import Path
+from unittest import SkipTest
 from unittest.mock import patch
 
 from django.db import IntegrityError
@@ -39,6 +40,11 @@ FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 
 
 def fixture(name):
+    # The .eml files are gitignored (personal data), so a checkout without any
+    # (the deploy's CI run, a fresh clone) skips the tests built on them. One
+    # missing from a folder that holds the rest is still an error.
+    if not any(FIXTURES.glob("*.eml")):
+        raise SkipTest("no .eml fixtures in this checkout")
     return (FIXTURES / name).read_bytes()
 
 
