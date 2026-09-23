@@ -24,8 +24,13 @@ STATUS_LABELS = {
 STAR_VALUES = [5, 4, 3, 2, 1]
 
 
-def _ordered_on(review, fallback):
+def _ordered_on(review, fallback=date.max):
     return review.package.ordered_on if review.package and review.package.ordered_on else fallback
+
+
+def _due_on(review, fallback=date.max):
+    due = review.effective_due_on or fallback
+    return (due, _ordered_on(review, fallback))
 
 
 def _confirmed_on(review):
@@ -56,7 +61,7 @@ def _find_cycle(raw):
 
 def reviews_list(request):
     """The reviews module's landing page: the *current* Vine cycle's backlog
-    by default — urgent first, then the plain backlog (oldest order first) —
+    by default — urgent first, then the plain backlog (earliest due date first) —
     with the reviews written *in that same cycle* at the bottom. The backlog
     is only ever products he already has: a package still on its way, or still
     waiting at a counter, owes nothing yet.
@@ -136,16 +141,16 @@ def reviews_list(request):
 
     if is_current:
         vencidas = sorted((r for r in pending if r.is_vine and r.due_on and r.due_on <= today),
-                           key=lambda r: r.due_on)
+                           key=_due_on)
         vencidas_ids = {r.pk for r in vencidas}
         pendientes = sorted((r for r in pending if r.pk not in vencidas_ids),
-                             key=lambda r: _ordered_on(r, date.max))
+                             key=_due_on)
     else:
         # Browsing history: nothing is "urgent" outside the current cycle,
         # per the cycle's whole point (last cycle's backlog is demoted, not
         # deleted) — just the plain backlog for that period.
         vencidas = []
-        pendientes = sorted(pending, key=lambda r: _ordered_on(r, date.max))
+        pendientes = sorted(pending, key=_due_on)
 
     # Written reviews belong to a cycle too — the history section is "what I
     # wrote for this period", not an ever-growing pile repeated on every

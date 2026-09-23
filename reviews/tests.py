@@ -151,6 +151,32 @@ class ReviewsListViewTests(TestCase):
         self.assertIn(review, response.context["pendientes"])
         self.assertContains(response, "Entregado el")
 
+    def test_pendientes_are_sorted_by_due_on(self):
+        # A package ordered earlier but picked up later has a later due date.
+        # Pendientes must be sorted by due_on ascending (earliest deadline first),
+        # breaking ties by ordered_on ascending.
+        pkg1 = _package(ordered_on=self._in_current(1), picked_up_on=self._in_current(10))
+        r1 = Review.objects.create(
+            package=pkg1, product_title="Ordered first, received later",
+            status=Review.Status.PENDING,
+            due_on=self.today + timedelta(days=20),
+        )
+        pkg2 = _package(ordered_on=self._in_current(5), picked_up_on=self._in_current(6))
+        r2 = Review.objects.create(
+            package=pkg2, product_title="Ordered later, received first",
+            status=Review.Status.PENDING,
+            due_on=self.today + timedelta(days=10),
+        )
+        pkg3 = _package(ordered_on=self._in_current(2), picked_up_on=self._in_current(6))
+        r3 = Review.objects.create(
+            package=pkg3, product_title="Same due date, ordered earlier",
+            status=Review.Status.PENDING,
+            due_on=self.today + timedelta(days=10),
+        )
+        response = self._get()
+        pendientes = list(response.context["pendientes"])
+        self.assertEqual(pendientes, [r3, r2, r1])
+
     def test_non_vine_review_is_hidden_until_received_and_needs_toggle(self):
         pkg = _package(ordered_on=self._in_current(), state=Package.State.IN_TRANSIT,
                        is_vine=False, description="Compra normal")
