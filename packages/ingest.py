@@ -332,7 +332,7 @@ def _sync_review_for_package(pkg):
                       and not pkg.order_id)
     if not is_shop_notice and existing is None:
         received_on = pkg.received_on
-        due_on = (received_on + timedelta(days=30)) if received_on else None
+        due_on = (received_on + timedelta(days=14)) if received_on else None
         Review.objects.create(
             package=pkg,
             product_title=pkg.description or f"Paquete #{pkg.pk}",
@@ -342,14 +342,14 @@ def _sync_review_for_package(pkg):
         return "reseña pendiente creada"
     if (existing is not None
             and existing.due_on is None and pkg.received_on):
-        existing.due_on = pkg.received_on + timedelta(days=30)
+        existing.due_on = pkg.received_on + timedelta(days=14)
         existing.save(update_fields=["due_on", "updated_at"])
     return ""
 
 
 def set_review_due(pkg, picked_up_on):
     """Pickup starts the use/testing window: the hard reminder is pickup +
-    30 days, the default the model promises — set once here and never
+    14 days, the default the model promises — set once here and never
     overwritten again (due_on stays user-editable after that).
 
     Public because the manual "ya lo he recogido" confirmation (views.py)
@@ -362,7 +362,7 @@ def set_review_due(pkg, picked_up_on):
         return
     review = getattr(pkg, "review", None)
     if review is not None and not review.due_on:
-        review.due_on = picked_up_on + timedelta(days=30)
+        review.due_on = picked_up_on + timedelta(days=14)
         review.save(update_fields=["due_on"])
 
 
@@ -891,7 +891,7 @@ def backfill_reviews():
         review__isnull=True,
         state__in=[Package.State.PICKED_UP, Package.State.DELIVERED],
     ):
-        due_on = (pkg.received_on + timedelta(days=30)) if pkg.received_on else None
+        due_on = (pkg.received_on + timedelta(days=14)) if pkg.received_on else None
         review = Review.objects.create(
             package=pkg,
             product_title=pkg.description or f"Paquete #{pkg.pk}",

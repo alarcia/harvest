@@ -1624,7 +1624,7 @@ class IngestTests(TestCase):
         self.assertEqual(review.status, Review.Status.PENDING)
         self.assertEqual(review.asin, pkg.asin)
         self.assertEqual(review.product_title, pkg.description)
-        self.assertEqual(review.due_on, date(2026, 8, 9))
+        self.assertEqual(review.due_on, date(2026, 7, 24))
 
     def test_vine_refuted_keeps_the_review_as_a_non_vine_order(self):
         process_message(fixture("016-fwd-pedido-intex-64761-colchon.eml"))
@@ -1670,7 +1670,7 @@ class IngestTests(TestCase):
 
         review.refresh_from_db()
         self.assertTrue(Review.objects.received().filter(pk=review.pk).exists())
-        self.assertEqual(review.due_on, date(2026, 9, 2))
+        self.assertEqual(review.due_on, date(2026, 8, 17))
 
     def test_genuine_vine_review_not_duplicated_across_lifecycle(self):
         process_message(fixture("006-fwd-pedido-cargador-inalambrico.eml"))
@@ -1684,7 +1684,7 @@ class IngestTests(TestCase):
         process_message(fixture("009-fwd-se-ha-recogido-cargador-inalambrico-magnetico-25w-con-us.eml"))
         self.assertEqual(Review.objects.count(), 1)  # same row, now visible
 
-    def test_pickup_sets_review_due_on_30_days_out(self):
+    def test_pickup_sets_review_due_on_14_days_out(self):
         for name in (
             "006-fwd-pedido-cargador-inalambrico.eml",
             "007-fwd-enviado-cargador-inalambrico.eml",
@@ -1693,7 +1693,7 @@ class IngestTests(TestCase):
         ):
             process_message(fixture(name))
         review = Review.objects.get()
-        self.assertEqual(review.due_on, date(2026, 8, 7))  # picked up 2026-07-08 + 30
+        self.assertEqual(review.due_on, date(2026, 7, 22))  # picked up 2026-07-08 + 14
 
     def test_review_published_creates_review_when_none_pending(self):
         record, _ = process_message(
@@ -1810,7 +1810,7 @@ class IngestTests(TestCase):
 
         review = Review.objects.get(package=pkg)
         self.assertEqual(review.status, Review.Status.PENDING)
-        self.assertEqual(review.due_on, date(2026, 8, 14))  # 15 Jul + 30 days
+        self.assertEqual(review.due_on, date(2026, 7, 29))  # 15 Jul + 14 days
 
     def test_home_delivery_package_save_sets_existing_review_due_on(self):
         point = PickupPoint.objects.create(name="Casa", kind=PickupPoint.Kind.HOME)
@@ -1828,7 +1828,7 @@ class IngestTests(TestCase):
         pkg.save()
 
         review.refresh_from_db()
-        self.assertEqual(review.due_on, date(2026, 9, 13))
+        self.assertEqual(review.due_on, date(2026, 8, 28))
 
     def test_home_delivery_package_save_preserves_custom_due_on(self):
         point = PickupPoint.objects.create(name="Casa", kind=PickupPoint.Kind.HOME)
@@ -1867,7 +1867,7 @@ class IngestTests(TestCase):
         self.assertEqual(pkg.state, Package.State.PICKED_UP)
         review = Review.objects.get(package=pkg)
         self.assertEqual(review.status, Review.Status.PENDING)
-        self.assertEqual(review.due_on, date(2026, 8, 11))  # 12 Jul + 30 days
+        self.assertEqual(review.due_on, date(2026, 7, 26))  # 12 Jul + 14 days
 
 
 class PepeAddressTests(SimpleTestCase):
@@ -2023,7 +2023,7 @@ class AmazonToPepeYDaldaTests(TestCase):
         pkg.refresh_from_db()
         self.assertEqual(pkg.state, Package.State.PICKED_UP)
         review = Review.objects.get(package=pkg)
-        self.assertEqual(review.due_on, today + timedelta(days=30))
+        self.assertEqual(review.due_on, today + timedelta(days=14))
 
     def test_a_redirection_to_the_shop_reclassifies_the_package(self):
         # The user re-routes an order to the shop after placing it: same row,
@@ -2099,7 +2099,7 @@ class BackfillReviewsTests(TestCase):
         self.assertEqual(result["packages"], 1)
         review = Review.objects.get(package=pkg)
         self.assertEqual(review.status, Review.Status.PENDING)
-        self.assertEqual(review.due_on, date(2026, 7, 1))  # picked up + 30
+        self.assertEqual(review.due_on, date(2026, 6, 15))  # picked up + 14
 
     def test_backfill_is_idempotent(self):
         point = PickupPoint.objects.create(
@@ -3353,7 +3353,7 @@ class ManualPickupTests(TestCase):
         self.assertEqual(self.pkg.state, Package.State.AWAITING_PICKUP)
 
     def test_confirming_starts_the_review_clock(self):
-        # A Vine pickup owes a review 30 days later, whether the email or the
+        # A Vine pickup owes a review 14 days later, whether the email or the
         # user reported it (see ingest.set_review_due).
         self.pkg.is_vine = True
         self.pkg.save()
@@ -3361,7 +3361,7 @@ class ManualPickupTests(TestCase):
         self.client.post(reverse("confirm_pickup", args=[self.pkg.pk]),
                          {"picked_up_on": self.today.isoformat()})
         review = Review.objects.get(package=self.pkg)
-        self.assertEqual(review.due_on, self.today + timedelta(days=30))
+        self.assertEqual(review.due_on, self.today + timedelta(days=14))
 
     def test_confirming_one_package_never_sweeps_the_point(self):
         # Unlike the email pickup, which sweeps the whole point because the

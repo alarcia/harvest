@@ -1,4 +1,5 @@
-from datetime import date
+from datetime import date, timedelta
+import math
 from urllib.parse import urlencode
 
 from django.http import Http404, HttpResponse
@@ -6,6 +7,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 
+from packages.models import Package
 from packages.views import wants_fragment
 
 from .models import Review, VineCycle
@@ -57,6 +59,125 @@ def _find_cycle(raw):
     except ValueError:
         return None
     return VineCycle.objects.filter(starts_on=parsed).first()
+
+
+def _cycle_stats(cycle, today):
+    """Computes Amazon Vine evaluation metrics for the given cycle.
+
+    Always strictly Vine-scoped (ignores the non-vine toggle):
+    - orders_count: Vine packages ordered inside the cycle, plus historical
+      package-less reviews in the cycle (guaranteed >= written_reviews).
+    - reviews_count: Written (approved or published) Vine reviews in the cycle.
+    - pct: Percentage of reviewed orders (0-100%).
+    - pct_class: 'danger' (<30%), 'warning' (<60%), 'success' (>=90%), or 'neutral'.
+    - days_remaining: Days left until cycle.ends_on (if current cycle).
+    - gold_achieved: True if reviews_count >= 80 and pct >= 90.
+    - gold_needed_reviews: max(0, 80 - reviews_count).
+    - needed_for_90: Extra reviews needed to reach 90% of current orders.
+    - needed_for_60: Extra reviews needed to reach 60% of current orders.
+    - is_risk_zone: True if pct < 60 and orders_count > 0 and is_current.
+    """
+    if not cycle:
+        return None
+
+    vine_packages = Package.objects.filter(
+        is_vine=True,
+        ordered_on__gte=cycle.starts_on,
+        ordered_on__lte=cycle.ends_on,
+    ).count()
+
+    package_less = Review.objects.filter(
+        package__isnull=True,
+    ).written().in_cycle(cycle.starts_on, cycle.ends_on).count()
+
+    written_reviews = (
+        Review.objects.vine(include_non_vine=False)
+        .written()
+        .in_cycle(cycle.starts_on, cycle.ends_on)
+        .count()
+    )
+
+    orders_count = max(vine_packages + package_less, written_reviews)
+    pct = round((written_reviews / orders_count) * 100) if orders_count > 0 else 0
+
+    if orders_count == 0:
+        pct_class = "neutral"
+    elif pct < 30:
+        pct_class = "danger"
+    elif pct < 60:
+        pct_class = "warning"
+    elif pct >= 90:
+        pct_class = "success"
+    else:
+        pct_class = "neutral"
+
+    is_current = cycle.starts_on <= today <= cycle.ends_on
+    is_past = today > cycle.ends_on
+    is_future = today < cycle.starts_on
+
+    if is_current:
+        days_remaining = max(0, (cycle.ends_on - today).days)
+    elif is_future:
+        days_remaining = (cycle.starts_on - today).days
+    else:
+        days_remaining = 0
+
+    target_90 = math.ceil(0.90 * orders_count)
+    needed_for_90 = max(0, target_90 - written_reviews)
+
+    target_60 = math.ceil(0.60 * orders_count)
+    needed_for_60 = max(0, target_60 - written_reviews)
+
+    gold_achieved = (written_reviews >= 80 and pct >= 90)
+    gold_needed_reviews = max(0, 80 - written_reviews)
+    is_risk_zone = (pct < 60 and orders_count > 0 and is_current)
+
+    # Order pace (last 15 days) and review target to reach/keep 90%
+    recent_days = 15
+    window_start = max(cycle.starts_on, today - timedelta(days=recent_days))
+    recent_orders = Package.objects.filter(
+        is_vine=True,
+        ordered_on__gte=window_start,
+        ordered_on__lte=today,
+    ).count()
+    window_length = max(1, (today - window_start).days + 1)
+    orders_per_day = recent_orders / window_length
+    orders_per_week = round(orders_per_day * 7, 1)
+
+    horizon_days = min(30, max(7, days_remaining)) if is_current else 0
+    if is_current and horizon_days > 0:
+        projected_new_orders = round(orders_per_day * horizon_days)
+        projected_total_orders = orders_count + projected_new_orders
+        target_reviews = math.ceil(0.90 * projected_total_orders)
+        needed_in_horizon = max(0, target_reviews - written_reviews)
+        target_reviews_per_day = math.ceil(needed_in_horizon / horizon_days) if needed_in_horizon > 0 else 0
+        target_reviews_per_week = target_reviews_per_day * 7
+    else:
+        horizon_days = 0
+        target_reviews_per_day = 0
+        target_reviews_per_week = 0
+
+    return {
+        "orders_count": orders_count,
+        "reviews_count": written_reviews,
+        "pct": pct,
+        "pct_bar_width": min(pct, 100),
+        "pct_class": pct_class,
+        "is_current": is_current,
+        "is_past": is_past,
+        "is_future": is_future,
+        "days_remaining": days_remaining,
+        "gold_achieved": gold_achieved,
+        "gold_needed_reviews": gold_needed_reviews,
+        "needed_for_90": needed_for_90,
+        "needed_for_60": needed_for_60,
+        "is_risk_zone": is_risk_zone,
+        "orders_per_day": round(orders_per_day, 1),
+        "orders_per_week": orders_per_week,
+        "horizon_days": horizon_days,
+        "target_reviews_per_day": target_reviews_per_day,
+        "target_reviews_per_week": target_reviews_per_week,
+    }
 
 
 def reviews_list(request):
@@ -168,6 +289,7 @@ def reviews_list(request):
         "active_nav": "reviews",
         "vencidas_count": Review.objects.vencidas(today).count(),  # global, unfiltered by the toggle
         "cycle": cycle,
+        "stats": _cycle_stats(cycle, today),
         "is_current_cycle": is_current,
         "prev_cycle_url": _reviews_url(prev_cycle, include_non_vine) if prev_cycle else None,
         "next_cycle_url": _reviews_url(next_cycle, include_non_vine) if next_cycle else None,

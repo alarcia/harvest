@@ -16,6 +16,7 @@ from packages.models import Config, Package, PickupPoint
 
 from .models import ReferenceReview, Review, VineCycle
 from .suggest import SuggestionUnavailable, suggest_draft
+from .views import _cycle_stats
 
 
 def _package(ordered_on=None, picked_up_on=None, state=None, is_vine=True,
@@ -1168,3 +1169,167 @@ class VineCycleAutoCreationTests(TestCase):
         VineCycle.objects.all().delete()
         self.assertIsNone(VineCycle.current(date(2026, 7, 23)))
         self.assertEqual(VineCycle.objects.count(), 0)
+
+
+class CycleStatsTests(TestCase):
+    def setUp(self):
+        self.today = timezone.localdate()
+        self.cycle = VineCycle.current(self.today)
+        self.assertIsNotNone(self.cycle)
+
+    def test_cycle_stats_empty_cycle(self):
+        stats = _cycle_stats(self.cycle, self.today)
+        self.assertEqual(stats["orders_count"], 0)
+        self.assertEqual(stats["reviews_count"], 0)
+        self.assertEqual(stats["pct"], 0)
+        self.assertEqual(stats["pct_class"], "neutral")
+        self.assertFalse(stats["gold_achieved"])
+        self.assertFalse(stats["is_risk_zone"])
+
+    def test_cycle_stats_percentages_and_colors(self):
+        # 10 orders, 2 reviews => 20% (<30% -> danger)
+        for i in range(10):
+            pkg = _package(ordered_on=self.cycle.starts_on + timedelta(days=i), is_vine=True)
+            if i < 2:
+                Review.objects.create(package=pkg, product_title=f"Prod {i}", status=Review.Status.PUBLISHED)
+            else:
+                Review.objects.create(package=pkg, product_title=f"Prod {i}", status=Review.Status.PENDING)
+
+        stats = _cycle_stats(self.cycle, self.today)
+        self.assertEqual(stats["orders_count"], 10)
+        self.assertEqual(stats["reviews_count"], 2)
+        self.assertEqual(stats["pct"], 20)
+        self.assertEqual(stats["pct_class"], "danger")
+        self.assertTrue(stats["is_risk_zone"])
+        self.assertEqual(stats["needed_for_60"], 4)  # 6 - 2 = 4
+        self.assertEqual(stats["needed_for_90"], 7)  # 9 - 2 = 7
+
+    def test_cycle_stats_warning_color(self):
+        # 10 orders, 4 reviews => 40% (<60% -> warning)
+        for i in range(10):
+            pkg = _package(ordered_on=self.cycle.starts_on + timedelta(days=i), is_vine=True)
+            status = Review.Status.PUBLISHED if i < 4 else Review.Status.PENDING
+            Review.objects.create(package=pkg, product_title=f"Prod {i}", status=status)
+
+        stats = _cycle_stats(self.cycle, self.today)
+        self.assertEqual(stats["pct"], 40)
+        self.assertEqual(stats["pct_class"], "warning")
+        self.assertTrue(stats["is_risk_zone"])
+        self.assertEqual(stats["needed_for_60"], 2)
+
+    def test_cycle_stats_success_color_and_gold(self):
+        # 100 orders, 90 reviews => 90% (>=90% -> success, >=80 revs -> gold_achieved)
+        for i in range(100):
+            pkg = _package(ordered_on=self.cycle.starts_on + timedelta(days=1), is_vine=True)
+            status = Review.Status.PUBLISHED if i < 90 else Review.Status.PENDING
+            Review.objects.create(package=pkg, product_title=f"Prod {i}", status=status)
+
+        stats = _cycle_stats(self.cycle, self.today)
+        self.assertEqual(stats["pct"], 90)
+        self.assertEqual(stats["pct_class"], "success")
+        self.assertTrue(stats["gold_achieved"])
+        self.assertFalse(stats["is_risk_zone"])
+        self.assertEqual(stats["needed_for_90"], 0)
+
+    def test_cycle_stats_ignores_non_vine_packages(self):
+        # 2 vine packages (1 reviewed), 5 non-vine packages (all reviewed)
+        for i in range(2):
+            pkg = _package(ordered_on=self.cycle.starts_on + timedelta(days=i), is_vine=True)
+            status = Review.Status.PUBLISHED if i == 0 else Review.Status.PENDING
+            Review.objects.create(package=pkg, product_title=f"Vine {i}", status=status)
+        for i in range(5):
+            pkg = _package(ordered_on=self.cycle.starts_on + timedelta(days=i), is_vine=False)
+            Review.objects.create(package=pkg, product_title=f"Non-vine {i}", status=Review.Status.PUBLISHED)
+
+        stats = _cycle_stats(self.cycle, self.today)
+        self.assertEqual(stats["orders_count"], 2)
+        self.assertEqual(stats["reviews_count"], 1)
+        self.assertEqual(stats["pct"], 50)
+
+    def test_reviews_view_renders_stats_banner(self):
+        pkg = _package(ordered_on=self.cycle.starts_on + timedelta(days=1), is_vine=True)
+        Review.objects.create(package=pkg, product_title="Vine item", status=Review.Status.PUBLISHED)
+        response = self.client.get(reverse("reviews_list"), HTTP_HX_REQUEST="true")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("stats", response.context)
+        self.assertContains(response, 'class="rev-stats"')
+        self.assertContains(response, "artículos Vine")
+        self.assertContains(response, "Nivel Oro")
+        self.assertContains(response, "Ritmo de pedidos")
+
+    def test_cycle_stats_pace_metrics_calculation(self):
+        # 10 orders placed recently in this cycle (all within last 10 days)
+        for i in range(10):
+            pkg = _package(ordered_on=self.today - timedelta(days=i), is_vine=True)
+            status = Review.Status.PUBLISHED if i < 2 else Review.Status.PENDING
+            Review.objects.create(package=pkg, product_title=f"Prod {i}", status=status)
+
+        stats = _cycle_stats(self.cycle, self.today)
+        self.assertGreater(stats["orders_per_day"], 0)
+        self.assertGreater(stats["orders_per_week"], 0)
+        self.assertGreater(stats["target_reviews_per_day"], 0)
+        self.assertEqual(stats["target_reviews_per_week"], stats["target_reviews_per_day"] * 7)
+        self.assertIn(stats["horizon_days"], range(7, 31))
+
+
+class UrgentUncappedTests(TestCase):
+    def setUp(self):
+        self.today = timezone.localdate()
+        self.cycle = VineCycle.current(self.today)
+        self.assertIsNotNone(self.cycle)
+
+    def _create_overdue_review(self, days_ago, title="Overdue Item", is_vine=True, status=Review.Status.PENDING):
+        pkg = _package(
+            ordered_on=self.cycle.starts_on + timedelta(days=1),
+            picked_up_on=self.today - timedelta(days=days_ago + 14),
+            is_vine=is_vine,
+            description=title,
+        )
+        return Review.objects.create(
+            package=pkg,
+            product_title=title,
+            status=status,
+            due_on=self.today - timedelta(days=days_ago),
+        )
+
+    def test_vencidas_and_badge_are_uncapped(self):
+        # 5 overdue reviews created: all 5 must appear in vencidas and count in badge
+        items = [self._create_overdue_review(days_ago=5 - i, title=f"Item {i}") for i in range(5)]
+
+        response = self.client.get(reverse("reviews_list"), HTTP_HX_REQUEST="true")
+        self.assertEqual(response.status_code, 200)
+
+        vencidas = list(response.context["vencidas"])
+        self.assertEqual(len(vencidas), 5)
+        self.assertEqual(vencidas, items)
+        self.assertEqual(response.context["vencidas_count"], 5)
+        self.assertEqual(Review.objects.vencidas(self.today).count(), 5)
+
+    def test_approving_review_directly_decrements_vencidas_count(self):
+        items = [self._create_overdue_review(days_ago=5 - i, title=f"Item {i}") for i in range(5)]
+        self.assertEqual(Review.objects.vencidas(self.today).count(), 5)
+
+        # Approve 1 item
+        items[0].status = Review.Status.APPROVED
+        items[0].approved_on = self.today
+        items[0].save(update_fields=["status", "approved_on"])
+
+        response = self.client.get(reverse("reviews_list"), HTTP_HX_REQUEST="true")
+        self.assertEqual(response.context["vencidas_count"], 4)
+        self.assertEqual(len(response.context["vencidas"]), 4)
+
+    def test_overdue_draft_sits_in_borradores_and_counts_in_badge(self):
+        draft = self._create_overdue_review(days_ago=5, title="Draft Item", status=Review.Status.DRAFT)
+        pending = [self._create_overdue_review(days_ago=4 - i, title=f"Pending {i}") for i in range(3)]
+
+        response = self.client.get(reverse("reviews_list"), HTTP_HX_REQUEST="true")
+        self.assertEqual(response.status_code, 200)
+
+        # Draft sits in borradores, not vencidas
+        self.assertEqual(list(response.context["borradores"]), [draft])
+        self.assertEqual(list(response.context["vencidas"]), pending)
+        # Total badge reflects all 4 overdue items (1 draft + 3 pending)
+        self.assertEqual(response.context["vencidas_count"], 4)
+
+
+

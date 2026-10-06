@@ -431,7 +431,7 @@ class Package(models.Model):
         if self.is_received and self.received_on:
             review = getattr(self, "review", None)
             if review is not None and review.due_on is None:
-                review.due_on = self.received_on + timedelta(days=30)
+                review.due_on = self.received_on + timedelta(days=14)
                 review.save(update_fields=["due_on", "updated_at"])
 
     def __str__(self):
@@ -450,7 +450,7 @@ class Package(models.Model):
         """The day it reached him, or None while it hasn't.
 
         Everything that counts from "since when do I have this" hangs off it:
-        the review's 30-day clock (`ingest.set_review_due`) and the line the
+        the review's 14-day clock (`ingest.set_review_due`) and the line the
         review row prints. A home delivery falls back to its estimated day for
         the rows delivered before `actual_arrival` was being written."""
         if self.state == self.State.PICKED_UP:

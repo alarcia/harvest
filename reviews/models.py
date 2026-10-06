@@ -8,6 +8,8 @@ from django.utils import timezone
 
 from packages.models import Package
 
+REVIEW_GRACE_DAYS = 14
+
 
 def _six_months_later(d):
     month = d.month - 1 + 6
@@ -286,7 +288,7 @@ class Review(models.Model):
     # Amazon's "R…" review id, read from the live-confirmation email.
     review_id = models.CharField(max_length=20, blank=True)
 
-    # The hard-reminder day: pickup + 30 days by default, editable per review.
+    # The hard-reminder day: pickup + 14 days by default, editable per review.
     due_on = models.DateField(null=True, blank=True)
     approved_on = models.DateField(null=True, blank=True)
     published_on = models.DateField(null=True, blank=True)
@@ -301,11 +303,11 @@ class Review(models.Model):
 
     @property
     def effective_due_on(self):
-        """The deadline date: explicit `due_on`, or 30 days after receipt."""
+        """The deadline date: explicit `due_on`, or 14 days after receipt."""
         if self.due_on:
             return self.due_on
         if self.package and self.package.received_on:
-            return self.package.received_on + timedelta(days=30)
+            return self.package.received_on + timedelta(days=REVIEW_GRACE_DAYS)
         return None
 
 
