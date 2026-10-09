@@ -278,6 +278,9 @@ section in place, no URL change.{% endcomment %}
        `.rev button` reset above — a button-descendant selector (0,1,1) that
        would otherwise strip the card's border, background, padding and
        full-width from every row, red vencida border included. */
+    .rev-item {
+      display: flex;
+    }
     .rev-row, .rev .rev-row-btn {
       display: flex;
       align-items: center;
@@ -286,6 +289,7 @@ section in place, no URL change.{% endcomment %}
       border-radius: .6rem;
       background: var(--card);
       border: 1px solid var(--border);
+      box-sizing: border-box;
     }
     .rev-row.is-due, .rev .rev-row-btn.is-due { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 6%, var(--card)); }
     .rev-thumb {
@@ -297,16 +301,59 @@ section in place, no URL change.{% endcomment %}
       border-radius: 8px;
       background: #fff;
     }
-    .rev-body { display: flex; flex-direction: column; gap: .15rem; min-width: 0; }
-    .rev-name { font-size: .85rem; font-weight: 600; line-height: 1.3; text-align: left; }
-    .rev-headline { font-size: .74rem; font-style: italic; color: var(--muted); text-align: left; }
-    .rev-meta { font-size: .72rem; color: var(--muted); }
+    .rev-body {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: .15rem;
+      min-width: 0;
+    }
+    .rev-name {
+      font-size: .85rem;
+      font-weight: 600;
+      line-height: 1.3;
+      text-align: left;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      min-height: calc(1.3em * 2);
+      word-break: break-word;
+      overflow-wrap: break-word;
+    }
+    .rev .vine-badge {
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    .rev-headline {
+      font-size: .74rem;
+      font-style: italic;
+      color: var(--muted);
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .rev-meta {
+      font-size: .72rem;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     .rev-row.is-due .rev-meta, .rev .rev-row-btn.is-due .rev-meta { color: var(--danger); font-weight: 600; }
     /* The product's own dates — ordered, and the day it reached his hands.
        Deliberately not .rev-meta: in the ⚠ group that one turns red, and red
        is the deadline talking, not a date that's merely a fact. Quieter than
        the line above it for the same reason. */
-    .rev-dates { font-size: .68rem; color: var(--muted); }
+    .rev-dates {
+      font-size: .68rem;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
 
     .rev-empty { margin: 0; font-size: .82rem; color: var(--muted); }
 
@@ -1005,6 +1052,9 @@ section in place, no URL change.{% endcomment %}
         grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));
         gap: .75rem;
       }
+      .rev-row, .rev .rev-row-btn {
+        height: 100%;
+      }
       /* Review modals have room to breathe on desktop; mobile keeps the
          compact card defined in the shared app shell. */
       .modal-card, .modal-card.modal-wide { max-width: 60vw; }
@@ -1403,7 +1453,7 @@ section in place, no URL change.{% endcomment %}
                       hx-get="{% url 'review_detail' r.pk %}" hx-target="#modal" hx-swap="innerHTML">
                 {% if r.package.image_url %}<img class="rev-thumb" src="{{ r.package.image_url }}" alt="">{% endif %}
                 <div class="rev-body">
-                  <span class="rev-name">{{ r.product_title|default:"Producto desconocido" }}{% if r.is_vine %} <i class="vine-badge">Vine</i>{% endif %}</span>
+                  <span class="rev-name" title="{{ r.product_title|default:'Producto desconocido' }}">{{ r.product_title|default:"Producto desconocido" }}{% if r.is_vine %} <i class="vine-badge">Vine</i>{% endif %}</span>
                   {% if r.title %}<span class="rev-headline">«{{ r.title }}»</span>{% endif %}
                   <span class="rev-meta">
                     {% if r.status == "approved" %}<i class="status-badge status-approved">Aprobada</i>
@@ -1429,7 +1479,7 @@ section in place, no URL change.{% endcomment %}
                       hx-get="{% url 'review_detail' r.pk %}" hx-target="#modal" hx-swap="innerHTML">
                 {% if r.package.image_url %}<img class="rev-thumb" src="{{ r.package.image_url }}" alt="">{% endif %}
                 <div class="rev-body">
-                  <span class="rev-name">{{ r.product_title|default:"Producto desconocido" }}{% if r.is_vine %} <i class="vine-badge">Vine</i>{% endif %}</span>
+                  <span class="rev-name" title="{{ r.product_title|default:'Producto desconocido' }}">{{ r.product_title|default:"Producto desconocido" }}{% if r.is_vine %} <i class="vine-badge">Vine</i>{% endif %}</span>
                   {% if r.title %}<span class="rev-headline">«{{ r.title }}»</span>{% endif %}
                   <span class="rev-meta">
                     {% if r.status == "approved" %}<i class="status-badge status-approved">Aprobada</i>
