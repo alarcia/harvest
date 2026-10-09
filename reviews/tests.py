@@ -473,6 +473,31 @@ class ReviewsListViewTests(TestCase):
         self.assertEqual([r.product_title for r in response.context["confirmed"]],
                           ["Escrita en este ciclo"])
 
+    def test_confirmed_review_card_shows_written_date_and_package_dates(self):
+        pkg = _package(ordered_on=self.today - timedelta(days=10),
+                       picked_up_on=self.today - timedelta(days=8),
+                       description="Teclado mecánico RGB")
+        Review.objects.create(
+            package=pkg,
+            product_title="Teclado mecánico RGB",
+            status=Review.Status.PUBLISHED,
+            approved_on=self.today - timedelta(days=5),
+            published_on=self.today - timedelta(days=2),
+            title="Excelente teclado",
+            rating=5,
+        )
+        response = self._get()
+        # Card contains written date from approved_on, not Amazon approval (published_on)
+        self.assertContains(response, f"Escrita el {pkg.review.approved_on.day} de ")
+        # Card contains order and delivery/pickup dates
+        self.assertContains(response, f"Pedido el {pkg.ordered_on.day} de ")
+        self.assertContains(response, f"Recogido el {pkg.picked_up_on.day} de ")
+
+        # Detail modal also displays "Escrita el"
+        detail_resp = self.client.get(reverse("review_detail", args=[pkg.review.pk]))
+        self.assertContains(detail_resp, f"<b>Escrita</b> el {pkg.review.approved_on.day} de ")
+        self.assertContains(detail_resp, f"<b>Publicada</b> el {pkg.review.published_on.day} de ")
+
 
 class ReviewDetailViewTests(TestCase):
     def test_modal_heading_is_product_title(self):

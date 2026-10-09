@@ -36,7 +36,7 @@ def _due_on(review, fallback=date.max):
 
 
 def _confirmed_on(review):
-    return review.published_on or review.approved_on or review.created_at.date()
+    return review.approved_on or review.published_on or review.created_at.date()
 
 
 def _reviews_url(cycle=None, non_vine=False):
