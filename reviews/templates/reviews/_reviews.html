@@ -885,10 +885,139 @@ section in place, no URL change.{% endcomment %}
       /* Review modals have room to breathe on desktop; mobile keeps the
          compact card defined in the shared app shell. */
       .modal-card, .modal-card.modal-wide { max-width: 60vw; }
+
+      .rev.is-searching {
+        grid-template-areas: "toolbar toolbar" "stats stats" "list list";
+      }
+    }
+
+    /* Search bar styles */
+    .rev-toolbar-header {
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+      flex-wrap: wrap;
+    }
+    .rev-search-wrap {
+      position: relative;
+      display: flex;
+      align-items: center;
+      flex: 1 1 15rem;
+      max-width: 22rem;
+      min-width: 11rem;
+    }
+    .rev-search-icon {
+      position: absolute;
+      left: .75rem;
+      font-size: .82rem;
+      color: var(--muted);
+      pointer-events: none;
+      transition: color .15s ease;
+    }
+    .rev-search-input {
+      width: 100%;
+      height: 2.1rem;
+      padding: 0 2rem 0 2.2rem;
+      font-size: .88rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--card);
+      color: var(--fg);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, .03);
+      transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
+    }
+    .rev-search-input::-webkit-search-cancel-button {
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .rev-search-input::placeholder {
+      color: var(--muted);
+      opacity: .8;
+    }
+    .rev-search-input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(200, 120, 30, 0.15);
+    }
+    .rev-search-wrap:focus-within .rev-search-icon {
+      color: var(--accent);
+    }
+    .rev-search-clear {
+      position: absolute;
+      right: .5rem;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      width: 1.25rem;
+      height: 1.25rem;
+      padding: 0;
+      font-size: .75rem;
+      color: var(--muted);
+      background: var(--border);
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      transition: background-color .15s ease, color .15s ease;
+    }
+    .rev-search-clear:hover {
+      background: var(--muted);
+      color: var(--card);
+    }
+
+    /* Items from other cycles are hidden by default */
+    .rev:not(.is-searching) .rev-item[data-other-cycle="true"] {
+      display: none !important;
+    }
+    .rev:not(.is-searching) .rev-other-only {
+      display: none !important;
+    }
+
+    /* While searching: hide cycle nav, stats, and toggle to focus on search results */
+    .rev.is-searching .rev-cyclenav,
+    .rev.is-searching .rev-stats,
+    .rev.is-searching .rev-subbar {
+      display: none !important;
+    }
+
+    /* Empty search results state */
+    .rev-no-results {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 1rem;
+      color: var(--muted);
+      text-align: center;
+      animation: rev-fade .2s ease-out;
+    }
+    .rev-no-results-icon {
+      font-size: 2rem;
+      margin-bottom: .75rem;
+      opacity: .4;
+    }
+    .rev-no-results-text {
+      margin: 0;
+      font-size: .95rem;
+    }
+    .rev-no-results-text strong {
+      color: var(--fg);
+      word-break: break-word;
     }
   </style>
   <div class="rev-toolbar">
-    <h1 class="rev-title">Reseñas</h1>
+    <div class="rev-toolbar-header">
+      <h1 class="rev-title">Reseñas</h1>
+      <div class="rev-search-wrap">
+        <i class="fa-solid fa-magnifying-glass rev-search-icon" aria-hidden="true"></i>
+        <input type="search" id="rev-search-input" class="rev-search-input"
+               placeholder="Buscar por producto..." autocomplete="off" spellcheck="false"
+               aria-label="Buscar por producto">
+        <button type="button" id="rev-search-clear" class="rev-search-clear"
+                aria-label="Limpiar búsqueda" style="display: none;">
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+      </div>
+    </div>
     {% if cycle %}
       <nav class="rev-cyclenav">
         <button type="button" aria-label="Ciclo anterior"
@@ -1056,6 +1185,11 @@ section in place, no URL change.{% endcomment %}
   </div>
 
   <div class="rev-list">
+    <div id="rev-no-results" class="rev-no-results" style="display: none;">
+      <i class="fa-solid fa-magnifying-glass rev-no-results-icon" aria-hidden="true"></i>
+      <p class="rev-no-results-text">No se encontraron reseñas para <strong id="rev-no-results-query"></strong></p>
+    </div>
+
     {% if vencidas %}
       <section class="rev-group urgent">
         <h2>⚠ Urgentes</h2>
@@ -1070,24 +1204,25 @@ section in place, no URL change.{% endcomment %}
     have to name the same rows — see ReviewQuerySet.vencidas). Hidden when
     empty, like ⚠ Urgentes: an always-visible empty group would just push the
     real backlog down.{% endcomment %}
-    {% if borradores %}
-      <section class="rev-group drafts">
+    {% if borradores or other_borradores %}
+      <section class="rev-group drafts{% if not borradores %} rev-other-only{% endif %}">
         <h2>Borradores</h2>
         <ul>
           {% for r in borradores %}{% include "reviews/_review_row.html" with r=r mode="draft" %}{% endfor %}
+          {% for r in other_borradores %}{% include "reviews/_review_row.html" with r=r mode="draft" is_other_cycle=True %}{% endfor %}
         </ul>
       </section>
     {% endif %}
 
-    <section class="rev-group">
+    <section class="rev-group pending-group" data-has-pendientes="{% if pendientes %}true{% else %}false{% endif %}">
       <h2>Pendientes</h2>
-      {% if pendientes %}
+      {% if pendientes or other_pendientes %}
         <ul>
           {% for r in pendientes %}{% include "reviews/_review_row.html" with r=r mode="pending" %}{% endfor %}
+          {% for r in other_pendientes %}{% include "reviews/_review_row.html" with r=r mode="pending" is_other_cycle=True %}{% endfor %}
         </ul>
-      {% else %}
-        <p class="rev-empty">Nada pendiente{% if not include_non_vine %} de Vine{% endif %}{% if not is_current_cycle %} en este ciclo{% endif %}.</p>
       {% endif %}
+      <p class="rev-empty"{% if pendientes %} style="display: none;"{% endif %}>Nada pendiente{% if not include_non_vine %} de Vine{% endif %}{% if not is_current_cycle %} en este ciclo{% endif %}.</p>
     </section>
 
     {% comment %}Collapsed by default — the written reviews are history, not
@@ -1097,11 +1232,11 @@ section in place, no URL change.{% endcomment %}
     written yet this cycle"), and a section that appears and vanishes as you
     page through cycles makes the layout jump.{% endcomment %}
     <details class="rev-group confirmed">
-      <summary><span>Reseñas escritas</span> <span class="rev-count">{{ confirmed|length }}</span></summary>
-      {% if confirmed %}
+      <summary><span>Reseñas escritas</span> <span class="rev-count" data-original-count="{{ confirmed|length }}">{{ confirmed|length }}</span></summary>
+      {% if confirmed or other_confirmed %}
         <ul>
           {% for r in confirmed %}
-            <li>
+            <li class="rev-item" data-product-title="{{ r.product_title|default:'' }}">
               <button type="button" class="rev-row-btn"
                       hx-get="{% url 'review_detail' r.pk %}" hx-target="#modal" hx-swap="innerHTML">
                 {% if r.package.image_url %}<img class="rev-thumb" src="{{ r.package.image_url }}" alt="">{% endif %}
@@ -1117,10 +1252,211 @@ section in place, no URL change.{% endcomment %}
               </button>
             </li>
           {% endfor %}
+          {% for r in other_confirmed %}
+            <li class="rev-item" data-product-title="{{ r.product_title|default:'' }}" data-other-cycle="true">
+              <button type="button" class="rev-row-btn"
+                      hx-get="{% url 'review_detail' r.pk %}" hx-target="#modal" hx-swap="innerHTML">
+                {% if r.package.image_url %}<img class="rev-thumb" src="{{ r.package.image_url }}" alt="">{% endif %}
+                <div class="rev-body">
+                  <span class="rev-name">{{ r.product_title|default:"Producto desconocido" }}{% if r.is_vine %} <i class="vine-badge">Vine</i>{% endif %}</span>
+                  {% if r.title %}<span class="rev-headline">«{{ r.title }}»</span>{% endif %}
+                  <span class="rev-meta">
+                    {% if r.status == "approved" %}<i class="status-badge status-approved">Aprobada</i>
+                    {% elif r.status == "published" %}<i class="status-badge status-published">Publicada</i>{% endif %}
+                    {% if r.rating %}· {{ r.rating }}★{% endif %}
+                    {% if r.published_on or r.approved_on %}· {{ r.published_on|default:r.approved_on|date:"j M Y" }}{% endif %}
+                  </span>
+                </div>
+              </button>
+            </li>
+          {% endfor %}
         </ul>
       {% else %}
         <p class="rev-empty">Nada escrito todavía en este ciclo.</p>
       {% endif %}
     </details>
   </div>
+
+  <script>
+    (function() {
+      function initReviewsSearch() {
+        const input = document.getElementById('rev-search-input');
+        const clearBtn = document.getElementById('rev-search-clear');
+        const revContainer = document.getElementById('app-view');
+        const noResults = document.getElementById('rev-no-results');
+        const noResultsQuery = document.getElementById('rev-no-results-query');
+        const confirmedDetails = document.querySelector('.rev-group.confirmed');
+
+        if (!input || !revContainer) return;
+        if (input.dataset.searchBound === 'true') return;
+        input.dataset.searchBound = 'true';
+
+        let wasConfirmedOpenBeforeSearch = confirmedDetails ? confirmedDetails.hasAttribute('open') : false;
+
+        function normalize(text) {
+          return (text || '')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .trim();
+        }
+
+        function doFilter() {
+          const rawQuery = input.value;
+          const query = rawQuery.trim();
+          const normQuery = normalize(query);
+          const isSearching = normQuery.length > 0;
+
+          if (clearBtn) {
+            clearBtn.style.display = rawQuery.length > 0 ? 'inline-flex' : 'none';
+          }
+
+          const confirmedCountBadge = confirmedDetails ? confirmedDetails.querySelector('.rev-count') : null;
+
+          if (!isSearching) {
+            revContainer.classList.remove('is-searching');
+            if (noResults) noResults.style.display = 'none';
+
+            // Reset all items
+            const allItems = revContainer.querySelectorAll('.rev-item');
+            allItems.forEach(item => {
+              if (item.dataset.otherCycle === 'true') {
+                item.style.display = 'none';
+              } else {
+                item.style.display = '';
+              }
+            });
+
+            // Reset all groups
+            const groups = revContainer.querySelectorAll('.rev-group');
+            groups.forEach(g => {
+              g.style.display = '';
+            });
+
+            // Restore confirmed details state
+            if (confirmedDetails) {
+              if (wasConfirmedOpenBeforeSearch) {
+                confirmedDetails.setAttribute('open', '');
+              } else {
+                confirmedDetails.removeAttribute('open');
+              }
+              if (confirmedCountBadge && confirmedCountBadge.dataset.originalCount) {
+                confirmedCountBadge.textContent = confirmedCountBadge.dataset.originalCount;
+              }
+            }
+
+            // Restore empty message in pending group if it was originally empty
+            const pendingGroup = revContainer.querySelector('.rev-group.pending-group');
+            if (pendingGroup) {
+              const emptyP = pendingGroup.querySelector('.rev-empty');
+              const hasPendientes = pendingGroup.dataset.hasPendientes === 'true';
+              if (emptyP) emptyP.style.display = hasPendientes ? 'none' : '';
+            }
+
+            return;
+          }
+
+          // We are actively searching
+          revContainer.classList.add('is-searching');
+          const queryWords = normQuery.split(/\s+/).filter(Boolean);
+
+          let totalMatches = 0;
+          let confirmedMatches = 0;
+
+          const groups = revContainer.querySelectorAll('.rev-group');
+          groups.forEach(group => {
+            const items = group.querySelectorAll('.rev-item');
+            let groupMatches = 0;
+
+            items.forEach(item => {
+              const title = item.dataset.productTitle || item.querySelector('.rev-name')?.textContent || '';
+              const normTitle = normalize(title);
+
+              const matches = queryWords.every(word => normTitle.includes(word));
+              if (matches) {
+                item.style.display = '';
+                groupMatches++;
+                totalMatches++;
+                if (group.classList.contains('confirmed')) {
+                  confirmedMatches++;
+                }
+              } else {
+                item.style.display = 'none';
+              }
+            });
+
+            // Hide the default empty message inside groups during search
+            const emptyMsg = group.querySelector('.rev-empty');
+            if (emptyMsg) emptyMsg.style.display = 'none';
+
+            // Hide group if it has 0 matches
+            if (groupMatches === 0) {
+              group.style.display = 'none';
+            } else {
+              group.style.display = '';
+            }
+          });
+
+          // Handle confirmed details (A4: open if it has matches)
+          if (confirmedDetails) {
+            if (confirmedMatches > 0) {
+              confirmedDetails.style.display = '';
+              confirmedDetails.setAttribute('open', '');
+              if (confirmedCountBadge) {
+                confirmedCountBadge.textContent = confirmedMatches;
+              }
+            } else {
+              confirmedDetails.style.display = 'none';
+            }
+          }
+
+          // No results state
+          if (noResults) {
+            if (totalMatches === 0) {
+              noResults.style.display = 'flex';
+              if (noResultsQuery) noResultsQuery.textContent = `«${rawQuery}»`;
+            } else {
+              noResults.style.display = 'none';
+            }
+          }
+        }
+
+        input.addEventListener('input', doFilter);
+
+        if (clearBtn) {
+          clearBtn.addEventListener('click', () => {
+            input.value = '';
+            input.focus();
+            doFilter();
+          });
+        }
+
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape') {
+            input.value = '';
+            doFilter();
+          }
+        });
+
+        if (confirmedDetails) {
+          confirmedDetails.addEventListener('toggle', () => {
+            if (!revContainer.classList.contains('is-searching')) {
+              wasConfirmedOpenBeforeSearch = confirmedDetails.hasAttribute('open');
+            }
+          });
+        }
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initReviewsSearch);
+      } else {
+        initReviewsSearch();
+      }
+      document.addEventListener('htmx:afterSwap', function(e) {
+        if (e.target && (e.target.id === 'app-view' || e.target.querySelector?.('#rev-search-input'))) {
+          initReviewsSearch();
+        }
+      });
+    })();
+  </script>
 </section>

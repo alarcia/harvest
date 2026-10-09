@@ -285,6 +285,27 @@ def reviews_list(request):
         key=_confirmed_on, reverse=True,
     )
 
+    # Reviews from other cycles, available in the DOM for instant global search in the client.
+    current_ids = {r.pk for r in open_reviews} | {r.pk for r in confirmed}
+    other_open = list(
+        base.filter(status__in=Review.EDITABLE, package__ordered_on__isnull=False)
+        .received()
+        .exclude(pk__in=current_ids)
+    )
+    other_borradores = sorted(
+        (r for r in other_open if r.status == Review.Status.DRAFT),
+        key=lambda r: _ordered_on(r, date.max)
+    )
+    other_pendientes = sorted(
+        (r for r in other_open if r.status == Review.Status.PENDING),
+        key=_due_on
+    )
+    other_confirmed = sorted(
+        base.written().exclude(pk__in=current_ids),
+        key=_confirmed_on,
+        reverse=True
+    )
+
     context = {
         "active_nav": "reviews",
         "vencidas_count": Review.objects.vencidas(today).count(),  # global, unfiltered by the toggle
@@ -304,6 +325,9 @@ def reviews_list(request):
         "borradores": borradores,
         "pendientes": pendientes,
         "confirmed": confirmed,
+        "other_borradores": other_borradores,
+        "other_pendientes": other_pendientes,
+        "other_confirmed": other_confirmed,
         "today": today,
     }
     template = "reviews/_reviews.html" if wants_fragment(request) else "reviews/reviews.html"

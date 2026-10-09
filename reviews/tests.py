@@ -1332,4 +1332,58 @@ class UrgentUncappedTests(TestCase):
         self.assertEqual(response.context["vencidas_count"], 4)
 
 
+class ReviewsSearchTests(TestCase):
+    def setUp(self):
+        self.today = timezone.localdate()
+        self.current_cycle = VineCycle.current(self.today)
+        self.prev_cycle = (
+            VineCycle.objects.filter(starts_on__lt=self.current_cycle.starts_on)
+            .order_by("-starts_on")
+            .first()
+        )
+
+    def test_search_input_and_no_results_container_are_rendered(self):
+        response = self.client.get(reverse("reviews_list"), HTTP_HX_REQUEST="true")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="rev-search-input"')
+        self.assertContains(response, 'placeholder="Buscar por producto..."')
+        self.assertContains(response, 'id="rev-search-clear"')
+        self.assertContains(response, 'id="rev-no-results"')
+
+    def test_search_data_attributes_rendered_for_current_and_other_cycles(self):
+        # Current cycle item
+        pkg_curr = _package(ordered_on=self.current_cycle.starts_on + timedelta(days=2),
+                            picked_up_on=self.current_cycle.starts_on + timedelta(days=3),
+                            description="Auriculares Bluetooth Pro")
+        Review.objects.create(
+            package=pkg_curr,
+            product_title="Auriculares Bluetooth Pro",
+            status=Review.Status.PENDING,
+            due_on=self.today + timedelta(days=5),
+        )
+
+        # Past cycle written item
+        pkg_past = _package(ordered_on=self.prev_cycle.starts_on + timedelta(days=5),
+                            picked_up_on=self.prev_cycle.starts_on + timedelta(days=6),
+                            description="Cámara de vigilancia exterior")
+        past_rev = Review.objects.create(
+            package=pkg_past,
+            product_title="Cámara de vigilancia exterior",
+            status=Review.Status.PUBLISHED,
+            published_on=self.prev_cycle.starts_on + timedelta(days=20),
+        )
+
+        response = self.client.get(reverse("reviews_list"), HTTP_HX_REQUEST="true")
+        self.assertEqual(response.status_code, 200)
+
+        # Current cycle review in context and rendered without data-other-cycle
+        self.assertEqual(len(response.context["pendientes"]), 1)
+        self.assertContains(response, 'data-product-title="Auriculares Bluetooth Pro"')
+
+        # Past cycle review present in other_confirmed for client search with data-other-cycle="true"
+        self.assertIn(past_rev, response.context["other_confirmed"])
+        self.assertContains(response, 'data-product-title="Cámara de vigilancia exterior"')
+        self.assertContains(response, 'data-other-cycle="true"')
+
+
 
