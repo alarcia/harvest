@@ -498,6 +498,51 @@ class ReviewsListViewTests(TestCase):
         self.assertContains(detail_resp, f"<b>Escrita</b> el {pkg.review.approved_on.day} de ")
         self.assertContains(detail_resp, f"<b>Publicada</b> el {pkg.review.published_on.day} de ")
 
+    def test_unwritten_reviews_have_sort_controls_and_date_attributes(self):
+        pkg = _package(ordered_on=self.today - timedelta(days=12),
+                       picked_up_on=self.today - timedelta(days=10),
+                       description="Auriculares Bluetooth")
+        Review.objects.create(
+            package=pkg,
+            product_title="Auriculares Bluetooth",
+            status=Review.Status.PENDING,
+            due_on=self.today + timedelta(days=4),
+        )
+        response = self._get()
+        self.assertContains(response, 'id="rev-sort-unwritten"')
+        self.assertContains(response, 'data-sort-by="default"')
+        self.assertContains(response, 'Urgencia')
+        self.assertContains(response, 'data-sort-by="received"')
+        self.assertContains(response, 'data-sort-by="ordered"')
+        expected_ordered = (self.today - timedelta(days=12)).isoformat()
+        expected_received = (self.today - timedelta(days=10)).isoformat()
+        self.assertContains(response, f'data-ordered-on="{expected_ordered}"')
+        self.assertContains(response, f'data-received-on="{expected_received}"')
+
+    def test_confirmed_reviews_have_sort_controls_and_date_attributes(self):
+        pkg = _package(ordered_on=self.today - timedelta(days=20),
+                       picked_up_on=self.today - timedelta(days=18),
+                       description="Lámpara LED")
+        Review.objects.create(
+            package=pkg,
+            product_title="Lámpara LED",
+            status=Review.Status.APPROVED,
+            approved_on=self.today - timedelta(days=15),
+            title="Buena luz",
+            rating=5,
+        )
+        response = self._get()
+        self.assertContains(response, 'id="rev-sort-written"')
+        self.assertContains(response, 'data-sort-by="review"')
+        self.assertContains(response, 'data-sort-by="received"')
+        self.assertContains(response, 'data-sort-by="ordered"')
+        expected_review = (self.today - timedelta(days=15)).isoformat()
+        expected_ordered = (self.today - timedelta(days=20)).isoformat()
+        expected_received = (self.today - timedelta(days=18)).isoformat()
+        self.assertContains(response, f'data-review-on="{expected_review}"')
+        self.assertContains(response, f'data-ordered-on="{expected_ordered}"')
+        self.assertContains(response, f'data-received-on="{expected_received}"')
+
 
 class ReviewDetailViewTests(TestCase):
     def test_modal_heading_is_product_title(self):

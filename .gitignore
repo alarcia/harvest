@@ -27,3 +27,4 @@ staticfiles/
 # Test fixtures are REAL Amazon emails with personal data (names, addresses,
 # order numbers) — kept local only, never committed. See tests/fixtures/README.md.
 tests/fixtures/*.eml
+AGENTS.md

@@ -16,7 +16,9 @@ on every row, drafts included: a draft used to print no date at all, so the one
 row where he's already spent time on the product said the least about it. The
 view only ever passes rows with a known order date and a package in hand; the
 last branch is a defensive fallback, not a real case.{% endcomment %}
-<li class="rev-item" data-product-title="{{ r.product_title|default:'' }}"{% if is_other_cycle %} data-other-cycle="true"{% endif %}>
+<li class="rev-item" data-product-title="{{ r.product_title|default:'' }}"
+    data-ordered-on="{% if r.package and r.package.ordered_on %}{{ r.package.ordered_on|date:'Y-m-d' }}{% endif %}"
+    data-received-on="{% if r.package and r.package.received_on %}{{ r.package.received_on|date:'Y-m-d' }}{% endif %}"{% if is_other_cycle %} data-other-cycle="true"{% endif %}>
   <button type="button" class="rev-row-btn{% if mode == "urgent" %} is-due{% endif %}"
           hx-get="{% url 'review_detail' r.pk %}" hx-target="#modal" hx-swap="innerHTML">
     {% if r.package.image_url %}<img class="rev-thumb" src="{{ r.package.image_url }}" alt="">{% endif %}

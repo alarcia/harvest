@@ -66,15 +66,115 @@ section in place, no URL change.{% endcomment %}
     }
     .rev-cyclenav .rev-cycle-reset:hover { text-decoration: underline; }
 
-    .rev-subbar { flex: none; display: flex; justify-content: flex-end; padding: 0; }
+    .rev-subbar {
+      flex: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .5rem;
+      padding: 0;
+      flex-wrap: nowrap;
+    }
+    .rev-subbar .rev-sort-label {
+      display: none;
+    }
+    @media (min-width: 768px) {
+      .rev-subbar .rev-sort-label {
+        display: inline-block;
+      }
+    }
     .rev-toggle {
+      margin-left: auto;
+      flex: 0 0 auto;
       display: inline-flex;
       align-items: center;
-      gap: .5rem;
-      font-size: .78rem;
+      gap: .4rem;
+      font-size: .75rem;
       font-weight: 600;
       color: var(--muted);
       cursor: pointer;
+      white-space: nowrap;
+    }
+
+    /* Segmented sort controls in subbar and confirmed reviews */
+    .rev-sort-bar {
+      display: inline-flex;
+      align-items: center;
+      gap: .45rem;
+      flex-wrap: nowrap;
+    }
+    .rev-sort-label {
+      font-size: .75rem;
+      font-weight: 600;
+      color: var(--muted);
+      user-select: none;
+      white-space: nowrap;
+    }
+    .rev-sort-pills {
+      display: inline-flex;
+      align-items: center;
+      background: color-mix(in srgb, var(--border) 45%, var(--bg));
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 3px;
+      gap: 2px;
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, .04);
+    }
+    .rev .rev-sort-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: .25rem;
+      width: auto !important;
+      margin: 0 !important;
+      padding: .26rem .65rem !important;
+      border-radius: 999px;
+      border: none;
+      background: none;
+      font: inherit;
+      font-size: .75rem;
+      font-weight: 500;
+      color: var(--muted) !important;
+      cursor: pointer;
+      transition: color .15s ease, background-color .15s ease, box-shadow .15s ease;
+      user-select: none;
+      line-height: 1.25;
+      white-space: nowrap;
+      -webkit-tap-highlight-color: transparent;
+      box-sizing: border-box;
+    }
+    .rev .rev-sort-btn:hover {
+      color: var(--fg) !important;
+    }
+    .rev .rev-sort-btn.active {
+      background: var(--card) !important;
+      color: var(--fg) !important;
+      font-weight: 600;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, .25), 0 0 0 1px var(--border);
+    }
+    .rev .rev-sort-btn.active .rev-sort-dir {
+      display: inline-block;
+      color: var(--accent);
+      font-weight: 700;
+      font-size: .72rem;
+    }
+    .rev .rev-sort-btn:not(.active) .rev-sort-dir {
+      display: none;
+    }
+    .rev-confirmed-header {
+      margin: .6rem 0 .5rem;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+    }
+    @media (max-width: 480px) {
+      .rev .rev-sort-btn {
+        padding: .22rem .5rem !important;
+        font-size: .72rem;
+      }
+      .rev-subbar {
+        gap: .35rem;
+      }
     }
     .rev-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
     .rev-toggle .switch {
@@ -994,7 +1094,7 @@ section in place, no URL change.{% endcomment %}
     /* While searching: hide cycle nav, stats, and toggle to focus on search results */
     .rev.is-searching .rev-cyclenav,
     .rev.is-searching .rev-stats,
-    .rev.is-searching .rev-subbar {
+    .rev.is-searching .rev-toggle {
       display: none !important;
     }
 
@@ -1054,6 +1154,25 @@ section in place, no URL change.{% endcomment %}
     </div>
 
     <div class="rev-subbar">
+      {% if borradores or vencidas or pendientes or other_borradores or other_pendientes %}
+        <div class="rev-sort-bar" id="rev-sort-unwritten">
+          <span class="rev-sort-label">Ordenar:</span>
+          <div class="rev-sort-pills" role="radiogroup" aria-label="Ordenar por fecha">
+            <button type="button" class="rev-sort-btn active" data-sort-group="unwritten" data-sort-by="default" title="Orden natural por urgencia y estado">
+              <span>Urgencia</span>
+            </button>
+            <button type="button" class="rev-sort-btn" data-sort-group="unwritten" data-sort-by="received" data-sort-dir="desc" title="Ordenar por fecha de recogida">
+              <span>Recogido</span>
+              <span class="rev-sort-dir" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="rev-sort-btn" data-sort-group="unwritten" data-sort-by="ordered" data-sort-dir="desc" title="Ordenar por fecha de pedido">
+              <span>Pedido</span>
+              <span class="rev-sort-dir" aria-hidden="true"></span>
+            </button>
+          </div>
+        </div>
+      {% endif %}
+
       <label class="rev-toggle">
         <input type="checkbox" {% if include_non_vine %}checked{% endif %}
                hx-get="{{ toggle_url }}" hx-push-url="{{ toggle_url }}">
@@ -1255,9 +1374,31 @@ section in place, no URL change.{% endcomment %}
     <details class="rev-group confirmed">
       <summary><span>Reseñas escritas</span> <span class="rev-count" data-original-count="{{ confirmed|length }}">{{ confirmed|length }}</span></summary>
       {% if confirmed or other_confirmed %}
+        <div class="rev-confirmed-header">
+          <div class="rev-sort-bar" id="rev-sort-written">
+            <span class="rev-sort-label">Ordenar:</span>
+            <div class="rev-sort-pills" role="radiogroup" aria-label="Ordenar reseñas escritas">
+              <button type="button" class="rev-sort-btn active" data-sort-group="written" data-sort-by="review" data-sort-dir="desc" title="Ordenar por fecha de reseña">
+                <span>Fecha reseña</span>
+                <span class="rev-sort-dir" aria-hidden="true">↓</span>
+              </button>
+              <button type="button" class="rev-sort-btn" data-sort-group="written" data-sort-by="received" data-sort-dir="desc" title="Ordenar por fecha de recogida">
+                <span>Recogido</span>
+                <span class="rev-sort-dir" aria-hidden="true"></span>
+              </button>
+              <button type="button" class="rev-sort-btn" data-sort-group="written" data-sort-by="ordered" data-sort-dir="desc" title="Ordenar por fecha de pedido">
+                <span>Pedido</span>
+                <span class="rev-sort-dir" aria-hidden="true"></span>
+              </button>
+            </div>
+          </div>
+        </div>
         <ul>
           {% for r in confirmed %}
-            <li class="rev-item" data-product-title="{{ r.product_title|default:'' }}">
+            <li class="rev-item" data-product-title="{{ r.product_title|default:'' }}"
+                data-review-on="{% if r.approved_on %}{{ r.approved_on|date:'Y-m-d' }}{% elif r.published_on %}{{ r.published_on|date:'Y-m-d' }}{% else %}{{ r.created_at|date:'Y-m-d' }}{% endif %}"
+                data-ordered-on="{% if r.package and r.package.ordered_on %}{{ r.package.ordered_on|date:'Y-m-d' }}{% endif %}"
+                data-received-on="{% if r.package and r.package.received_on %}{{ r.package.received_on|date:'Y-m-d' }}{% endif %}">
               <button type="button" class="rev-row-btn"
                       hx-get="{% url 'review_detail' r.pk %}" hx-target="#modal" hx-swap="innerHTML">
                 {% if r.package.image_url %}<img class="rev-thumb" src="{{ r.package.image_url }}" alt="">{% endif %}
@@ -1280,7 +1421,10 @@ section in place, no URL change.{% endcomment %}
             </li>
           {% endfor %}
           {% for r in other_confirmed %}
-            <li class="rev-item" data-product-title="{{ r.product_title|default:'' }}" data-other-cycle="true">
+            <li class="rev-item" data-product-title="{{ r.product_title|default:'' }}" data-other-cycle="true"
+                data-review-on="{% if r.approved_on %}{{ r.approved_on|date:'Y-m-d' }}{% elif r.published_on %}{{ r.published_on|date:'Y-m-d' }}{% else %}{{ r.created_at|date:'Y-m-d' }}{% endif %}"
+                data-ordered-on="{% if r.package and r.package.ordered_on %}{{ r.package.ordered_on|date:'Y-m-d' }}{% endif %}"
+                data-received-on="{% if r.package and r.package.received_on %}{{ r.package.received_on|date:'Y-m-d' }}{% endif %}">
               <button type="button" class="rev-row-btn"
                       hx-get="{% url 'review_detail' r.pk %}" hx-target="#modal" hx-swap="innerHTML">
                 {% if r.package.image_url %}<img class="rev-thumb" src="{{ r.package.image_url }}" alt="">{% endif %}
@@ -1312,6 +1456,9 @@ section in place, no URL change.{% endcomment %}
 
   <script>
     (function() {
+      // -------------------------------------------------------------
+      // Search Functionality
+      // -------------------------------------------------------------
       function initReviewsSearch() {
         const input = document.getElementById('rev-search-input');
         const clearBtn = document.getElementById('rev-search-clear');
@@ -1319,6 +1466,7 @@ section in place, no URL change.{% endcomment %}
         const noResults = document.getElementById('rev-no-results');
         const noResultsQuery = document.getElementById('rev-no-results-query');
         const confirmedDetails = document.querySelector('.rev-group.confirmed');
+        const unwrittenSortBar = document.getElementById('rev-sort-unwritten');
 
         if (!input || !revContainer) return;
         if (input.dataset.searchBound === 'true') return;
@@ -1349,6 +1497,7 @@ section in place, no URL change.{% endcomment %}
           if (!isSearching) {
             revContainer.classList.remove('is-searching');
             if (noResults) noResults.style.display = 'none';
+            if (unwrittenSortBar) unwrittenSortBar.style.display = '';
 
             // Reset all items
             const allItems = revContainer.querySelectorAll('.rev-item');
@@ -1430,7 +1579,13 @@ section in place, no URL change.{% endcomment %}
             }
           });
 
-          // Handle confirmed details (A4: open if it has matches)
+          // Show unwritten sort bar only if there are unwritten search results
+          if (unwrittenSortBar) {
+            const unwrittenMatches = totalMatches - confirmedMatches;
+            unwrittenSortBar.style.display = unwrittenMatches > 0 ? '' : 'none';
+          }
+
+          // Handle confirmed details: open if it has matches
           if (confirmedDetails) {
             if (confirmedMatches > 0) {
               confirmedDetails.style.display = '';
@@ -1480,14 +1635,220 @@ section in place, no URL change.{% endcomment %}
         }
       }
 
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initReviewsSearch);
-      } else {
+      // -------------------------------------------------------------
+      // Instant Sorting Functionality
+      // -------------------------------------------------------------
+      function initReviewsSort() {
+        const revContainer = document.getElementById('app-view');
+        if (!revContainer) return;
+
+        // Initialize stable original index for every item in its parent ul
+        const allUls = revContainer.querySelectorAll('.rev-group ul');
+        allUls.forEach(ul => {
+          const items = ul.querySelectorAll('.rev-item');
+          items.forEach((item, idx) => {
+            if (!item.dataset.origIdx) {
+              item.dataset.origIdx = String(idx);
+            }
+          });
+        });
+
+        function sortUl(ul, sortBy, sortDir) {
+          const items = Array.from(ul.children).filter(el => el.classList.contains('rev-item'));
+          if (items.length <= 1) return;
+
+          items.sort((a, b) => {
+            if (sortBy === 'default') {
+              return Number(a.dataset.origIdx || 0) - Number(b.dataset.origIdx || 0);
+            }
+            let valA = '';
+            let valB = '';
+            if (sortBy === 'review') {
+              valA = a.dataset.reviewOn || '';
+              valB = b.dataset.reviewOn || '';
+            } else if (sortBy === 'received') {
+              valA = a.dataset.receivedOn || '';
+              valB = b.dataset.receivedOn || '';
+            } else if (sortBy === 'ordered') {
+              valA = a.dataset.orderedOn || '';
+              valB = b.dataset.orderedOn || '';
+            }
+
+            // Items with missing dates always sink to the bottom
+            if (!valA && !valB) return Number(a.dataset.origIdx || 0) - Number(b.dataset.origIdx || 0);
+            if (!valA) return 1;
+            if (!valB) return -1;
+
+            const cmp = valA.localeCompare(valB);
+            if (cmp !== 0) {
+              return sortDir === 'asc' ? cmp : -cmp;
+            }
+            return Number(a.dataset.origIdx || 0) - Number(b.dataset.origIdx || 0);
+          });
+
+          items.forEach(item => ul.appendChild(item));
+        }
+
+        // --- Unwritten Sort (Borradores, Urgentes, Pendientes) ---
+        const unwrittenBar = document.getElementById('rev-sort-unwritten');
+        if (unwrittenBar && unwrittenBar.dataset.sortBound !== 'true') {
+          unwrittenBar.dataset.sortBound = 'true';
+
+          const unwrittenBtns = unwrittenBar.querySelectorAll('.rev-sort-btn');
+          const unwrittenUls = [
+            ...revContainer.querySelectorAll('.rev-group.drafts ul'),
+            ...revContainer.querySelectorAll('.rev-group.urgent ul'),
+            ...revContainer.querySelectorAll('.rev-group.pending-group ul')
+          ];
+
+          function applyUnwrittenSort(sortBy, sortDir) {
+            unwrittenUls.forEach(ul => sortUl(ul, sortBy, sortDir));
+            try {
+              sessionStorage.setItem('harvest_rev_sort_unwritten', sortBy);
+              sessionStorage.setItem('harvest_rev_sort_unwritten_dir', sortDir);
+            } catch (e) {}
+          }
+
+          unwrittenBtns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+              e.preventDefault();
+              const sortBy = btn.dataset.sortBy;
+              const isActive = btn.classList.contains('active');
+              let sortDir = 'desc';
+
+              if (sortBy === 'default') {
+                unwrittenBtns.forEach(b => {
+                  b.classList.remove('active');
+                  const dir = b.querySelector('.rev-sort-dir');
+                  if (dir) dir.textContent = '';
+                });
+                btn.classList.add('active');
+                applyUnwrittenSort('default', 'asc');
+                return;
+              }
+
+              if (isActive) {
+                const currentDir = btn.dataset.sortDir || 'desc';
+                sortDir = currentDir === 'desc' ? 'asc' : 'desc';
+              } else {
+                sortDir = 'desc';
+              }
+
+              btn.dataset.sortDir = sortDir;
+              unwrittenBtns.forEach(b => {
+                b.classList.remove('active');
+                const dir = b.querySelector('.rev-sort-dir');
+                if (dir) dir.textContent = '';
+              });
+              btn.classList.add('active');
+
+              const dirSpan = btn.querySelector('.rev-sort-dir');
+              if (dirSpan) {
+                dirSpan.textContent = sortDir === 'asc' ? '↑' : '↓';
+              }
+
+              applyUnwrittenSort(sortBy, sortDir);
+            });
+          });
+
+          // Restore saved preference
+          try {
+            const savedSort = sessionStorage.getItem('harvest_rev_sort_unwritten');
+            const savedDir = sessionStorage.getItem('harvest_rev_sort_unwritten_dir') || 'desc';
+            if (savedSort && savedSort !== 'default') {
+              const matchingBtn = unwrittenBar.querySelector(`.rev-sort-btn[data-sort-by="${savedSort}"]`);
+              if (matchingBtn) {
+                matchingBtn.dataset.sortDir = savedDir;
+                unwrittenBtns.forEach(b => b.classList.remove('active'));
+                matchingBtn.classList.add('active');
+                const dirSpan = matchingBtn.querySelector('.rev-sort-dir');
+                if (dirSpan) dirSpan.textContent = savedDir === 'asc' ? '↑' : '↓';
+                applyUnwrittenSort(savedSort, savedDir);
+              }
+            }
+          } catch (e) {}
+        }
+
+        // --- Written Sort (Reseñas escritas) ---
+        const writtenBar = document.getElementById('rev-sort-written');
+        const confirmedUl = revContainer.querySelector('.rev-group.confirmed ul');
+        if (writtenBar && confirmedUl && writtenBar.dataset.sortBound !== 'true') {
+          writtenBar.dataset.sortBound = 'true';
+
+          const writtenBtns = writtenBar.querySelectorAll('.rev-sort-btn');
+
+          function applyWrittenSort(sortBy, sortDir) {
+            sortUl(confirmedUl, sortBy, sortDir);
+            try {
+              sessionStorage.setItem('harvest_rev_sort_written', sortBy);
+              sessionStorage.setItem('harvest_rev_sort_written_dir', sortDir);
+            } catch (e) {}
+          }
+
+          writtenBtns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const sortBy = btn.dataset.sortBy;
+              const isActive = btn.classList.contains('active');
+              let sortDir = 'desc';
+
+              if (isActive) {
+                const currentDir = btn.dataset.sortDir || 'desc';
+                sortDir = currentDir === 'desc' ? 'asc' : 'desc';
+              } else {
+                sortDir = 'desc';
+              }
+
+              btn.dataset.sortDir = sortDir;
+              writtenBtns.forEach(b => {
+                b.classList.remove('active');
+                const dir = b.querySelector('.rev-sort-dir');
+                if (dir) dir.textContent = '';
+              });
+              btn.classList.add('active');
+
+              const dirSpan = btn.querySelector('.rev-sort-dir');
+              if (dirSpan) {
+                dirSpan.textContent = sortDir === 'asc' ? '↑' : '↓';
+              }
+
+              applyWrittenSort(sortBy, sortDir);
+            });
+          });
+
+          // Restore saved preference
+          try {
+            const savedSort = sessionStorage.getItem('harvest_rev_sort_written');
+            const savedDir = sessionStorage.getItem('harvest_rev_sort_written_dir') || 'desc';
+            if (savedSort && (savedSort !== 'review' || savedDir !== 'desc')) {
+              const matchingBtn = writtenBar.querySelector(`.rev-sort-btn[data-sort-by="${savedSort}"]`);
+              if (matchingBtn) {
+                matchingBtn.dataset.sortDir = savedDir;
+                writtenBtns.forEach(b => b.classList.remove('active'));
+                matchingBtn.classList.add('active');
+                const dirSpan = matchingBtn.querySelector('.rev-sort-dir');
+                if (dirSpan) dirSpan.textContent = savedDir === 'asc' ? '↑' : '↓';
+                applyWrittenSort(savedSort, savedDir);
+              }
+            }
+          } catch (e) {}
+        }
+      }
+
+      function initReviews() {
         initReviewsSearch();
+        initReviewsSort();
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initReviews);
+      } else {
+        initReviews();
       }
       document.addEventListener('htmx:afterSwap', function(e) {
-        if (e.target && (e.target.id === 'app-view' || e.target.querySelector?.('#rev-search-input'))) {
-          initReviewsSearch();
+        if (e.target && (e.target.id === 'app-view' || e.target.querySelector?.('#rev-search-input') || e.target.querySelector?.('.rev-sort-bar'))) {
+          initReviews();
         }
       });
     })();
