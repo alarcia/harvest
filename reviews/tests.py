@@ -255,20 +255,34 @@ class ReviewsListViewTests(TestCase):
         self.assertNotIn(review, response.context["pendientes"])
         self.assertEqual(response.context["vencidas_count"], 1)
 
-    def test_draft_gets_its_own_group_between_urgent_and_pending(self):
-        pkg = _package(ordered_on=self._in_current())
+    def test_draft_gets_its_own_group_above_urgent_and_pending(self):
+        pkg1 = _package(ordered_on=self._in_current(), picked_up_on=self._in_current())
         draft = Review.objects.create(
-            package=pkg, product_title=pkg.description, status=Review.Status.DRAFT,
+            package=pkg1, product_title="Borrador Title", status=Review.Status.DRAFT,
             title="Un titular", rating=4, text="El cuerpo de la reseña.",
+        )
+        pkg2 = _package(ordered_on=self._in_current(), picked_up_on=self._in_current())
+        urgent = Review.objects.create(
+            package=pkg2, product_title="Urgente Title", status=Review.Status.PENDING,
+            due_on=self.today - timedelta(days=2),
+        )
+        pkg3 = _package(ordered_on=self._in_current(), picked_up_on=self._in_current())
+        pending = Review.objects.create(
+            package=pkg3, product_title="Pendiente Title", status=Review.Status.PENDING,
+            due_on=self.today + timedelta(days=5),
         )
         response = self._get()
         self.assertIn(draft, response.context["borradores"])
+        self.assertIn(urgent, response.context["vencidas"])
+        self.assertIn(pending, response.context["pendientes"])
         self.assertNotIn(draft, response.context["pendientes"])
         self.assertNotIn(draft, response.context["vencidas"])
         self.assertNotIn(draft, response.context["confirmed"])  # not history yet
-        # The order the user asked for, read straight off the rendered page.
+        # The order the user asked for, read straight off the rendered page:
+        # Borradores top of the list, then Urgentes, then Pendientes.
         body = response.content.decode()
-        self.assertLess(body.index("Borradores"), body.index("Pendientes"))
+        self.assertLess(body.index("Borradores"), body.index("⚠ Urgentes"))
+        self.assertLess(body.index("⚠ Urgentes"), body.index("Pendientes"))
         self.assertIn("Un titular", body)  # recognisable without opening it
 
     def test_overdue_draft_leaves_the_urgent_group_but_counts_in_badge(self):

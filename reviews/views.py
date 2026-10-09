@@ -182,10 +182,10 @@ def _cycle_stats(cycle, today):
 
 def reviews_list(request):
     """The reviews module's landing page: the *current* Vine cycle's backlog
-    by default — urgent first, then the plain backlog (earliest due date first) —
-    with the reviews written *in that same cycle* at the bottom. The backlog
-    is only ever products he already has: a package still on its way, or still
-    waiting at a counter, owes nothing yet.
+    by default — drafts first (to edit and finish them), then urgent, then the
+    plain backlog (earliest due date first) — with the reviews written *in that
+    same cycle* at the bottom. The backlog is only ever products he already has:
+    a package still on its way, or still waiting at a counter, owes nothing yet.
 
     A past cycle is reachable via ?cycle=<starts_on>, deliberately out of the
     way (this is rare, "hacer reseñas pasadas" territory): its backlog shows

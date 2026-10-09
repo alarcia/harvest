@@ -1190,26 +1190,25 @@ section in place, no URL change.{% endcomment %}
       <p class="rev-no-results-text">No se encontraron reseñas para <strong id="rev-no-results-query"></strong></p>
     </div>
 
-    {% if vencidas %}
-      <section class="rev-group urgent">
-        <h2>⚠ Urgentes</h2>
-        <ul>
-          {% for r in vencidas %}{% include "reviews/_review_row.html" with r=r mode="urgent" %}{% endfor %}
-        </ul>
-      </section>
-    {% endif %}
-
-    {% comment %}Written but not yet on Amazon: above the untouched backlog
-    (the work is half done) and below the urgent one (the badge and the ⚠ list
-    have to name the same rows — see ReviewQuerySet.vencidas). Hidden when
-    empty, like ⚠ Urgentes: an always-visible empty group would just push the
-    real backlog down.{% endcomment %}
+    {% comment %}Written but not yet on Amazon: placed at the top (above Urgentes
+    and the untouched backlog) so the user remembers to edit and finish them.
+    Hidden when empty, like ⚠ Urgentes: an always-visible empty group would
+    just push the backlog down.{% endcomment %}
     {% if borradores or other_borradores %}
       <section class="rev-group drafts{% if not borradores %} rev-other-only{% endif %}">
         <h2>Borradores</h2>
         <ul>
           {% for r in borradores %}{% include "reviews/_review_row.html" with r=r mode="draft" %}{% endfor %}
           {% for r in other_borradores %}{% include "reviews/_review_row.html" with r=r mode="draft" is_other_cycle=True %}{% endfor %}
+        </ul>
+      </section>
+    {% endif %}
+
+    {% if vencidas %}
+      <section class="rev-group urgent">
+        <h2>⚠ Urgentes</h2>
+        <ul>
+          {% for r in vencidas %}{% include "reviews/_review_row.html" with r=r mode="urgent" %}{% endfor %}
         </ul>
       </section>
     {% endif %}
