@@ -158,16 +158,16 @@
       text-decoration: none;
       opacity: .6;
       transition: transform .35s ease, opacity .2s ease, background .2s ease, color .2s ease;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
     }
-    .app-topbar .nav-link .ico { display: inline-block; transition: transform .35s ease; }
-    .app-topbar .nav-link:hover,
+    .app-topbar .nav-link .ico { display: inline-block; transition: transform .35s ease; pointer-events: none; }
     .app-topbar .nav-link.active {
       opacity: 1;
       color: var(--accent);
       background: color-mix(in srgb, var(--accent) 10%, transparent);
       text-decoration: none;
     }
-    .app-topbar .nav-link:hover .ico { transform: rotate(-18deg) scale(1.15); }
     /* Superscript nag badge (vencidas count) riding the top-right corner of
        the "Reseñas" pill; absent when there's nothing overdue. */
     .app-topbar .nav-link .badge {
@@ -199,20 +199,15 @@
       font-size: .85rem;
       text-decoration: none;
       transition: transform .2s ease, filter .2s ease;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
     }
     .app-topbar .add .ico {
       display: inline-flex;
       align-items: center;
       justify-content: center;
       transition: transform .3s ease;
-    }
-    .app-topbar .add:hover {
-      text-decoration: none;
-      transform: scale(1.06);
-      filter: brightness(1.08);
-    }
-    .app-topbar .add:hover .ico {
-      transform: rotate(90deg);
+      pointer-events: none;
     }
     .app-topbar .add:active { transform: scale(.94); }
     .app-topbar .right { display: flex; align-items: center; gap: .45rem; }
@@ -234,20 +229,15 @@
       font-size: .85rem;
       cursor: pointer;
       transition: transform .2s ease, color .2s ease, border-color .2s ease, background-color .2s ease;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
     }
     .app-topbar .sync .ico {
       display: inline-flex;
       align-items: center;
       justify-content: center;
       transition: transform .35s ease;
-    }
-    .app-topbar .sync:hover {
-      color: var(--accent);
-      border-color: var(--accent);
-      background: color-mix(in srgb, var(--accent) 8%, var(--card));
-    }
-    .app-topbar .sync:hover .ico {
-      transform: rotate(30deg) scale(1.1);
+      pointer-events: none;
     }
     .app-topbar .sync:active { transform: scale(.94); }
     /* htmx disables it for the round trip: it spins, and stays visibly busy
@@ -317,6 +307,7 @@
       text-decoration: none;
       opacity: .65;
       transition: opacity .15s ease, color .15s ease, transform .15s ease;
+      touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
     }
     .app-bottombar .nav-link .ico {
@@ -325,6 +316,7 @@
       margin-bottom: .2rem;
       display: inline-block;
       transition: transform .2s ease;
+      pointer-events: none;
     }
     .app-bottombar .nav-link .label {
       font-size: .65rem;
@@ -332,18 +324,52 @@
       line-height: 1;
       white-space: nowrap;
     }
-    .app-bottombar .nav-link:hover,
     .app-bottombar .nav-link.active {
       opacity: 1;
       color: var(--accent);
       text-decoration: none;
     }
-    .app-bottombar .nav-link:hover .ico,
     .app-bottombar .nav-link.active .ico {
       transform: scale(1.1);
     }
     .app-bottombar .nav-link:active {
       transform: scale(.94);
+    }
+
+    /* Hover effects for pointer/mouse devices only (avoids sticky hover on touch) */
+    @media (hover: hover) {
+      .app-topbar .nav-link:hover {
+        opacity: 1;
+        color: var(--accent);
+        background: color-mix(in srgb, var(--accent) 10%, transparent);
+        text-decoration: none;
+      }
+      .app-topbar .nav-link:hover .ico {
+        transform: rotate(-18deg) scale(1.15);
+      }
+      .app-topbar .add:hover {
+        text-decoration: none;
+        transform: scale(1.06);
+        filter: brightness(1.08);
+      }
+      .app-topbar .add:hover .ico {
+        transform: rotate(90deg);
+      }
+      .app-topbar .sync:hover {
+        color: var(--accent);
+        border-color: var(--accent);
+        background: color-mix(in srgb, var(--accent) 8%, var(--card));
+      }
+      .app-topbar .sync:hover .ico {
+        transform: rotate(30deg) scale(1.1);
+      }
+      .app-bottombar .nav-link:hover {
+        opacity: 1;
+        color: var(--accent);
+      }
+      .app-bottombar .nav-link:hover .ico {
+        transform: scale(1.1);
+      }
     }
     .app-bottombar .nav-link .badge {
       position: absolute;
