@@ -429,6 +429,8 @@ class ReviewsListViewTests(TestCase):
             HTTP_HX_HISTORY_RESTORE_REQUEST="true").content
         self.assertIn(b"<!doctype html>", restored)
         self.assertIn(b"app-topbar", restored)
+        self.assertIn(b"app-bottombar", restored)
+        self.assertIn(b"https://www.amazon.es/vine/vine-items?queue=potluck", restored)
 
     def test_confirmed_review_shows_product_title_not_review_headline(self):
         # The bug this guards: the card must lead with what the product

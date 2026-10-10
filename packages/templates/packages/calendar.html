@@ -7,6 +7,7 @@
   <div class="app-shell">
     {% include "packages/_topbar.html" with active_nav="calendar" vencidas_count=vencidas_count %}
     {% include "packages/_calendar.html" %}
+    {% include "packages/_bottombar.html" with active_nav="calendar" vencidas_count=vencidas_count %}
     {% comment %}Landing slot for detail modals; outside the swapped fragment
     so navigation never wipes an open card. Shared id (#modal) across the
     calendar and reviews shells so a card opens whichever page is the outer

@@ -3228,6 +3228,8 @@ class CalendarViewTests(TestCase):
             HTTP_HX_HISTORY_RESTORE_REQUEST="true").content
         self.assertIn(b"<!doctype html>", restored)
         self.assertIn(b"app-topbar", restored)
+        self.assertIn(b"app-bottombar", restored)
+        self.assertIn(b"https://www.amazon.es/vine/vine-items?queue=potluck", restored)
 
 
 class ManualPickupTests(TestCase):

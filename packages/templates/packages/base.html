@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>{% block title %}Harvest{% endblock %}</title>
   <link rel="icon" type="image/png" href="{% static 'packages/logo.png' %}">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
@@ -292,19 +292,87 @@
     }
     @keyframes pill-in { from { opacity: 0; transform: translateY(6px); } }
     @keyframes pill-out { to { opacity: 0; } }
-    /* Phones: the brand, three pills, the ⟳ and the + only fit if the labels
-       give way — every current phone lands in the 390–430px band, where all
-       three labels overflow the row (measured: 27px over at 412px). The
-       *active* pill keeps its label, since knowing which section you're in is
-       worth the width; the others ride on their icon and an aria-label.
-       Everything from ~480px up reads normally. */
-    @media (max-width: 479.98px) {
-      .app-topbar .nav-link { padding: .3rem .4rem; }
-      .app-topbar .nav-link:not(.active) .label { display: none; }
+    /* ---- mobile bottom navigation bar ---- */
+    .app-bottombar {
+      display: none;
+      flex: none;
+      align-items: center;
+      justify-content: space-around;
+      background: var(--bg);
+      border-top: 1px solid var(--border);
+      padding: .35rem .5rem calc(.35rem + env(safe-area-inset-bottom, 0px));
+      z-index: 20;
     }
-    /* Smallest phones (iPhone SE class, ~375px): not even one label fits. */
-    @media (max-width: 399.98px) {
-      .app-topbar .nav-link .label { display: none; }
+    .app-bottombar .nav-link {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      min-width: 0;
+      padding: .25rem 0;
+      border-radius: 8px;
+      color: var(--muted);
+      text-decoration: none;
+      opacity: .65;
+      transition: opacity .15s ease, color .15s ease, transform .15s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .app-bottombar .nav-link .ico {
+      font-size: 1.15rem;
+      line-height: 1;
+      margin-bottom: .2rem;
+      display: inline-block;
+      transition: transform .2s ease;
+    }
+    .app-bottombar .nav-link .label {
+      font-size: .65rem;
+      font-weight: 600;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .app-bottombar .nav-link:hover,
+    .app-bottombar .nav-link.active {
+      opacity: 1;
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .app-bottombar .nav-link:hover .ico,
+    .app-bottombar .nav-link.active .ico {
+      transform: scale(1.1);
+    }
+    .app-bottombar .nav-link:active {
+      transform: scale(.94);
+    }
+    .app-bottombar .nav-link .badge {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      margin-left: .25rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 1rem;
+      height: 1rem;
+      padding: 0 .25rem;
+      border-radius: 999px;
+      background: var(--danger);
+      color: #fff;
+      font-size: .6rem;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    /* Phones (below 700px): topbar stays airy with only brand + actions,
+       navigation moves to the thumb-friendly bottom bar. Ingest toast sits
+       comfortably above the bottom bar. */
+    @media (max-width: 699.98px) {
+      .app-topbar .nav-link { display: none; }
+      .app-bottombar { display: flex; }
+      .app-topbar .ingest-status {
+        bottom: calc(3.8rem + env(safe-area-inset-bottom, 0px));
+      }
     }
 
     /* ---- shared detail modal (calendar package cards, review cards) ---- */
@@ -545,10 +613,10 @@
       }
     });
 
-    // The topbar sits outside #app-view, so it never re-fetches when a nav
-    // pill swaps sections — just re-mark which one is active client-side.
+    // The topbar and bottombar sit outside #app-view, so they never re-fetch
+    // when a nav pill swaps sections — just re-mark which one is active client-side.
     function syncNav() {
-      document.querySelectorAll('.app-topbar .nav-link[hx-get]').forEach((a) => {
+      document.querySelectorAll('.nav-link[hx-get]').forEach((a) => {
         a.classList.toggle('active', a.getAttribute('href') === location.pathname);
       });
     }

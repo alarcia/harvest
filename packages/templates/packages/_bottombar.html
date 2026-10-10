@@ -1,0 +1,25 @@
+{% load static %}
+{% comment %}Mobile bottom navigation bar: thumb-friendly navigation across
+Calendario, Reseñas, Admin and Vine portal link. Displayed on mobile (<700px)
+and hidden on desktop, keeping the topbar airy on small screens.{% endcomment %}
+<nav class="app-bottombar" aria-label="Navegación principal inferior">
+  <a class="nav-link{% if active_nav == 'calendar' %} active{% endif %}"
+     href="{% url 'home' %}" aria-label="Calendario" title="Calendario"
+     hx-get="{% url 'home' %}" hx-target="#app-view" hx-swap="outerHTML" hx-push-url="{% url 'home' %}">
+    <span class="ico">📅</span><span class="label">Calendario</span>
+  </a>
+  <a class="nav-link{% if active_nav == 'reviews' %} active{% endif %}"
+     href="{% url 'reviews_list' %}"
+     aria-label="Reseñas{% if vencidas_count %}, {{ vencidas_count }} vencidas{% endif %}" title="Reseñas"
+     hx-get="{% url 'reviews_list' %}" hx-target="#app-view" hx-swap="outerHTML" hx-push-url="{% url 'reviews_list' %}">
+    <span class="ico">⭐</span><span class="label">Reseñas</span>
+    {% if vencidas_count %}<span class="badge">{{ vencidas_count }}</span>{% endif %}
+  </a>
+  <a class="nav-link" href="/admin/" aria-label="Panel de administración" title="Panel de administración">
+    <span class="ico">🪄</span><span class="label">Admin</span>
+  </a>
+  <a class="nav-link external" href="https://www.amazon.es/vine/vine-items?queue=potluck"
+     target="_blank" rel="noopener" aria-label="Ir a Amazon Vine" title="Ir a Amazon Vine (Para ti)">
+    <span class="ico">🌿</span><span class="label">Vine ↗</span>
+  </a>
+</nav>
