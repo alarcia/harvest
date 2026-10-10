@@ -945,6 +945,7 @@ section in place, no URL change.{% endcomment %}
       border-radius: 999px;
     }
     .rev-stat-progress-fill {
+      width: var(--progress, 0%);
       height: 100%;
       border-radius: 999px;
       transition: width .25s ease;
@@ -1335,7 +1336,7 @@ section in place, no URL change.{% endcomment %}
 
           <div class="rev-stat-progress-wrap">
             <div class="rev-stat-progress-bar" title="{{ stats.pct }}% completado">
-              <div class="rev-stat-progress-fill val-{{ stats.pct_class }}" style="width: {{ stats.pct_bar_width }}%;"></div>
+              <div class="rev-stat-progress-fill val-{{ stats.pct_class }}" style="--progress: {{ stats.pct_bar_width }}%;"></div>
               <div class="rev-stat-marker" style="left: 60%;" title="Mínimo Vine: 60%"></div>
               <div class="rev-stat-marker" style="left: 90%;" title="Meta Oro: 90%"></div>
             </div>
