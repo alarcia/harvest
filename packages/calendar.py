@@ -13,6 +13,7 @@ from datetime import date, timedelta
 import re
 
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.formats import date_format
 
 from .models import Package, PickupPoint
@@ -571,6 +572,22 @@ def can_confirm_pickup(pkg):
 
 
 _can_confirm_pickup = can_confirm_pickup
+
+
+def can_confirm_arrival(pkg, today=None):
+    """Whether the card offers the manual "ya ha llegado" (see confirm_arrival).
+
+    In-transit packages whose delivery estimate has lapsed ("con retraso")
+    can be marked as delivered directly from the card.
+    """
+    if pkg.state != Package.State.IN_TRANSIT:
+        return False
+    if today is None:
+        today = timezone.localdate()
+    return estimate_note(pkg, today) == "con retraso"
+
+
+_can_confirm_arrival = can_confirm_arrival
 
 
 def build_calendar_weeks(start, n_weeks, today, month, chips):

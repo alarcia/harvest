@@ -3378,3 +3378,142 @@ class ManualPickupTests(TestCase):
                          {"picked_up_on": self.today.isoformat()})
         other.refresh_from_db()
         self.assertEqual(other.state, Package.State.AWAITING_PICKUP)
+
+
+class ManualArrivalTests(TestCase):
+    """The manual "ya ha llegado" confirmation: for packages in transit with delay
+    (such as home deliveries that never received an "entregado" email)."""
+
+    def setUp(self):
+        self.today = timezone.localdate()
+        self.home = PickupPoint.objects.create(
+            name="Rosa - Can Salgot", kind=PickupPoint.Kind.HOME)
+        self.pkg = Package.objects.create(
+            pickup_point=self.home, state=Package.State.IN_TRANSIT,
+            description="Cargador USB",
+            ordered_on=self.today - timedelta(days=5),
+            shipped_on=self.today - timedelta(days=3),
+            estimated_arrival=self.today - timedelta(days=1),
+        )
+
+    def test_delayed_in_transit_offers_the_button(self):
+        html = self.client.get(
+            reverse("package_detail", args=[self.pkg.pk])).content
+        self.assertIn(reverse("confirm_arrival", args=[self.pkg.pk]).encode(), html)
+        self.assertIn("Ya ha llegado".encode(), html)
+
+    def test_not_delayed_in_transit_offers_nothing_to_confirm(self):
+        self.pkg.estimated_arrival = self.today
+        self.pkg.save()
+        html = self.client.get(
+            reverse("package_detail", args=[self.pkg.pk])).content
+        self.assertNotIn(reverse("confirm_arrival", args=[self.pkg.pk]).encode(), html)
+        self.assertEqual(
+            self.client.get(reverse("confirm_arrival", args=[self.pkg.pk])).status_code,
+            404)
+
+    def test_running_window_offers_nothing_to_confirm(self):
+        self.pkg.estimated_arrival = self.today - timedelta(days=1)
+        self.pkg.estimated_arrival_end = self.today + timedelta(days=2)
+        self.pkg.save()
+        html = self.client.get(
+            reverse("package_detail", args=[self.pkg.pk])).content
+        self.assertNotIn(reverse("confirm_arrival", args=[self.pkg.pk]).encode(), html)
+        self.assertEqual(
+            self.client.get(reverse("confirm_arrival", args=[self.pkg.pk])).status_code,
+            404)
+
+    def test_expired_window_offers_the_button(self):
+        self.pkg.estimated_arrival = self.today - timedelta(days=4)
+        self.pkg.estimated_arrival_end = self.today - timedelta(days=1)
+        self.pkg.save()
+        html = self.client.get(
+            reverse("package_detail", args=[self.pkg.pk])).content
+        self.assertIn(reverse("confirm_arrival", args=[self.pkg.pk]).encode(), html)
+
+    def test_terminal_or_awaiting_package_offers_nothing(self):
+        for state in (Package.State.DELIVERED, Package.State.AWAITING_PICKUP, Package.State.PICKED_UP):
+            self.pkg.state = state
+            self.pkg.save()
+            html = self.client.get(
+                reverse("package_detail", args=[self.pkg.pk])).content
+            self.assertNotIn(reverse("confirm_arrival", args=[self.pkg.pk]).encode(), html)
+            self.assertEqual(
+                self.client.get(reverse("confirm_arrival", args=[self.pkg.pk])).status_code,
+                404)
+
+    def test_get_asks_for_the_day_without_changing_anything(self):
+        html = self.client.get(
+            reverse("confirm_arrival", args=[self.pkg.pk])).content
+        self.assertIn(b'name="actual_arrival"', html)
+        self.assertIn(f'value="{self.today.isoformat()}"'.encode(), html)
+        self.assertIn(f'max="{self.today.isoformat()}"'.encode(), html)
+        self.assertIn(f'min="{self.pkg.shipped_on.isoformat()}"'.encode(), html)
+        self.pkg.refresh_from_db()
+        self.assertEqual(self.pkg.state, Package.State.IN_TRANSIT)
+
+    def test_confirming_arrival_sets_actual_arrival_and_delivered(self):
+        yesterday = self.today - timedelta(days=1)
+        response = self.client.post(
+            reverse("confirm_arrival", args=[self.pkg.pk]),
+            {"actual_arrival": yesterday.isoformat()})
+        self.assertEqual(response.status_code, 200)
+        self.pkg.refresh_from_db()
+        self.assertEqual(self.pkg.state, Package.State.DELIVERED)
+        self.assertEqual(self.pkg.actual_arrival, yesterday)
+        self.assertIn(b"Entregado", response.content)
+        self.assertEqual(response["HX-Trigger"], "package-updated")
+
+        # Calendar reflects the delivered status on that day
+        html = self.client.get(
+            reverse("home") + f"?anchor={yesterday.isoformat()}",
+            HTTP_HX_REQUEST="true",
+        ).content
+        self.assertIn(b'is-delivered"', html)
+
+    def test_a_future_day_is_refused(self):
+        response = self.client.post(
+            reverse("confirm_arrival", args=[self.pkg.pk]),
+            {"actual_arrival": (self.today + timedelta(days=1)).isoformat()})
+        self.assertIn("futuro".encode(), response.content)
+        self.assertNotIn("HX-Trigger", response)
+        self.pkg.refresh_from_db()
+        self.assertEqual(self.pkg.state, Package.State.IN_TRANSIT)
+
+    def test_a_day_before_shipping_is_refused(self):
+        response = self.client.post(
+            reverse("confirm_arrival", args=[self.pkg.pk]),
+            {"actual_arrival": (self.pkg.shipped_on - timedelta(days=1)).isoformat()})
+        self.assertIn("no se había enviado".encode(), response.content)
+        self.pkg.refresh_from_db()
+        self.assertEqual(self.pkg.state, Package.State.IN_TRANSIT)
+
+    def test_a_day_before_ordering_without_shipping_is_refused(self):
+        self.pkg.shipped_on = None
+        self.pkg.save()
+        response = self.client.post(
+            reverse("confirm_arrival", args=[self.pkg.pk]),
+            {"actual_arrival": (self.pkg.ordered_on - timedelta(days=1)).isoformat()})
+        self.assertIn("no se había pedido".encode(), response.content)
+        self.pkg.refresh_from_db()
+        self.assertEqual(self.pkg.state, Package.State.IN_TRANSIT)
+
+    def test_confirming_starts_the_review_clock(self):
+        self.pkg.is_vine = True
+        self.pkg.save()
+        Review.objects.create(package=self.pkg, product_title=self.pkg.description)
+        yesterday = self.today - timedelta(days=1)
+        self.client.post(reverse("confirm_arrival", args=[self.pkg.pk]),
+                         {"actual_arrival": yesterday.isoformat()})
+        review = Review.objects.get(package=self.pkg)
+        self.assertEqual(review.due_on, yesterday + timedelta(days=14))
+
+    def test_confirming_one_package_never_affects_another(self):
+        other = Package.objects.create(
+            pickup_point=self.home, state=Package.State.IN_TRANSIT,
+            description="Otro paquete en camino",
+            estimated_arrival=self.today - timedelta(days=2))
+        self.client.post(reverse("confirm_arrival", args=[self.pkg.pk]),
+                         {"actual_arrival": self.today.isoformat()})
+        other.refresh_from_db()
+        self.assertEqual(other.state, Package.State.IN_TRANSIT)

@@ -51,6 +51,7 @@ _chips = calendar.get_chips
 _day_chips = calendar.day_chips
 _day_pickup_summary = calendar.day_pickup_summary
 _can_confirm_pickup = calendar.can_confirm_pickup
+_can_confirm_arrival = calendar.can_confirm_arrival
 
 
 def _nav(view, anchor, direction=None):
@@ -170,6 +171,7 @@ def _package_card(request, pkg, back_day):
         "preview_leaves_day": (calendar.preview_leaves_day(pkg, today)
                                if in_transit else None),
         "can_confirm_pickup": calendar.can_confirm_pickup(pkg),
+        "can_confirm_arrival": calendar.can_confirm_arrival(pkg, today),
         # Parcel-or-letter is only ever a real question in a Pepe y Dalda
         # notice, which is the one email that says which; everywhere else the
         # row would just say "Paquete" on every card. Including on an Amazon
@@ -263,6 +265,62 @@ def confirm_pickup(request, pk):
         "day": day,
         "today": today,
         "min_day": pkg.actual_arrival,
+        "error": error,
+        "back_day": back_day,
+    })
+
+
+def confirm_arrival(request, pk):
+    """Manual "ya ha llegado", for deliveries that missed their delivery notice.
+
+    Amazon home deliveries usually receive an "Entregado" email that sets
+    actual_arrival and transitions the package to DELIVERED. When that email is
+    missed, the package sits IN_TRANSIT with a "(con retraso)" note forever.
+
+    GET renders a confirmation step asking for the arrival date (defaulting to
+    today). POST validates that date and marks the package as DELIVERED.
+    """
+    pkg = get_object_or_404(Package.objects.select_related("pickup_point"), pk=pk)
+    today = timezone.localdate()
+    if not calendar.can_confirm_arrival(pkg, today):
+        raise Http404("Not an in-transit delayed package awaiting arrival confirmation")
+
+    back_day = calendar.parse_anchor(request.GET.get("from_day")
+                                     or request.POST.get("from_day"), None)
+    min_day = pkg.shipped_on or pkg.ordered_on
+    error, day = None, today
+
+    if request.method == "POST":
+        day = calendar.parse_anchor(request.POST.get("actual_arrival"), None)
+        if day is None:
+            error = "Fecha no válida."
+        elif day > today:
+            error = "No puedes recibir un paquete en el futuro."
+        elif min_day and day < min_day:
+            if pkg.shipped_on and day < pkg.shipped_on:
+                error = "Ese día el paquete todavía no se había enviado."
+            else:
+                error = "Ese día el paquete todavía no se había pedido."
+        if error is None:
+            pkg.state = Package.State.DELIVERED
+            pkg.actual_arrival = day
+            pkg.save(update_fields=["state", "actual_arrival", "updated_at"])
+            _sync_review_for_package(pkg)
+            set_review_due(pkg, day)
+            response = _package_card(request, pkg, back_day)
+            response["HX-Trigger"] = "package-updated"
+            return response
+        day = day or today
+
+    return render(request, "packages/_confirm_arrival.html", {
+        "package": pkg,
+        "label": calendar.package_label(pkg),
+        "point_label": calendar.point_label(pkg.pickup_point),
+        "point_maps_url": pkg.pickup_point.maps_url,
+        "source": calendar.source_family(pkg.pickup_point),
+        "day": day,
+        "today": today,
+        "min_day": min_day,
         "error": error,
         "back_day": back_day,
     })

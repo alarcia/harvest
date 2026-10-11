@@ -106,5 +106,13 @@
               hx-get="{% url 'confirm_pickup' package.pk %}{% if back_day %}?from_day={{ back_day|date:'Y-m-d' }}{% endif %}"
               hx-target="#modal" hx-swap="innerHTML">Ya lo he recogido</button>
     {% endif %}
+    {% if can_confirm_arrival %}
+      {% comment %}Manual close for deliveries delayed in transit that missed
+      their delivery notice. Opens a confirmation step with date picker and
+      confirmation button.{% endcomment %}
+      <button type="button" class="modal-action"
+              hx-get="{% url 'confirm_arrival' package.pk %}{% if back_day %}?from_day={{ back_day|date:'Y-m-d' }}{% endif %}"
+              hx-target="#modal" hx-swap="innerHTML">Ya ha llegado</button>
+    {% endif %}
   </div>
 </div>
