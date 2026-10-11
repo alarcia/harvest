@@ -1,0 +1,25 @@
+<li class="rev-item" data-product-title="{{ r.product_title|default:'' }}"
+    data-is-vine="{% if r.is_vine %}true{% else %}false{% endif %}"{% if is_other_cycle %} data-other-cycle="true"{% endif %}
+    data-review-on="{% if r.approved_on %}{{ r.approved_on|date:'Y-m-d' }}{% elif r.published_on %}{{ r.published_on|date:'Y-m-d' }}{% else %}{{ r.created_at|date:'Y-m-d' }}{% endif %}"
+    data-ordered-on="{% if r.package and r.package.ordered_on %}{{ r.package.ordered_on|date:'Y-m-d' }}{% endif %}"
+    data-received-on="{% if r.package and r.package.received_on %}{{ r.package.received_on|date:'Y-m-d' }}{% endif %}">
+  <button type="button" class="rev-row-btn"
+          hx-get="{% url 'review_detail' r.pk %}" hx-target="#modal" hx-swap="innerHTML">
+    {% if r.package.image_url %}<img class="rev-thumb" src="{{ r.package.image_url }}" alt="">{% endif %}
+    <div class="rev-body">
+      <span class="rev-name" title="{{ r.product_title|default:'Producto desconocido' }}">{{ r.product_title|default:"Producto desconocido" }}{% if r.is_vine %} <i class="vine-badge">Vine</i>{% endif %}</span>
+      {% if r.title %}<span class="rev-headline">«{{ r.title }}»</span>{% endif %}
+      <span class="rev-meta">
+        {% if r.status == "approved" %}<i class="status-badge status-approved">Aprobada</i>
+        {% elif r.status == "published" %}<i class="status-badge status-published">Publicada</i>{% endif %}
+        {% if r.rating %}· {{ r.rating }}★{% endif %}
+        {% if r.approved_on or r.published_on %}· Escrita el {{ r.approved_on|default:r.published_on|date:"j" }} de {{ r.approved_on|default:r.published_on|date:"F" }}{% endif %}
+      </span>
+      <span class="rev-dates">
+        {% if r.package.ordered_on %}Pedido el {{ r.package.ordered_on|date:"j" }} de {{ r.package.ordered_on|date:"F" }}{% endif %}
+        {% if r.package.received_on %}{% if r.package.ordered_on %} · {% endif %}{% if r.package.state == "picked_up" %}Recogido{% else %}Entregado{% endif %} el {{ r.package.received_on|date:"j" }} de {{ r.package.received_on|date:"F" }}{% endif %}
+        {% if not r.package.ordered_on and not r.package.received_on %}Sin fecha de pedido{% endif %}
+      </span>
+    </div>
+  </button>
+</li>

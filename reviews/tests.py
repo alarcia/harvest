@@ -198,6 +198,41 @@ class ReviewsListViewTests(TestCase):
         response = self._get()
         self.assertNotIn(review, response.context["pendientes"])
 
+    def test_toggle_shows_only_non_vine_products(self):
+        # When "No vine" toggle is activated, ONLY non-Vine products must be shown,
+        # never all products (Vine products must be excluded).
+        pkg_vine = _package(ordered_on=self._in_current(), state=Package.State.DELIVERED,
+                            is_vine=True, description="Producto Vine")
+        pkg_vine.actual_arrival = self.today
+        pkg_vine.save()
+        rev_vine = Review.objects.create(package=pkg_vine, product_title=pkg_vine.description,
+                                         status=Review.Status.PENDING)
+
+        pkg_non = _package(ordered_on=self._in_current(), state=Package.State.DELIVERED,
+                           is_vine=False, description="Compra Normal")
+        pkg_non.actual_arrival = self.today
+        pkg_non.save()
+        rev_non = Review.objects.create(package=pkg_non, product_title=pkg_non.description,
+                                        status=Review.Status.PENDING)
+
+        # Default (toggle OFF): shows Vine, excludes non-Vine
+        res_default = self._get()
+        self.assertIn(rev_vine, res_default.context["pendientes"])
+        self.assertNotIn(rev_non, res_default.context["pendientes"])
+        self.assertNotContains(res_default, 'class="rev is-non-vine"')
+        # Toggle checkbox must NOT have hx-get so it works instantly in the browser without reloading
+        self.assertContains(res_default, 'id="rev-toggle-non-vine"')
+        self.assertNotContains(res_default, 'id="rev-toggle-non-vine" hx-get')
+        # Both items are present in DOM for client-side instant switching
+        self.assertContains(res_default, 'data-is-vine="true"')
+        self.assertContains(res_default, 'data-is-vine="false"')
+
+        # Toggle ON (non_vine="1"): shows ONLY non-Vine, excludes Vine
+        res_non_vine = self._get(non_vine="1")
+        self.assertIn(rev_non, res_non_vine.context["pendientes"])
+        self.assertNotIn(rev_vine, res_non_vine.context["pendientes"])
+        self.assertContains(res_non_vine, 'class="rev is-non-vine"')
+
     def test_the_badge_never_counts_a_package_he_does_not_have(self):
         # A due_on typed into the admin on an unreceived row would otherwise
         # nag from the top bar with nothing on the list to act on.

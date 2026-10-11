@@ -143,6 +143,10 @@ class ReviewQuerySet(models.QuerySet):
             return self
         return self.filter(Q(package__isnull=True) | Q(package__is_vine=True))
 
+    def non_vine(self):
+        """Only non-Vine items (voluntary personal purchases)."""
+        return self.filter(package__is_vine=False)
+
     def received(self):
         """Only reviews of products the user actually has in his hands.
 

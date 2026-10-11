@@ -6,7 +6,7 @@ swapped in from the calendar page.{% endcomment %}
 under the page from outside it — the topbar's manual ingest sweep, which can
 create or close reviews. Same mechanism the calendar uses: refetch this very
 section in place, no URL change.{% endcomment %}
-<section id="app-view" class="rev" hx-target="#app-view" hx-swap="outerHTML"
+<section id="app-view" class="rev{% if non_vine_only %} is-non-vine{% endif %}" hx-target="#app-view" hx-swap="outerHTML"
          hx-get="{{ self_url }}" hx-trigger="package-updated from:body">
   <style>
     .rev {
@@ -1154,6 +1154,20 @@ section in place, no URL change.{% endcomment %}
       display: none !important;
     }
 
+    /* Non-vine vs Vine visibility */
+    .rev:not(.is-non-vine) .rev-item[data-is-vine="false"] {
+      display: none !important;
+    }
+    .rev.is-non-vine .rev-item[data-is-vine="true"] {
+      display: none !important;
+    }
+    .rev.is-non-vine .rev-group.urgent {
+      display: none !important;
+    }
+    .rev.is-non-vine .rev-stats {
+      display: none !important;
+    }
+
     /* While searching: hide cycle nav, stats, and toggle to focus on search results */
     .rev.is-searching .rev-cyclenav,
     .rev.is-searching .rev-stats,
@@ -1217,8 +1231,8 @@ section in place, no URL change.{% endcomment %}
     </div>
 
     <div class="rev-subbar">
-      {% if borradores or vencidas or pendientes or other_borradores or other_pendientes %}
-        <div class="rev-sort-bar" id="rev-sort-unwritten">
+      {% if borradores or vencidas or pendientes or other_borradores or other_pendientes or inactive_borradores or inactive_pendientes %}
+        <div class="rev-sort-bar" id="rev-sort-unwritten"{% if not borradores and not vencidas and not pendientes %} style="display: none;"{% endif %}>
           <span class="rev-sort-label">Ordenar:</span>
           <div class="rev-sort-pills" role="radiogroup" aria-label="Ordenar por fecha">
             <button type="button" class="rev-sort-btn active" data-sort-group="unwritten" data-sort-by="default" title="Orden natural por urgencia y estado">
@@ -1237,8 +1251,7 @@ section in place, no URL change.{% endcomment %}
       {% endif %}
 
       <label class="rev-toggle">
-        <input type="checkbox" {% if include_non_vine %}checked{% endif %}
-               hx-get="{{ toggle_url }}" hx-push-url="{{ toggle_url }}">
+        <input type="checkbox" id="rev-toggle-non-vine" {% if non_vine_only %}checked{% endif %}>
         <span class="switch"></span>
         No vine
       </label>
@@ -1398,34 +1411,37 @@ section in place, no URL change.{% endcomment %}
     and the untouched backlog) so the user remembers to edit and finish them.
     Hidden when empty, like ⚠ Urgentes: an always-visible empty group would
     just push the backlog down.{% endcomment %}
-    {% if borradores or other_borradores %}
+    {% if borradores or other_borradores or inactive_borradores %}
       <details class="rev-group drafts{% if not borradores %} rev-other-only{% endif %}" open>
         <summary><span>Borradores</span> <span class="rev-count" data-original-count="{{ borradores|length }}">{{ borradores|length }}</span></summary>
         <ul>
           {% for r in borradores %}{% include "reviews/_review_row.html" with r=r mode="draft" %}{% endfor %}
+          {% for r in inactive_borradores %}{% include "reviews/_review_row.html" with r=r mode="draft" %}{% endfor %}
           {% for r in other_borradores %}{% include "reviews/_review_row.html" with r=r mode="draft" is_other_cycle=True %}{% endfor %}
         </ul>
       </details>
     {% endif %}
 
-    {% if vencidas %}
+    {% if vencidas or inactive_vencidas %}
       <details class="rev-group urgent" open>
         <summary><span>⚠ Urgentes</span> <span class="rev-count" data-original-count="{{ vencidas|length }}">{{ vencidas|length }}</span></summary>
         <ul>
           {% for r in vencidas %}{% include "reviews/_review_row.html" with r=r mode="urgent" %}{% endfor %}
+          {% for r in inactive_vencidas %}{% include "reviews/_review_row.html" with r=r mode="urgent" %}{% endfor %}
         </ul>
       </details>
     {% endif %}
 
     <details class="rev-group pending-group" data-has-pendientes="{% if pendientes %}true{% else %}false{% endif %}" open>
       <summary><span>Pendientes</span> <span class="rev-count" data-original-count="{{ pendientes|length }}">{{ pendientes|length }}</span></summary>
-      {% if pendientes or other_pendientes %}
+      {% if pendientes or other_pendientes or inactive_pendientes %}
         <ul>
           {% for r in pendientes %}{% include "reviews/_review_row.html" with r=r mode="pending" %}{% endfor %}
+          {% for r in inactive_pendientes %}{% include "reviews/_review_row.html" with r=r mode="pending" %}{% endfor %}
           {% for r in other_pendientes %}{% include "reviews/_review_row.html" with r=r mode="pending" is_other_cycle=True %}{% endfor %}
         </ul>
       {% endif %}
-      <p class="rev-empty"{% if pendientes %} style="display: none;"{% endif %}>Nada pendiente{% if not include_non_vine %} de Vine{% endif %}{% if not is_current_cycle %} en este ciclo{% endif %}.</p>
+      <p class="rev-empty"{% if pendientes %} style="display: none;"{% endif %}>Nada pendiente{% if not non_vine_only %} de Vine{% endif %}{% if not is_current_cycle %} en este ciclo{% endif %}.</p>
     </details>
 
     {% comment %}Collapsed by default — the written reviews are history, not
@@ -1436,9 +1452,9 @@ section in place, no URL change.{% endcomment %}
     page through cycles makes the layout jump.{% endcomment %}
     <details class="rev-group confirmed">
       <summary><span>Reseñas escritas</span> <span class="rev-count" data-original-count="{{ confirmed|length }}">{{ confirmed|length }}</span></summary>
-      {% if confirmed or other_confirmed %}
+      {% if confirmed or other_confirmed or inactive_confirmed %}
         <div class="rev-confirmed-header">
-          <div class="rev-sort-bar" id="rev-sort-written">
+          <div class="rev-sort-bar" id="rev-sort-written"{% if not confirmed %} style="display: none;"{% endif %}>
             <span class="rev-sort-label">Ordenar:</span>
             <div class="rev-sort-pills" role="radiogroup" aria-label="Ordenar reseñas escritas">
               <button type="button" class="rev-sort-btn active" data-sort-group="written" data-sort-by="review" data-sort-dir="desc" title="Ordenar por fecha de reseña">
@@ -1457,58 +1473,9 @@ section in place, no URL change.{% endcomment %}
           </div>
         </div>
         <ul>
-          {% for r in confirmed %}
-            <li class="rev-item" data-product-title="{{ r.product_title|default:'' }}"
-                data-review-on="{% if r.approved_on %}{{ r.approved_on|date:'Y-m-d' }}{% elif r.published_on %}{{ r.published_on|date:'Y-m-d' }}{% else %}{{ r.created_at|date:'Y-m-d' }}{% endif %}"
-                data-ordered-on="{% if r.package and r.package.ordered_on %}{{ r.package.ordered_on|date:'Y-m-d' }}{% endif %}"
-                data-received-on="{% if r.package and r.package.received_on %}{{ r.package.received_on|date:'Y-m-d' }}{% endif %}">
-              <button type="button" class="rev-row-btn"
-                      hx-get="{% url 'review_detail' r.pk %}" hx-target="#modal" hx-swap="innerHTML">
-                {% if r.package.image_url %}<img class="rev-thumb" src="{{ r.package.image_url }}" alt="">{% endif %}
-                <div class="rev-body">
-                  <span class="rev-name" title="{{ r.product_title|default:'Producto desconocido' }}">{{ r.product_title|default:"Producto desconocido" }}{% if r.is_vine %} <i class="vine-badge">Vine</i>{% endif %}</span>
-                  {% if r.title %}<span class="rev-headline">«{{ r.title }}»</span>{% endif %}
-                  <span class="rev-meta">
-                    {% if r.status == "approved" %}<i class="status-badge status-approved">Aprobada</i>
-                    {% elif r.status == "published" %}<i class="status-badge status-published">Publicada</i>{% endif %}
-                    {% if r.rating %}· {{ r.rating }}★{% endif %}
-                    {% if r.approved_on or r.published_on %}· Escrita el {{ r.approved_on|default:r.published_on|date:"j" }} de {{ r.approved_on|default:r.published_on|date:"F" }}{% endif %}
-                  </span>
-                  <span class="rev-dates">
-                    {% if r.package.ordered_on %}Pedido el {{ r.package.ordered_on|date:"j" }} de {{ r.package.ordered_on|date:"F" }}{% endif %}
-                    {% if r.package.received_on %}{% if r.package.ordered_on %} · {% endif %}{% if r.package.state == "picked_up" %}Recogido{% else %}Entregado{% endif %} el {{ r.package.received_on|date:"j" }} de {{ r.package.received_on|date:"F" }}{% endif %}
-                    {% if not r.package.ordered_on and not r.package.received_on %}Sin fecha de pedido{% endif %}
-                  </span>
-                </div>
-              </button>
-            </li>
-          {% endfor %}
-          {% for r in other_confirmed %}
-            <li class="rev-item" data-product-title="{{ r.product_title|default:'' }}" data-other-cycle="true"
-                data-review-on="{% if r.approved_on %}{{ r.approved_on|date:'Y-m-d' }}{% elif r.published_on %}{{ r.published_on|date:'Y-m-d' }}{% else %}{{ r.created_at|date:'Y-m-d' }}{% endif %}"
-                data-ordered-on="{% if r.package and r.package.ordered_on %}{{ r.package.ordered_on|date:'Y-m-d' }}{% endif %}"
-                data-received-on="{% if r.package and r.package.received_on %}{{ r.package.received_on|date:'Y-m-d' }}{% endif %}">
-              <button type="button" class="rev-row-btn"
-                      hx-get="{% url 'review_detail' r.pk %}" hx-target="#modal" hx-swap="innerHTML">
-                {% if r.package.image_url %}<img class="rev-thumb" src="{{ r.package.image_url }}" alt="">{% endif %}
-                <div class="rev-body">
-                  <span class="rev-name" title="{{ r.product_title|default:'Producto desconocido' }}">{{ r.product_title|default:"Producto desconocido" }}{% if r.is_vine %} <i class="vine-badge">Vine</i>{% endif %}</span>
-                  {% if r.title %}<span class="rev-headline">«{{ r.title }}»</span>{% endif %}
-                  <span class="rev-meta">
-                    {% if r.status == "approved" %}<i class="status-badge status-approved">Aprobada</i>
-                    {% elif r.status == "published" %}<i class="status-badge status-published">Publicada</i>{% endif %}
-                    {% if r.rating %}· {{ r.rating }}★{% endif %}
-                    {% if r.approved_on or r.published_on %}· Escrita el {{ r.approved_on|default:r.published_on|date:"j" }} de {{ r.approved_on|default:r.published_on|date:"F" }}{% endif %}
-                  </span>
-                  <span class="rev-dates">
-                    {% if r.package.ordered_on %}Pedido el {{ r.package.ordered_on|date:"j" }} de {{ r.package.ordered_on|date:"F" }}{% endif %}
-                    {% if r.package.received_on %}{% if r.package.ordered_on %} · {% endif %}{% if r.package.state == "picked_up" %}Recogido{% else %}Entregado{% endif %} el {{ r.package.received_on|date:"j" }} de {{ r.package.received_on|date:"F" }}{% endif %}
-                    {% if not r.package.ordered_on and not r.package.received_on %}Sin fecha de pedido{% endif %}
-                  </span>
-                </div>
-              </button>
-            </li>
-          {% endfor %}
+          {% for r in confirmed %}{% include "reviews/_confirmed_row.html" with r=r %}{% endfor %}
+          {% for r in inactive_confirmed %}{% include "reviews/_confirmed_row.html" with r=r %}{% endfor %}
+          {% for r in other_confirmed %}{% include "reviews/_confirmed_row.html" with r=r is_other_cycle=True %}{% endfor %}
         </ul>
       {% else %}
         <p class="rev-empty">Nada escrito todavía en este ciclo.</p>
@@ -1520,19 +1487,19 @@ section in place, no URL change.{% endcomment %}
   <script>
     (function() {
       // -------------------------------------------------------------
-      // Search Functionality
+      // Search and Vine/Non-Vine Filtering
       // -------------------------------------------------------------
-      function initReviewsSearch() {
+      function initReviewsFilter() {
         const input = document.getElementById('rev-search-input');
         const clearBtn = document.getElementById('rev-search-clear');
+        const toggleCheckbox = document.getElementById('rev-toggle-non-vine');
         const revContainer = document.getElementById('app-view');
         const noResults = document.getElementById('rev-no-results');
         const noResultsQuery = document.getElementById('rev-no-results-query');
         const unwrittenSortBar = document.getElementById('rev-sort-unwritten');
+        const writtenSortBar = document.getElementById('rev-sort-written');
 
-        if (!input || !revContainer) return;
-        if (input.dataset.searchBound === 'true') return;
-        input.dataset.searchBound = 'true';
+        if (!revContainer) return;
 
         const detailsGroups = Array.from(revContainer.querySelectorAll('details.rev-group'));
         const wasGroupOpenBeforeSearch = new Map();
@@ -1554,144 +1521,222 @@ section in place, no URL change.{% endcomment %}
         }
 
         function doFilter() {
-          const rawQuery = input.value;
+          const isNonVine = toggleCheckbox ? toggleCheckbox.checked : false;
+          const rawQuery = input ? input.value : '';
           const query = rawQuery.trim();
           const normQuery = normalize(query);
           const isSearching = normQuery.length > 0;
+          const queryWords = normQuery.split(/\s+/).filter(Boolean);
+
+          revContainer.classList.toggle('is-non-vine', isNonVine);
+          revContainer.classList.toggle('is-searching', isSearching);
 
           if (clearBtn) {
             clearBtn.style.display = rawQuery.length > 0 ? 'inline-flex' : 'none';
           }
 
-          if (!isSearching) {
-            revContainer.classList.remove('is-searching');
-            if (noResults) noResults.style.display = 'none';
-            if (unwrittenSortBar) unwrittenSortBar.style.display = '';
-
-            // Reset all items
-            const allItems = revContainer.querySelectorAll('.rev-item');
-            allItems.forEach(item => {
-              if (item.dataset.otherCycle === 'true') {
-                item.style.display = 'none';
-              } else {
-                item.style.display = '';
-              }
-            });
-
-            // Reset all groups
-            const groups = revContainer.querySelectorAll('.rev-group');
-            groups.forEach(g => {
-              g.style.display = '';
-            });
-
-            // Restore details groups open/closed state and original count badges
-            detailsGroups.forEach(d => {
-              const wasOpen = wasGroupOpenBeforeSearch.has(d)
-                ? wasGroupOpenBeforeSearch.get(d)
-                : d.hasAttribute('open');
-              if (wasOpen) {
-                d.setAttribute('open', '');
-              } else {
-                d.removeAttribute('open');
-              }
-              const countBadge = d.querySelector('.rev-count');
-              if (countBadge && countBadge.dataset.originalCount !== undefined) {
-                countBadge.textContent = countBadge.dataset.originalCount;
-              }
-            });
-
-            // Restore empty message in pending group if it was originally empty
-            const pendingGroup = revContainer.querySelector('.rev-group.pending-group');
-            if (pendingGroup) {
-              const emptyP = pendingGroup.querySelector('.rev-empty');
-              const hasPendientes = pendingGroup.dataset.hasPendientes === 'true';
-              if (emptyP) emptyP.style.display = hasPendientes ? 'none' : '';
-            }
-
-            return;
-          }
-
-          // We are actively searching
-          revContainer.classList.add('is-searching');
-          const queryWords = normQuery.split(/\s+/).filter(Boolean);
-
           let totalMatches = 0;
+          let unwrittenMatches = 0;
           let confirmedMatches = 0;
 
           const groups = revContainer.querySelectorAll('.rev-group');
           groups.forEach(group => {
+            const isUrgent = group.classList.contains('urgent');
+            const isDrafts = group.classList.contains('drafts');
+            const isPending = group.classList.contains('pending-group');
+            const isConfirmed = group.classList.contains('confirmed');
+
+            // Non-Vine purchases are voluntary, never urgent
+            if (isUrgent && isNonVine) {
+              group.style.display = 'none';
+              return;
+            }
+
             const items = group.querySelectorAll('.rev-item');
             let groupMatches = 0;
 
             items.forEach(item => {
-              const title = item.dataset.productTitle || item.querySelector('.rev-name')?.textContent || '';
-              const normTitle = normalize(title);
+              const isVineItem = item.dataset.isVine === 'true';
+              const isOtherCycle = item.dataset.otherCycle === 'true';
 
-              const matches = queryWords.every(word => normTitle.includes(word));
-              if (matches) {
-                item.style.display = '';
-                groupMatches++;
-                totalMatches++;
-                if (group.classList.contains('confirmed')) {
-                  confirmedMatches++;
-                }
-              } else {
+              // 1. Vine toggle filter:
+              // isNonVine == true -> only non-vine items (isVineItem == false)
+              // isNonVine == false -> only vine items (isVineItem == true)
+              if (isNonVine ? isVineItem : !isVineItem) {
                 item.style.display = 'none';
+                return;
+              }
+
+              // 2. Cycle filter: other cycle items only shown while searching
+              if (!isSearching && isOtherCycle) {
+                item.style.display = 'none';
+                return;
+              }
+
+              // 3. Search query filter
+              if (isSearching) {
+                const title = item.dataset.productTitle || item.querySelector('.rev-name')?.textContent || '';
+                const normTitle = normalize(title);
+                const matches = queryWords.every(word => normTitle.includes(word));
+                if (!matches) {
+                  item.style.display = 'none';
+                  return;
+                }
+              }
+
+              item.style.display = '';
+              groupMatches++;
+              totalMatches++;
+              if (isConfirmed) {
+                confirmedMatches++;
+              } else {
+                unwrittenMatches++;
               }
             });
 
-            // Hide the default empty message inside groups during search
             const emptyMsg = group.querySelector('.rev-empty');
-            if (emptyMsg) emptyMsg.style.display = 'none';
 
-            // Hide group if it has 0 matches, or show and open it if it has matches
-            if (groupMatches === 0) {
-              group.style.display = 'none';
-            } else {
-              group.style.display = '';
-              if (group.tagName.toLowerCase() === 'details') {
+            if (isSearching) {
+              if (emptyMsg) emptyMsg.style.display = 'none';
+              group.style.display = groupMatches > 0 ? '' : 'none';
+              if (groupMatches > 0 && group.tagName.toLowerCase() === 'details') {
                 group.setAttribute('open', '');
                 const countBadge = group.querySelector('.rev-count');
-                if (countBadge) {
-                  countBadge.textContent = groupMatches;
+                if (countBadge) countBadge.textContent = groupMatches;
+              }
+            } else {
+              // Not searching
+              if (isDrafts) {
+                group.style.display = groupMatches > 0 ? '' : 'none';
+              } else if (isUrgent) {
+                group.style.display = (!isNonVine && groupMatches > 0) ? '' : 'none';
+              } else if (isPending) {
+                group.style.display = '';
+                if (emptyMsg) {
+                  emptyMsg.style.display = groupMatches === 0 ? '' : 'none';
+                  emptyMsg.textContent = isNonVine
+                    ? 'Nada pendiente no Vine{% if not is_current_cycle %} en este ciclo{% endif %}.'
+                    : 'Nada pendiente de Vine{% if not is_current_cycle %} en este ciclo{% endif %}.';
+                }
+              } else if (isConfirmed) {
+                group.style.display = '';
+                if (emptyMsg) {
+                  emptyMsg.style.display = groupMatches === 0 ? '' : 'none';
+                }
+              }
+
+              const countBadge = group.querySelector('.rev-count');
+              if (countBadge) {
+                countBadge.textContent = groupMatches;
+              }
+
+              if (group.tagName.toLowerCase() === 'details') {
+                const wasOpen = wasGroupOpenBeforeSearch.has(group)
+                  ? wasGroupOpenBeforeSearch.get(group)
+                  : group.hasAttribute('open');
+                if (wasOpen) {
+                  group.setAttribute('open', '');
+                } else {
+                  group.removeAttribute('open');
                 }
               }
             }
           });
 
-          // Show unwritten sort bar only if there are unwritten search results
+          // Sort bars visibility
           if (unwrittenSortBar) {
-            const unwrittenMatches = totalMatches - confirmedMatches;
             unwrittenSortBar.style.display = unwrittenMatches > 0 ? '' : 'none';
+          }
+          if (writtenSortBar) {
+            writtenSortBar.style.display = confirmedMatches > 0 ? '' : 'none';
+          }
+
+          // Stats card visibility (hidden when searching or in non-Vine mode)
+          const statsCard = revContainer.querySelector('.rev-stats');
+          if (statsCard) {
+            statsCard.style.display = (isSearching || isNonVine) ? 'none' : '';
           }
 
           // No results state
           if (noResults) {
-            if (totalMatches === 0) {
+            if (isSearching && totalMatches === 0) {
               noResults.style.display = 'flex';
               if (noResultsQuery) noResultsQuery.textContent = `«${rawQuery}»`;
             } else {
               noResults.style.display = 'none';
             }
           }
+
+          // Update URL query param silently without reloading
+          try {
+            const url = new URL(window.location.href);
+            if (isNonVine) {
+              url.searchParams.set('non_vine', '1');
+            } else {
+              url.searchParams.delete('non_vine');
+            }
+            window.history.replaceState(null, '', url.pathname + url.search);
+          } catch (e) {}
+
+          // Update cycle nav links and self_url so HTMX paging/refetch preserves toggle
+          const cyclenavButtons = revContainer.querySelectorAll('.rev-cyclenav button[hx-get]');
+          cyclenavButtons.forEach(btn => {
+            const currentHxGet = btn.getAttribute('hx-get');
+            if (currentHxGet) {
+              try {
+                const u = new URL(currentHxGet, window.location.origin);
+                if (isNonVine) {
+                  u.searchParams.set('non_vine', '1');
+                } else {
+                  u.searchParams.delete('non_vine');
+                }
+                const newPath = u.pathname + u.search;
+                btn.setAttribute('hx-get', newPath);
+                if (btn.hasAttribute('hx-push-url')) {
+                  btn.setAttribute('hx-push-url', newPath);
+                }
+              } catch (e) {}
+            }
+          });
+
+          const currentSelfUrl = revContainer.getAttribute('hx-get');
+          if (currentSelfUrl) {
+            try {
+              const u = new URL(currentSelfUrl, window.location.origin);
+              if (isNonVine) {
+                u.searchParams.set('non_vine', '1');
+              } else {
+                u.searchParams.delete('non_vine');
+              }
+              revContainer.setAttribute('hx-get', u.pathname + u.search);
+            } catch (e) {}
+          }
         }
 
-        input.addEventListener('input', doFilter);
-
-        if (clearBtn) {
-          clearBtn.addEventListener('click', () => {
-            input.value = '';
-            input.focus();
-            doFilter();
+        if (input && input.dataset.searchBound !== 'true') {
+          input.dataset.searchBound = 'true';
+          input.addEventListener('input', doFilter);
+          if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+              input.value = '';
+              input.focus();
+              doFilter();
+            });
+          }
+          input.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+              input.value = '';
+              doFilter();
+            }
           });
         }
 
-        input.addEventListener('keydown', (e) => {
-          if (e.key === 'Escape') {
-            input.value = '';
-            doFilter();
-          }
-        });
+        if (toggleCheckbox && toggleCheckbox.dataset.toggleBound !== 'true') {
+          toggleCheckbox.dataset.toggleBound = 'true';
+          toggleCheckbox.addEventListener('change', doFilter);
+        }
+
+        doFilter();
       }
 
       // -------------------------------------------------------------
@@ -1896,7 +1941,7 @@ section in place, no URL change.{% endcomment %}
       }
 
       function initReviews() {
-        initReviewsSearch();
+        initReviewsFilter();
         initReviewsSort();
       }
 
@@ -1906,10 +1951,23 @@ section in place, no URL change.{% endcomment %}
         initReviews();
       }
       document.addEventListener('htmx:afterSwap', function(e) {
-        if (e.target && (e.target.id === 'app-view' || e.target.querySelector?.('#rev-search-input') || e.target.querySelector?.('.rev-sort-bar'))) {
+        if (e.target && (e.target.id === 'app-view' || e.target.querySelector?.('#rev-search-input') || e.target.querySelector?.('.rev-sort-bar') || e.target.querySelector?.('#rev-toggle-non-vine'))) {
           initReviews();
         }
       });
+      if (!window._harvestPopstateBound) {
+        window._harvestPopstateBound = true;
+        window.addEventListener('popstate', function() {
+          const toggle = document.getElementById('rev-toggle-non-vine');
+          if (toggle) {
+            const isNonVineFromUrl = new URL(window.location.href).searchParams.get('non_vine') === '1';
+            if (toggle.checked !== isNonVineFromUrl) {
+              toggle.checked = isNonVineFromUrl;
+              toggle.dispatchEvent(new Event('change'));
+            }
+          }
+        });
+      }
     })();
   </script>
 </section>

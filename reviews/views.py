@@ -206,11 +206,11 @@ def reviews_list(request):
     navigable = VineCycle.navigable(current_cycle)
 
     raw_cycle = request.GET.get("cycle")
-    include_non_vine = request.GET.get("non_vine") == "1"
+    non_vine_only = request.GET.get("non_vine") == "1"
     if raw_cycle:
         cycle = _find_cycle(raw_cycle)
         if cycle is None or not navigable.filter(pk=cycle.pk).exists():
-            return redirect(_reviews_url(None, include_non_vine))
+            return redirect(_reviews_url(None, non_vine_only))
     else:
         cycle = current_cycle
     is_current = cycle is not None and current_cycle is not None and cycle.pk == current_cycle.pk
@@ -226,24 +226,11 @@ def reviews_list(request):
         next_cycle = (navigable.filter(starts_on__gt=cycle.starts_on)
                       .order_by("starts_on").first())
 
-    base = (Review.objects
-            .select_related("package", "package__pickup_point")
-            .vine(include_non_vine))
+    base = Review.objects.select_related("package", "package__pickup_point")
 
     # The chore, at both its stages: still to write (`pending`) and written
     # but not yet on Amazon (`draft`). Same cycle rule for both, since a
     # draft is the very same row a day later.
-    #
-    # A review with no known order date can't be placed in any cycle — it
-    # means the "Pedido" email was never ingested, only a later one (e.g.
-    # straight from a review-published match). Rather than guess, it stays
-    # off this list entirely; the review-published email closes it into
-    # "Reseñas escritas" on its own whenever it arrives.
-    #
-    # The Review row exists from the order onward, but the chore is only shown
-    # once the product is in his hands: `received()` keeps out everything
-    # still travelling or still waiting on a counter. This is state-based, so
-    # a manual state change is reflected without needing another email.
     open_reviews = base.filter(status__in=Review.EDITABLE,
                                 package__ordered_on__isnull=False).received()
     open_reviews = list(
@@ -251,42 +238,58 @@ def reviews_list(request):
                              package__ordered_on__lte=cycle.ends_on)
         if cycle else open_reviews.none()
     )
-    pending = [r for r in open_reviews if r.status == Review.Status.PENDING]
-    # Drafts never join the urgent group even when overdue: the badge and the
-    # ⚠ list have to name the same rows (see `ReviewQuerySet.vencidas`), and
-    # with a backlog that's mostly overdue already, writing a draft has to
-    # visibly *move* the row somewhere. It still says how late it is on its
-    # own row.
-    borradores = sorted((r for r in open_reviews if r.status == Review.Status.DRAFT),
-                         key=lambda r: _ordered_on(r, date.max))
 
-    if is_current:
-        vencidas = sorted((r for r in pending if r.is_vine and r.due_on and r.due_on <= today),
-                           key=_due_on)
-        vencidas_ids = {r.pk for r in vencidas}
-        pendientes = sorted((r for r in pending if r.pk not in vencidas_ids),
-                             key=_due_on)
-    else:
-        # Browsing history: nothing is "urgent" outside the current cycle,
-        # per the cycle's whole point (last cycle's backlog is demoted, not
-        # deleted) — just the plain backlog for that period.
-        vencidas = []
-        pendientes = sorted(pending, key=_due_on)
-
-    # Written reviews belong to a cycle too — the history section is "what I
-    # wrote for this period", not an ever-growing pile repeated on every
-    # page. Filed by order date like the backlog, except that a package-less
-    # row (historical import, or one the "Gracias por tu reseña" email
-    # created on its own) falls back to when it was written; see
-    # `_cycle_date`. No fallback for pending above, on purpose: there the
-    # cycle drives nagging.
-    confirmed = sorted(
-        base.written().in_cycle(cycle.starts_on, cycle.ends_on) if cycle else base.none(),
-        key=_confirmed_on, reverse=True,
+    confirmed_reviews = list(
+        base.written().in_cycle(cycle.starts_on, cycle.ends_on) if cycle else base.none()
     )
 
+    # Partition reviews by Vine vs Non-Vine (both are rendered into DOM for instant toggle)
+    vine_open = [r for r in open_reviews if r.is_vine]
+    vine_pending = [r for r in vine_open if r.status == Review.Status.PENDING]
+    vine_borradores = sorted((r for r in vine_open if r.status == Review.Status.DRAFT),
+                             key=lambda r: _ordered_on(r, date.max))
+    if is_current:
+        vine_vencidas = sorted((r for r in vine_pending if r.due_on and r.due_on <= today),
+                               key=_due_on)
+        vencidas_ids = {r.pk for r in vine_vencidas}
+        vine_pendientes = sorted((r for r in vine_pending if r.pk not in vencidas_ids),
+                                 key=_due_on)
+    else:
+        vine_vencidas = []
+        vine_pendientes = sorted(vine_pending, key=_due_on)
+    vine_confirmed = sorted((r for r in confirmed_reviews if r.is_vine),
+                            key=_confirmed_on, reverse=True)
+
+    non_vine_open = [r for r in open_reviews if not r.is_vine]
+    non_vine_borradores = sorted((r for r in non_vine_open if r.status == Review.Status.DRAFT),
+                                 key=lambda r: _ordered_on(r, date.max))
+    non_vine_pendientes = sorted((r for r in non_vine_open if r.status == Review.Status.PENDING),
+                                 key=_due_on)
+    non_vine_vencidas = []  # non-Vine purchases are voluntary; never urgent
+    non_vine_confirmed = sorted((r for r in confirmed_reviews if not r.is_vine),
+                                key=_confirmed_on, reverse=True)
+
+    if non_vine_only:
+        borradores = non_vine_borradores
+        vencidas = non_vine_vencidas
+        pendientes = non_vine_pendientes
+        confirmed = non_vine_confirmed
+        inactive_borradores = vine_borradores
+        inactive_vencidas = vine_vencidas
+        inactive_pendientes = vine_pendientes
+        inactive_confirmed = vine_confirmed
+    else:
+        borradores = vine_borradores
+        vencidas = vine_vencidas
+        pendientes = vine_pendientes
+        confirmed = vine_confirmed
+        inactive_borradores = non_vine_borradores
+        inactive_vencidas = non_vine_vencidas
+        inactive_pendientes = non_vine_pendientes
+        inactive_confirmed = non_vine_confirmed
+
     # Reviews from other cycles, available in the DOM for instant global search in the client.
-    current_ids = {r.pk for r in open_reviews} | {r.pk for r in confirmed}
+    current_ids = {r.pk for r in open_reviews} | {r.pk for r in confirmed_reviews}
     other_open = list(
         base.filter(status__in=Review.EDITABLE, package__ordered_on__isnull=False)
         .received()
@@ -312,19 +315,21 @@ def reviews_list(request):
         "cycle": cycle,
         "stats": _cycle_stats(cycle, today),
         "is_current_cycle": is_current,
-        "prev_cycle_url": _reviews_url(prev_cycle, include_non_vine) if prev_cycle else None,
-        "next_cycle_url": _reviews_url(next_cycle, include_non_vine) if next_cycle else None,
-        "current_cycle_url": _reviews_url(None, include_non_vine) if not is_current else None,
-        "toggle_url": _reviews_url(None if is_current else cycle, not include_non_vine),
-        # This very page: what the section refetches when an ingest sweep
-        # changes something under it (the topbar's "procesar ahora" button,
-        # which can close a review or create a pending one).
-        "self_url": _reviews_url(None if is_current else cycle, include_non_vine),
-        "include_non_vine": include_non_vine,
+        "prev_cycle_url": _reviews_url(prev_cycle, non_vine_only) if prev_cycle else None,
+        "next_cycle_url": _reviews_url(next_cycle, non_vine_only) if next_cycle else None,
+        "current_cycle_url": _reviews_url(None, non_vine_only) if not is_current else None,
+        "toggle_url": _reviews_url(None if is_current else cycle, not non_vine_only),
+        "self_url": _reviews_url(None if is_current else cycle, non_vine_only),
+        "include_non_vine": non_vine_only,
+        "non_vine_only": non_vine_only,
         "vencidas": vencidas,
         "borradores": borradores,
         "pendientes": pendientes,
         "confirmed": confirmed,
+        "inactive_borradores": inactive_borradores,
+        "inactive_vencidas": inactive_vencidas,
+        "inactive_pendientes": inactive_pendientes,
+        "inactive_confirmed": inactive_confirmed,
         "other_borradores": other_borradores,
         "other_pendientes": other_pendientes,
         "other_confirmed": other_confirmed,

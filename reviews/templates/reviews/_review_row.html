@@ -17,6 +17,7 @@ row where he's already spent time on the product said the least about it. The
 view only ever passes rows with a known order date and a package in hand; the
 last branch is a defensive fallback, not a real case.{% endcomment %}
 <li class="rev-item" data-product-title="{{ r.product_title|default:'' }}"
+    data-is-vine="{% if r.is_vine %}true{% else %}false{% endif %}"
     data-ordered-on="{% if r.package and r.package.ordered_on %}{{ r.package.ordered_on|date:'Y-m-d' }}{% endif %}"
     data-received-on="{% if r.package and r.package.received_on %}{{ r.package.received_on|date:'Y-m-d' }}{% endif %}"{% if is_other_cycle %} data-other-cycle="true"{% endif %}>
   <button type="button" class="rev-row-btn{% if mode == "urgent" %} is-due{% endif %}"
