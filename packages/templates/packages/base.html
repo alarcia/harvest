@@ -648,6 +648,25 @@
     }
     document.addEventListener('DOMContentLoaded', syncNav);
     document.addEventListener('htmx:afterSwap', syncNav);
+
+    // In mobile fortnight agenda view, scroll automatically to today so
+    // it appears at the top instead of being buried down after days of scroll.
+    function scrollCalendarToToday() {
+      if (!window.matchMedia('(max-width: 699.98px)').matches) return;
+      const cal = document.getElementById('app-view');
+      if (!cal || !cal.classList.contains('view-fortnight')) return;
+      const calGrid = cal.querySelector('.cal-grid');
+      const todayEl = calGrid?.querySelector('.day.today');
+      if (calGrid && todayEl) {
+        calGrid.scrollTop = todayEl.offsetTop;
+      }
+    }
+    document.addEventListener('DOMContentLoaded', scrollCalendarToToday);
+    document.addEventListener('htmx:afterSwap', (e) => {
+      if (!e.target || e.target.id === 'app-view' || e.target.closest?.('#app-view')) {
+        scrollCalendarToToday();
+      }
+    });
   </script>
   {% block head %}{% endblock %}
 </head>

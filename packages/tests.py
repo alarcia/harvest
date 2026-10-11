@@ -3066,6 +3066,21 @@ class CalendarViewTests(TestCase):
                                    HTTP_HX_REQUEST="true", HTTP_USER_AGENT="Mobile")
         self.assertIn(b"view-month", explicit.content)
 
+    @override_settings(
+        STORAGES={"staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"}},
+    )
+    def test_scroll_calendar_to_today_script_rendered(self):
+        # On phone fortnight view, auto-scroll script is rendered in base.html
+        html = self.client.get(reverse("home")).content.decode()
+        self.assertIn("scrollCalendarToToday", html)
+        self.assertIn("max-width: 699.98px", html)
+        self.assertIn("calGrid.scrollTop = todayEl.offsetTop", html)
+
+    def test_cal_grid_has_position_relative(self):
+        # .cal-grid must have position: relative so todayEl.offsetTop is relative to it
+        frag = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content.decode()
+        self.assertIn("position: relative", frag)
+
     def test_day_cell_opens_the_day_modal(self):
         # A day with chips carries the day-detail URL: the whole cell is the
         # tap target that blows the day up into the modal.
