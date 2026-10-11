@@ -110,7 +110,7 @@ For closed reviews (approved/published), it displays the read-only review with c
         <div class="rev-amazon-links">
           {% if can_edit and review.product_asin %}
             <a class="rev-amazon-link"
-               href="https://www.amazon.es/review/create-review?encoding=UTF&channel=vine-portal&asin={{ review.product_asin }}"
+               href="https://www.amazon.es/review/create-review?encoding=UTF&channel=vine-portal&asin={{ review.product_asin }}&nodl=1"
                target="_blank" rel="noopener">
               <span class="rev-ext-icon">↗</span> Escribir reseña en Amazon
             </a>
@@ -123,14 +123,14 @@ For closed reviews (approved/published), it displays the read-only review with c
           {% endif %}
           {% if review.package.order_id %}
             <a class="rev-amazon-link"
-               href="https://www.amazon.es/gp/your-account/order-details?orderID={{ review.package.order_id }}"
+               href="https://www.amazon.es/gp/your-account/order-details?orderID={{ review.package.order_id }}&nodl=1"
                target="_blank" rel="noopener">
               <span class="rev-ext-icon">↗</span> Ver pedido en Amazon
             </a>
           {% endif %}
           {% if review.product_asin %}
             <a class="rev-amazon-link"
-               href="https://www.amazon.es/dp/{{ review.product_asin }}"
+               href="https://www.amazon.es/dp/{{ review.product_asin }}?nodl=1"
                target="_blank" rel="noopener">
               <span class="rev-ext-icon">↗</span> Ver producto en Amazon
             </a>

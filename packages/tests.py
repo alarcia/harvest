@@ -899,7 +899,7 @@ class IngestTests(TestCase):
             pkg.amazon_tracking_url,
             "https://www.amazon.es/gp/your-account/ship-track"
             "?_encoding=UTF8&orderId=404-2171566-7826720"
-            "&packageIndex=0&shipmentId=TCl8Nkz09",
+            "&packageIndex=0&shipmentId=TCl8Nkz09&nodl=1",
         )
 
     def test_delivery_attempt_alone_creates_awaiting_package(self):
@@ -929,7 +929,7 @@ class IngestTests(TestCase):
             pkg.amazon_tracking_url,
             "https://www.amazon.es/gp/your-account/ship-track"
             "?_encoding=UTF8&orderId=404-1111111-1111111"
-            "&packageIndex=0&shipmentId=AAAA111111",
+            "&packageIndex=0&shipmentId=AAAA111111&nodl=1",
         )
 
     def test_amazon_tracking_url_falls_back_to_the_order_page(self):
@@ -946,7 +946,7 @@ class IngestTests(TestCase):
         self.assertEqual(
             pkg.amazon_tracking_url,
             "https://www.amazon.es/gp/your-account/order-details"
-            "?_encoding=UTF8&orderID=407-2753653-0825928",
+            "?_encoding=UTF8&orderID=407-2753653-0825928&nodl=1",
         )
 
     def test_alt_store_package_has_no_amazon_link(self):
@@ -2005,7 +2005,7 @@ class AmazonToPepeYDaldaTests(TestCase):
         self.assertEqual(
             pkg.amazon_tracking_url,
             "https://www.amazon.es/gp/your-account/order-details"
-            "?_encoding=UTF8&orderID=404-9182736-4501122",
+            "?_encoding=UTF8&orderID=404-9182736-4501122&nodl=1",
         )
 
     def test_the_vine_review_waits_for_the_actual_pickup(self):

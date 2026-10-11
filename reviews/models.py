@@ -339,10 +339,10 @@ class Review(models.Model):
         Vine edit review portal using the product's ASIN.
         """
         if self.review_id:
-            return f"https://www.amazon.es/gp/customer-reviews/{self.review_id}"
+            return f"https://www.amazon.es/gp/customer-reviews/{self.review_id}?nodl=1"
         asin = self.product_asin
         if asin:
-            return f"https://www.amazon.es/review/create-review/edit?encoding=UTF&channel=vine-portal&asin={asin}"
+            return f"https://www.amazon.es/review/create-review/edit?encoding=UTF&channel=vine-portal&asin={asin}&nodl=1"
         return None
 
 

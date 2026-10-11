@@ -628,16 +628,16 @@ class ReviewDetailViewTests(TestCase):
     def test_amazon_review_url_property(self):
         # With review_id
         r1 = Review(review_id="RC0DDVU1T6HA9", asin="B0GDXR8G2J")
-        self.assertEqual(r1.amazon_review_url, "https://www.amazon.es/gp/customer-reviews/RC0DDVU1T6HA9")
+        self.assertEqual(r1.amazon_review_url, "https://www.amazon.es/gp/customer-reviews/RC0DDVU1T6HA9?nodl=1")
 
         # Without review_id, with asin
         r2 = Review(asin="B0H2N4FD38")
-        self.assertEqual(r2.amazon_review_url, "https://www.amazon.es/review/create-review/edit?encoding=UTF&channel=vine-portal&asin=B0H2N4FD38")
+        self.assertEqual(r2.amazon_review_url, "https://www.amazon.es/review/create-review/edit?encoding=UTF&channel=vine-portal&asin=B0H2N4FD38&nodl=1")
 
         # Without review_id, asin from package
         pkg = Package(asin="B0H2N4FD38")
         r3 = Review(package=pkg)
-        self.assertEqual(r3.amazon_review_url, "https://www.amazon.es/review/create-review/edit?encoding=UTF&channel=vine-portal&asin=B0H2N4FD38")
+        self.assertEqual(r3.amazon_review_url, "https://www.amazon.es/review/create-review/edit?encoding=UTF&channel=vine-portal&asin=B0H2N4FD38&nodl=1")
 
         # None available
         r4 = Review()

@@ -79,12 +79,12 @@
       </a>
     {% endif %}
     {% if package.order_id %}
-      <a class="modal-barcode" href="https://www.amazon.es/gp/your-account/order-details?orderID={{ package.order_id }}" target="_blank" rel="noopener">
+      <a class="modal-barcode" href="https://www.amazon.es/gp/your-account/order-details?orderID={{ package.order_id }}&amp;nodl=1" target="_blank" rel="noopener">
         Ver pedido en Amazon ↗
       </a>
     {% endif %}
     {% if package.asin %}
-      <a class="modal-barcode" href="https://www.amazon.es/dp/{{ package.asin }}" target="_blank" rel="noopener">
+      <a class="modal-barcode" href="https://www.amazon.es/dp/{{ package.asin }}?nodl=1" target="_blank" rel="noopener">
         Ver producto en Amazon ↗
       </a>
     {% endif %}

@@ -496,11 +496,11 @@ class Package(models.Model):
             return (
                 "https://www.amazon.es/gp/your-account/ship-track"
                 f"?_encoding=UTF8&orderId={self.order_id}"
-                f"&packageIndex=0&shipmentId={self.shipment_id}"
+                f"&packageIndex=0&shipmentId={self.shipment_id}&nodl=1"
             )
         return (
             "https://www.amazon.es/gp/your-account/order-details"
-            f"?_encoding=UTF8&orderID={self.order_id}"
+            f"?_encoding=UTF8&orderID={self.order_id}&nodl=1"
         )
 
 
