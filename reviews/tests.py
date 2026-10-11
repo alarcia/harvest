@@ -285,6 +285,51 @@ class ReviewsListViewTests(TestCase):
         self.assertLess(body.index("⚠ Urgentes"), body.index("Pendientes"))
         self.assertIn("Un titular", body)  # recognisable without opening it
 
+    def test_review_groups_are_collapsible_details_and_open_by_default(self):
+        # Borradores, Urgentes, and Pendientes must be <details ... open> (collapsible,
+        # open by default) with <summary> and count badge. Reseñas escritas is <details>
+        # without open (closed by default).
+        pkg1 = _package(ordered_on=self._in_current(), picked_up_on=self._in_current())
+        Review.objects.create(
+            package=pkg1, product_title="Draft Item", status=Review.Status.DRAFT,
+            title="Draft Title",
+        )
+        pkg2 = _package(ordered_on=self._in_current(), picked_up_on=self._in_current())
+        Review.objects.create(
+            package=pkg2, product_title="Urgent Item", status=Review.Status.PENDING,
+            due_on=self.today - timedelta(days=2),
+        )
+        pkg3 = _package(ordered_on=self._in_current(), picked_up_on=self._in_current())
+        Review.objects.create(
+            package=pkg3, product_title="Pending Item", status=Review.Status.PENDING,
+            due_on=self.today + timedelta(days=5),
+        )
+        pkg4 = _package(ordered_on=self._in_current(), picked_up_on=self._in_current())
+        Review.objects.create(
+            package=pkg4, product_title="Confirmed Item", status=Review.Status.PUBLISHED,
+            published_on=self._in_current(),
+        )
+
+        response = self._get()
+        body = response.content.decode()
+
+        # Check drafts group
+        self.assertIn('<details class="rev-group drafts" open>', body)
+        self.assertIn('<summary><span>Borradores</span> <span class="rev-count" data-original-count="1">1</span></summary>', body)
+
+        # Check urgent group
+        self.assertIn('<details class="rev-group urgent" open>', body)
+        self.assertIn('<summary><span>⚠ Urgentes</span> <span class="rev-count" data-original-count="1">1</span></summary>', body)
+
+        # Check pending group
+        self.assertIn('<details class="rev-group pending-group" data-has-pendientes="true" open>', body)
+        self.assertIn('<summary><span>Pendientes</span> <span class="rev-count" data-original-count="1">1</span></summary>', body)
+
+        # Check confirmed group: collapsible but closed by default (no open attribute)
+        self.assertIn('<details class="rev-group confirmed">', body)
+        self.assertNotIn('<details class="rev-group confirmed" open>', body)
+        self.assertIn('<summary><span>Reseñas escritas</span> <span class="rev-count" data-original-count="1">1</span></summary>', body)
+
     def test_overdue_draft_leaves_the_urgent_group_but_counts_in_badge(self):
         # A draft row sits in "Borradores" rather than "Urgentes" so its
         # headline is visible, but until it is submitted to Amazon it remains

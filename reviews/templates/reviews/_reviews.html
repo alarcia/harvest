@@ -235,9 +235,9 @@ section in place, no URL change.{% endcomment %}
       gap: .5rem;
     }
 
-    /* "Reseñas escritas" as a collapsed disclosure: the summary reads like
-       the other group headers (h2), with a rotating caret and a count. */
-    details.confirmed > summary {
+    /* Group disclosures: the summary reads like the group headers (h2),
+       with a rotating caret and a count. */
+    details.rev-group > summary {
       display: flex;
       align-items: center;
       gap: .4rem;
@@ -251,17 +251,18 @@ section in place, no URL change.{% endcomment %}
       letter-spacing: .05em;
       color: var(--muted);
       -webkit-tap-highlight-color: transparent;
+      user-select: none;
     }
-    details.confirmed > summary::-webkit-details-marker { display: none; }
-    details.confirmed > summary::before {
+    details.rev-group > summary::-webkit-details-marker { display: none; }
+    details.rev-group > summary::before {
       content: '›';
       display: inline-block;
       font-size: 1rem;
       line-height: 1;
       transition: transform .2s ease;
     }
-    details.confirmed[open] > summary::before { transform: rotate(90deg); }
-    details.confirmed > summary .rev-count {
+    details.rev-group[open] > summary::before { transform: rotate(90deg); }
+    details.rev-group > summary .rev-count {
       font-variant-numeric: tabular-nums;
       color: var(--card);
       background: var(--muted);
@@ -269,9 +270,20 @@ section in place, no URL change.{% endcomment %}
       padding: 0 .4rem;
       font-size: .66rem;
     }
-    details.confirmed[open] > ul { margin-top: .5rem; }
+    details.rev-group.urgent > summary { color: var(--danger); }
+    details.rev-group.urgent > summary .rev-count {
+      color: #fff;
+      background: var(--danger);
+    }
+    details.rev-group > summary:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+    details.rev-group[open] > ul { margin-top: .5rem; }
+    details.rev-group[open] > .rev-empty { margin-top: .5rem; }
     @media (prefers-reduced-motion: reduce) {
-      details.confirmed > summary::before { transition: none; }
+      details.rev-group > summary::before { transition: none; }
     }
 
     /* `.rev .rev-row-btn` (not bare `.rev-row-btn`) so these win over the
@@ -1387,26 +1399,26 @@ section in place, no URL change.{% endcomment %}
     Hidden when empty, like ⚠ Urgentes: an always-visible empty group would
     just push the backlog down.{% endcomment %}
     {% if borradores or other_borradores %}
-      <section class="rev-group drafts{% if not borradores %} rev-other-only{% endif %}">
-        <h2>Borradores</h2>
+      <details class="rev-group drafts{% if not borradores %} rev-other-only{% endif %}" open>
+        <summary><span>Borradores</span> <span class="rev-count" data-original-count="{{ borradores|length }}">{{ borradores|length }}</span></summary>
         <ul>
           {% for r in borradores %}{% include "reviews/_review_row.html" with r=r mode="draft" %}{% endfor %}
           {% for r in other_borradores %}{% include "reviews/_review_row.html" with r=r mode="draft" is_other_cycle=True %}{% endfor %}
         </ul>
-      </section>
+      </details>
     {% endif %}
 
     {% if vencidas %}
-      <section class="rev-group urgent">
-        <h2>⚠ Urgentes</h2>
+      <details class="rev-group urgent" open>
+        <summary><span>⚠ Urgentes</span> <span class="rev-count" data-original-count="{{ vencidas|length }}">{{ vencidas|length }}</span></summary>
         <ul>
           {% for r in vencidas %}{% include "reviews/_review_row.html" with r=r mode="urgent" %}{% endfor %}
         </ul>
-      </section>
+      </details>
     {% endif %}
 
-    <section class="rev-group pending-group" data-has-pendientes="{% if pendientes %}true{% else %}false{% endif %}">
-      <h2>Pendientes</h2>
+    <details class="rev-group pending-group" data-has-pendientes="{% if pendientes %}true{% else %}false{% endif %}" open>
+      <summary><span>Pendientes</span> <span class="rev-count" data-original-count="{{ pendientes|length }}">{{ pendientes|length }}</span></summary>
       {% if pendientes or other_pendientes %}
         <ul>
           {% for r in pendientes %}{% include "reviews/_review_row.html" with r=r mode="pending" %}{% endfor %}
@@ -1414,7 +1426,7 @@ section in place, no URL change.{% endcomment %}
         </ul>
       {% endif %}
       <p class="rev-empty"{% if pendientes %} style="display: none;"{% endif %}>Nada pendiente{% if not include_non_vine %} de Vine{% endif %}{% if not is_current_cycle %} en este ciclo{% endif %}.</p>
-    </section>
+    </details>
 
     {% comment %}Collapsed by default — the written reviews are history, not
     the daily task; the user opens them only when he wants to look
@@ -1516,14 +1528,22 @@ section in place, no URL change.{% endcomment %}
         const revContainer = document.getElementById('app-view');
         const noResults = document.getElementById('rev-no-results');
         const noResultsQuery = document.getElementById('rev-no-results-query');
-        const confirmedDetails = document.querySelector('.rev-group.confirmed');
         const unwrittenSortBar = document.getElementById('rev-sort-unwritten');
 
         if (!input || !revContainer) return;
         if (input.dataset.searchBound === 'true') return;
         input.dataset.searchBound = 'true';
 
-        let wasConfirmedOpenBeforeSearch = confirmedDetails ? confirmedDetails.hasAttribute('open') : false;
+        const detailsGroups = Array.from(revContainer.querySelectorAll('details.rev-group'));
+        const wasGroupOpenBeforeSearch = new Map();
+        detailsGroups.forEach(d => {
+          wasGroupOpenBeforeSearch.set(d, d.hasAttribute('open'));
+          d.addEventListener('toggle', () => {
+            if (!revContainer.classList.contains('is-searching')) {
+              wasGroupOpenBeforeSearch.set(d, d.hasAttribute('open'));
+            }
+          });
+        });
 
         function normalize(text) {
           return (text || '')
@@ -1542,8 +1562,6 @@ section in place, no URL change.{% endcomment %}
           if (clearBtn) {
             clearBtn.style.display = rawQuery.length > 0 ? 'inline-flex' : 'none';
           }
-
-          const confirmedCountBadge = confirmedDetails ? confirmedDetails.querySelector('.rev-count') : null;
 
           if (!isSearching) {
             revContainer.classList.remove('is-searching');
@@ -1566,17 +1584,21 @@ section in place, no URL change.{% endcomment %}
               g.style.display = '';
             });
 
-            // Restore confirmed details state
-            if (confirmedDetails) {
-              if (wasConfirmedOpenBeforeSearch) {
-                confirmedDetails.setAttribute('open', '');
+            // Restore details groups open/closed state and original count badges
+            detailsGroups.forEach(d => {
+              const wasOpen = wasGroupOpenBeforeSearch.has(d)
+                ? wasGroupOpenBeforeSearch.get(d)
+                : d.hasAttribute('open');
+              if (wasOpen) {
+                d.setAttribute('open', '');
               } else {
-                confirmedDetails.removeAttribute('open');
+                d.removeAttribute('open');
               }
-              if (confirmedCountBadge && confirmedCountBadge.dataset.originalCount) {
-                confirmedCountBadge.textContent = confirmedCountBadge.dataset.originalCount;
+              const countBadge = d.querySelector('.rev-count');
+              if (countBadge && countBadge.dataset.originalCount !== undefined) {
+                countBadge.textContent = countBadge.dataset.originalCount;
               }
-            }
+            });
 
             // Restore empty message in pending group if it was originally empty
             const pendingGroup = revContainer.querySelector('.rev-group.pending-group');
@@ -1622,11 +1644,18 @@ section in place, no URL change.{% endcomment %}
             const emptyMsg = group.querySelector('.rev-empty');
             if (emptyMsg) emptyMsg.style.display = 'none';
 
-            // Hide group if it has 0 matches
+            // Hide group if it has 0 matches, or show and open it if it has matches
             if (groupMatches === 0) {
               group.style.display = 'none';
             } else {
               group.style.display = '';
+              if (group.tagName.toLowerCase() === 'details') {
+                group.setAttribute('open', '');
+                const countBadge = group.querySelector('.rev-count');
+                if (countBadge) {
+                  countBadge.textContent = groupMatches;
+                }
+              }
             }
           });
 
@@ -1634,19 +1663,6 @@ section in place, no URL change.{% endcomment %}
           if (unwrittenSortBar) {
             const unwrittenMatches = totalMatches - confirmedMatches;
             unwrittenSortBar.style.display = unwrittenMatches > 0 ? '' : 'none';
-          }
-
-          // Handle confirmed details: open if it has matches
-          if (confirmedDetails) {
-            if (confirmedMatches > 0) {
-              confirmedDetails.style.display = '';
-              confirmedDetails.setAttribute('open', '');
-              if (confirmedCountBadge) {
-                confirmedCountBadge.textContent = confirmedMatches;
-              }
-            } else {
-              confirmedDetails.style.display = 'none';
-            }
           }
 
           // No results state
@@ -1676,14 +1692,6 @@ section in place, no URL change.{% endcomment %}
             doFilter();
           }
         });
-
-        if (confirmedDetails) {
-          confirmedDetails.addEventListener('toggle', () => {
-            if (!revContainer.classList.contains('is-searching')) {
-              wasConfirmedOpenBeforeSearch = confirmedDetails.hasAttribute('open');
-            }
-          });
-        }
       }
 
       // -------------------------------------------------------------
