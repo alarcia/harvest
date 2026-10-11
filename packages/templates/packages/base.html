@@ -142,7 +142,11 @@
       letter-spacing: -0.02em;
       text-decoration: none;
       color: inherit;
+      -webkit-tap-highlight-color: transparent;
+      transition: opacity .15s ease, transform .15s ease;
     }
+    .app-topbar .brand:hover { opacity: .88; }
+    .app-topbar .brand:active { transform: scale(.97); }
     .app-topbar .brand img { height: 1.5rem; width: auto; }
     .app-topbar .left { display: flex; align-items: center; gap: .35rem; }
     .app-topbar .nav-link {

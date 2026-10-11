@@ -3054,17 +3054,45 @@ class CalendarViewTests(TestCase):
             reverse("package_detail", args=[pkg.pk])).content.decode()
         self.assertIn("previsión", html)
 
-    def test_defaults_to_fortnight_view(self):
-        # No explicit view: defaults to fortnight agenda for both desktop and phone.
+    def test_phone_defaults_to_fortnight_desktop_to_month(self):
+        # No explicit view: phone UA opens fortnight agenda, desktop opens month overview.
         phone = self.client.get(
             reverse("home"), HTTP_HX_REQUEST="true",
             HTTP_USER_AGENT="Mozilla/5.0 (Linux; Android 16; SM-S936B) Mobile Safari")
         self.assertIn(b"view-fortnight", phone.content)
         desktop = self.client.get(reverse("home"), HTTP_HX_REQUEST="true")
-        self.assertIn(b"view-fortnight", desktop.content)
+        self.assertIn(b"view-month", desktop.content)
         explicit = self.client.get(reverse("home") + "?view=month",
                                    HTTP_HX_REQUEST="true", HTTP_USER_AGENT="Mobile")
         self.assertIn(b"view-month", explicit.content)
+        explicit_desktop = self.client.get(reverse("home") + "?view=fortnight",
+                                           HTTP_HX_REQUEST="true")
+        self.assertIn(b"view-fortnight", explicit_desktop.content)
+
+    def test_week_view_falls_back_to_default_view(self):
+        # The week view has been retired; requesting it falls back safely.
+        res_mobile = self.client.get(reverse("home") + "?view=week", HTTP_HX_REQUEST="true", HTTP_USER_AGENT="Mobile")
+        self.assertIn(b"view-fortnight", res_mobile.content)
+        self.assertNotIn(b"view-week", res_mobile.content)
+        res_desktop = self.client.get(reverse("home") + "?view=week", HTTP_HX_REQUEST="true")
+        self.assertIn(b"view-month", res_desktop.content)
+        self.assertNotIn(b"view-week", res_desktop.content)
+
+    def test_view_selector_contains_only_fortnight_and_month(self):
+        # Binary selector with Quincena and Mes; Semana is gone.
+        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content.decode()
+        self.assertIn(">Quincena</button>", html)
+        self.assertIn(">Mes</button>", html)
+        self.assertNotIn(">Semana</button>", html)
+
+    @override_settings(STORAGES={
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    })
+    def test_brand_links_to_home(self):
+        # The brand title in the topbar is an anchor pointing to the home page with HTMX swap.
+        html = self.client.get(reverse("home")).content.decode()
+        home_url = reverse("home")
+        self.assertIn(f'<a class="brand" href="{home_url}"', html)
 
     @override_settings(
         STORAGES={"staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"}},

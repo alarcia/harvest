@@ -29,21 +29,32 @@ chip behind the open card stops lying.{% endcomment %}
     }
 
     .cal-toolbar {
-      display: flex;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      grid-template-areas:
+        "title nav"
+        "views legend";
       align-items: center;
-      justify-content: space-between;
-      gap: .5rem;
-      padding: .35rem .9rem;
+      gap: .35rem .65rem;
+      padding: .4rem .9rem .55rem;
     }
     .cal-title {
+      grid-area: title;
       margin: 0;
       font-size: 1.35rem;
       font-weight: 700;
       letter-spacing: -0.02em;
       white-space: nowrap;
+      min-width: 0;
     }
     .cal-title .year { color: var(--muted); font-weight: 500; }
-    .cal-nav { display: flex; align-items: center; gap: .4rem; }
+    .cal-nav {
+      grid-area: nav;
+      display: flex;
+      align-items: center;
+      gap: .4rem;
+      justify-self: end;
+    }
     .cal-nav button {
       display: grid;
       place-items: center;
@@ -62,44 +73,49 @@ chip behind the open card stops lying.{% endcomment %}
     }
     .cal-nav button:active { transform: scale(.94); }
 
-    .cal-subbar {
-      display: flex;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: .3rem .9rem;
-      margin: .25rem .9rem .55rem;
-    }
     .cal-views {
-      display: flex;
-      flex: 1 1 100%;
+      grid-area: views;
+      display: inline-flex;
+      align-items: center;
       padding: .2rem;
       border-radius: 999px;
       background: var(--border);
+      width: fit-content;
+      min-width: 11rem;
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, .05);
     }
     .cal-views button {
       flex: 1;
-      padding: .38rem 0;
+      padding: .32rem .85rem;
       border-radius: 999px;
       font-size: .82rem;
       font-weight: 600;
       color: var(--muted);
+      text-align: center;
+      white-space: nowrap;
+      transition: background .15s ease, color .15s ease, box-shadow .15s ease;
     }
     .cal-views button.active {
       background: var(--card);
       color: var(--fg);
-      box-shadow: 0 1px 3px rgba(0, 0, 0, .12);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, .12), 0 1px 2px rgba(0, 0, 0, .06);
+    }
+    .cal-views button:not(.active):hover {
+      color: var(--fg);
     }
 
     /* Legend for the package marks; goes away once the codes are second nature. */
     .cal-legend {
+      grid-area: legend;
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: .2rem .7rem;
-      font-size: .64rem;
+      justify-content: flex-end;
+      gap: .2rem .65rem;
+      font-size: .62rem;
       color: var(--muted);
     }
-    .cal-legend .lg { display: inline-flex; align-items: center; gap: .3rem; white-space: nowrap; }
+    .cal-legend .lg { display: inline-flex; align-items: center; gap: .25rem; white-space: nowrap; }
     .cal-legend .sw { display: inline-block; width: 1em; height: .72em; border-radius: 2px; }
     .cal-legend .dot { width: .6em; height: .6em; border-radius: 50%; }
     .cal-legend .dot.amazon { background: var(--amazon); }
@@ -469,14 +485,14 @@ chip behind the open card stops lying.{% endcomment %}
       .view-month .day .pkg.is-picked,
       .view-month .day .pkg.is-delivered { background: var(--muted); opacity: .45; }
 
-      /* Week & fortnight = the reading views: days stack into an agenda,
+      /* Fortnight = the reading view: days stack into an agenda,
          chips get the full width and a finger-sized hit area. */
-      .view-week .cal-head, .view-fortnight .cal-head { display: none; }
-      .view-week .cal-grid, .view-fortnight .cal-grid {
+      .view-fortnight .cal-head { display: none; }
+      .view-fortnight .cal-grid {
         display: block;
         padding: 0 .6rem .9rem;
       }
-      .view-week .day, .view-fortnight .day {
+      .view-fortnight .day {
         display: grid;
         grid-template-columns: 2.6rem minmax(0, 1fr);
         grid-template-areas: "num chips" "dow chips";
@@ -487,8 +503,8 @@ chip behind the open card stops lying.{% endcomment %}
         animation: row-in .32s ease-out both;
         animation-delay: calc(var(--i, 0) * 22ms);
       }
-      .view-week .day .num, .view-fortnight .day .num { grid-area: num; justify-self: center; }
-      .view-week .day .dow, .view-fortnight .day .dow {
+      .view-fortnight .day .num { grid-area: num; justify-self: center; }
+      .view-fortnight .day .dow {
         grid-area: dow;
         display: block;
         justify-self: center;
@@ -498,30 +514,28 @@ chip behind the open card stops lying.{% endcomment %}
         letter-spacing: .06em;
         color: var(--muted);
       }
-      .view-week .day .chips, .view-fortnight .day .chips {
+      .view-fortnight .day .chips {
         grid-area: chips;
         align-self: center;
       }
-      .view-week .day .pkg, .view-fortnight .day .pkg {
+      .view-fortnight .day .pkg {
         margin: .22rem 0 0;
         padding: .68rem .75rem;
         font-size: .84rem;
         border-radius: .55rem;
       }
-      .view-week .day .chips .pkg:first-child,
       .view-fortnight .day .chips .pkg:first-child { margin-top: 0; }
       /* Empty days stay in the rhythm, but slim: one quiet line. */
-      .view-week .day:not(:has(.chips)), .view-fortnight .day:not(:has(.chips)) {
+      .view-fortnight .day:not(:has(.chips)) {
         grid-template-areas: "num dow";
         padding: .28rem 0 .32rem;
         opacity: .65;
       }
-      .view-week .day:not(:has(.chips)) .dow,
       .view-fortnight .day:not(:has(.chips)) .dow {
         justify-self: start;
         align-self: center;
       }
-      .view-week .day.today, .view-fortnight .day.today {
+      .view-fortnight .day.today {
         background: color-mix(in srgb, var(--accent) 7%, transparent);
         box-shadow: inset 3px 0 0 var(--accent);
         border-radius: 0 .5rem .5rem 0;
@@ -530,8 +544,31 @@ chip behind the open card stops lying.{% endcomment %}
 
     @media (min-width: 700px) {
       .app-topbar, .cal-toolbar { padding-left: 1.5rem; padding-right: 1.5rem; }
-      .cal-subbar { margin-left: 1.5rem; margin-right: 1.5rem; }
-      .cal-views { flex: 0 0 22rem; }
+      .cal-toolbar {
+        display: flex;
+        grid-template-columns: none;
+        grid-template-areas: none;
+        align-items: center;
+        gap: 1.25rem;
+        padding-top: .5rem;
+        padding-bottom: .65rem;
+      }
+      .cal-title {
+        font-size: 1.45rem;
+      }
+      .cal-views {
+        flex: 0 0 auto;
+        min-width: 12.5rem;
+        margin-right: auto;
+      }
+      .cal-views button {
+        padding: .35rem 1rem;
+        font-size: .82rem;
+      }
+      .cal-legend {
+        font-size: .68rem;
+        gap: .3rem .8rem;
+      }
       .cal-head, .cal-grid { padding: 0 1rem; }
       .cal-grid .day { align-items: flex-start; }
       .cal-grid .day .num { margin-left: .45rem; }
@@ -555,15 +592,7 @@ chip behind the open card stops lying.{% endcomment %}
         {{ range_start|date:"j b" }} – {{ range_end|date:"j b" }} <span class="year">{{ range_end|date:"Y" }}</span>
       {% endif %}
     </h1>
-    <nav class="cal-nav">
-      <button class="today-btn" hx-get="{{ nav.today.get }}" hx-push-url="{{ nav.today.push }}">Hoy</button>
-      <button hx-get="{{ nav.prev.get }}" hx-push-url="{{ nav.prev.push }}" aria-label="Anterior">&lsaquo;</button>
-      <button hx-get="{{ nav.next.get }}" hx-push-url="{{ nav.next.push }}" aria-label="Siguiente">&rsaquo;</button>
-    </nav>
-  </div>
-
-  <div class="cal-subbar">
-    <nav class="cal-views">
+    <nav class="cal-views" aria-label="Vista del calendario">
       {% for v, label, link in nav.views %}
         <button class="{% if v == view %}active{% endif %}" hx-get="{{ link.get }}" hx-push-url="{{ link.push }}">{{ label }}</button>
       {% endfor %}
@@ -573,6 +602,11 @@ chip behind the open card stops lying.{% endcomment %}
       <span class="lg"><i class="sw dot pepe"></i>Pepe y Dalda</span>
       <span class="lg"><i class="sw dot store"></i>Otros</span>
     </div>
+    <nav class="cal-nav" aria-label="Navegación temporal">
+      <button class="today-btn" hx-get="{{ nav.today.get }}" hx-push-url="{{ nav.today.push }}">Hoy</button>
+      <button hx-get="{{ nav.prev.get }}" hx-push-url="{{ nav.prev.push }}" aria-label="Anterior">&lsaquo;</button>
+      <button hx-get="{{ nav.next.get }}" hx-push-url="{{ nav.next.push }}" aria-label="Siguiente">&rsaquo;</button>
+    </nav>
   </div>
 
   <div class="cal-head">

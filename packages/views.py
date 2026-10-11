@@ -75,11 +75,13 @@ def wants_fragment(request):
 def home(request):
     """The calendar. Full page normally, bare fragment for HTMX swaps."""
     today = timezone.localdate()
-    # Default to the fortnight agenda — this week's trip and the next
-    # one's — with the month grid one tap away as the overview.
-    fallback = "fortnight"
+    # Phones open on the fortnight agenda — this week's trip and the next
+    # one's — with the month grid one tap away as the overview. MDN's
+    # recommended sniff: every phone UA carries "Mobi".
+    fallback = ("fortnight" if "Mobi" in request.META.get("HTTP_USER_AGENT", "")
+                else "month")
     view = request.GET.get("view", fallback)
-    if view not in ("month", "week", "fortnight"):
+    if view not in ("month", "fortnight"):
         view = fallback
     anchor = calendar.parse_anchor(request.GET.get("anchor"), today)
     direction = request.GET.get("dir")
@@ -125,7 +127,7 @@ def home(request):
             # Switching views recenters on today: the calendar is about the
             # coming weeks, not about wandering off into other periods.
             "views": [(v, label, _nav(v, today)) for v, label in
-                      (("month", "Mes"), ("fortnight", "Quincena"), ("week", "Semana"))],
+                      (("month", "Mes"), ("fortnight", "Quincena"))],
         },
     }
     template = "packages/_calendar.html" if wants_fragment(request) else "packages/calendar.html"

@@ -19,7 +19,7 @@ from django.utils.formats import date_format
 from .models import Package, PickupPoint
 
 # Weeks shown per view. Month is special-cased: its length depends on the anchor.
-VIEW_WEEKS = {"week": 1, "fortnight": 2}
+VIEW_WEEKS = {"fortnight": 2}
 
 # The visual grammar: one chip = one mark on one day, keyed by a rendering
 # kind. Several kinds share one model state — how a day relates to the
