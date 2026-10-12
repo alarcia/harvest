@@ -857,6 +857,52 @@ class ReviewApproveTests(TestCase):
                 self.assertEqual(self.client.post(self.url).status_code, 404)
 
 
+class StuckApprovedReviewTests(TestCase):
+    def setUp(self):
+        self.today = timezone.localdate()
+
+    def test_stuck_approved_finds_reviews_over_warning_days(self):
+        # Approved 8 days ago -> stuck
+        stuck = Review.objects.create(
+            product_title="Stuck Product",
+            status=Review.Status.APPROVED,
+            approved_on=self.today - timedelta(days=8),
+        )
+        # Approved 2 days ago -> normal, not stuck
+        normal = Review.objects.create(
+            product_title="Normal Product",
+            status=Review.Status.APPROVED,
+            approved_on=self.today - timedelta(days=2),
+        )
+        # Published 10 days ago -> published, not stuck
+        published = Review.objects.create(
+            product_title="Published Product",
+            status=Review.Status.PUBLISHED,
+            approved_on=self.today - timedelta(days=10),
+            published_on=self.today - timedelta(days=8),
+        )
+        # Draft 10 days ago -> draft, not stuck
+        draft = Review.objects.create(
+            product_title="Draft Product",
+            status=Review.Status.DRAFT,
+        )
+
+        stuck_qs = Review.objects.stuck_approved(self.today)
+        self.assertIn(stuck, stuck_qs)
+        self.assertNotIn(normal, stuck_qs)
+        self.assertNotIn(published, stuck_qs)
+        self.assertNotIn(draft, stuck_qs)
+
+    def test_days_since_approval_calculation(self):
+        review = Review.objects.create(
+            product_title="Product",
+            status=Review.Status.APPROVED,
+            approved_on=self.today - timedelta(days=9),
+        )
+        self.assertEqual(review.get_days_since_approval(self.today), 9)
+        self.assertEqual(review.days_since_approval, 9)
+
+
 class ReviewSuggestTests(TestCase):
     """The notes-and-suggestion panel. The remote call isn't wired up yet, so
     what's under test is everything around it — which is the part that has to

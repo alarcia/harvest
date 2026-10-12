@@ -113,6 +113,11 @@ def home(request):
         # red banner until someone (an agent, probably) sorts them out.
         "parse_failures": RawEmail.objects.exclude(parse_error="")
                                           .order_by("-received_at", "-created_at")[:3],
+        # Reviews marked as approved that have been waiting too long without
+        # Amazon's confirmation email arriving.
+        "stuck_reviews": Review.objects.stuck_approved(today)
+                                       .select_related("package")
+                                       .order_by("approved_on", "created_at"),
         # The reviews nav pill's nag badge — same query on both pages.
         "vencidas_count": Review.objects.vencidas(today).count(),
         # Direction of travel decides the swap animation; no direction = fade.

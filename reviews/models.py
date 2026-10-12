@@ -9,6 +9,8 @@ from django.utils import timezone
 from packages.models import Package
 
 REVIEW_GRACE_DAYS = 14
+# Safe margin before alerting about an approved review waiting for publication
+REVIEW_UNPUBLISHED_WARNING_DAYS = 7
 
 
 def _six_months_later(d):
@@ -206,6 +208,20 @@ class ReviewQuerySet(models.QuerySet):
             package__ordered_on__gte=cycle.starts_on, package__ordered_on__lte=cycle.ends_on,
         )
 
+    def stuck_approved(self, today=None, days=REVIEW_UNPUBLISHED_WARNING_DAYS):
+        """Reviews marked as approved by the user that have been waiting for
+        publication for more than `days` days without the confirmation email
+        arriving."""
+        today = today or timezone.localdate()
+        cutoff = today - timedelta(days=days)
+        return self.filter(
+            status=Review.Status.APPROVED,
+        ).annotate(
+            effective_approved_on=Coalesce("approved_on", TruncDate("created_at")),
+        ).filter(
+            effective_approved_on__lte=cutoff,
+        )
+
 
 class Review(models.Model):
     """One product review, from pending chore to published text.
@@ -317,6 +333,16 @@ class Review(models.Model):
 
     def __str__(self):
         return self.product_title
+
+    def get_days_since_approval(self, today=None):
+        """Days elapsed since the review was marked as approved."""
+        today = today or timezone.localdate()
+        ref_date = self.approved_on or self.created_at.date()
+        return (today - ref_date).days
+
+    @property
+    def days_since_approval(self):
+        return self.get_days_since_approval()
 
     @property
     def is_vine(self):

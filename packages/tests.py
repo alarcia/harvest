@@ -3085,6 +3085,42 @@ class CalendarViewTests(TestCase):
         self.assertIn(">Mes</button>", html)
         self.assertNotIn(">Semana</button>", html)
 
+    def test_calendar_banner_shows_stuck_approved_reviews(self):
+        # A review approved > 7 days ago surfaces in the calendar's parse-alert banner.
+        today = timezone.localdate()
+        Review.objects.create(
+            product_title="Zapatillas Deportivas Retro",
+            status=Review.Status.APPROVED,
+            approved_on=today - timedelta(days=8),
+        )
+        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content.decode()
+        self.assertIn('<div class="parse-alert"', html)
+        self.assertIn("Reseña pendiente de publicación en Amazon", html)
+        self.assertIn("Zapatillas Deportivas Retro", html)
+        self.assertIn("Aprobada hace 8 días", html)
+
+    def test_calendar_banner_clears_when_review_is_published(self):
+        today = timezone.localdate()
+        review = Review.objects.create(
+            product_title="Zapatillas Deportivas Retro",
+            status=Review.Status.APPROVED,
+            approved_on=today - timedelta(days=8),
+        )
+        # Initially visible
+        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content.decode()
+        self.assertIn("Zapatillas Deportivas Retro", html)
+        self.assertIn('<div class="parse-alert"', html)
+
+        # Marked as published
+        review.status = Review.Status.PUBLISHED
+        review.published_on = today
+        review.save()
+
+        # Banner clears
+        html_cleared = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content.decode()
+        self.assertNotIn('<div class="parse-alert"', html_cleared)
+        self.assertNotIn("Zapatillas Deportivas Retro", html_cleared)
+
     @override_settings(STORAGES={
         "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
     })

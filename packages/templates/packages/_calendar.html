@@ -275,7 +275,7 @@ chip behind the open card stops lying.{% endcomment %}
     }
     .pkg.is-delivered::before { content: '🏠 '; }
 
-    /* ---- parse-failure banner: an email the parser choked on ---- */
+    /* ---- parse-failure banner: an email the parser choked on or stuck review ---- */
     .parse-alert {
       display: flex;
       flex-direction: column;
@@ -288,6 +288,19 @@ chip behind the open card stops lying.{% endcomment %}
       color: var(--danger);
       font-size: .72rem;
       line-height: 1.4;
+    }
+    .parse-alert b:not(:first-child) {
+      margin-top: .35rem;
+    }
+    .parse-alert .alert-link {
+      all: unset;
+      cursor: pointer;
+      text-decoration: underline;
+      font-weight: 600;
+      color: inherit;
+    }
+    .parse-alert .alert-link:hover {
+      opacity: .8;
     }
 
     /* Consolidated-pickup card: everything that came home on one day. */
@@ -574,14 +587,28 @@ chip behind the open card stops lying.{% endcomment %}
       .cal-grid .day .num { margin-left: .45rem; }
     }
   </style>
-  {% if parse_failures %}
-    {% comment %}An email the parser didn't understand is never silently dropped:
-    it stays flagged here until it's resolved (via admin) or reprocessed.{% endcomment %}
+  {% if parse_failures or stuck_reviews %}
+    {% comment %}An email the parser didn't understand, or an approved review stuck awaiting Amazon publication{% endcomment %}
     <div class="parse-alert" role="alert">
-      <b>⚠ Correos sin procesar</b>
-      {% for f in parse_failures %}
-        <span>{{ f.received_at|date:"j M, H:i" }} · «{{ f.subject|truncatechars:60 }}» — {{ f.parse_error|truncatechars:110 }}</span>
-      {% endfor %}
+      {% if parse_failures %}
+        <b>⚠ Correos sin procesar</b>
+        {% for f in parse_failures %}
+          <span>{{ f.received_at|date:"j M, H:i" }} · «{{ f.subject|truncatechars:60 }}» — {{ f.parse_error|truncatechars:110 }}</span>
+        {% endfor %}
+      {% endif %}
+      {% if stuck_reviews %}
+        <b>⚠ Reseña{{ stuck_reviews|length|pluralize:"s" }} pendiente{{ stuck_reviews|length|pluralize:"s" }} de publicación en Amazon</b>
+        {% for r in stuck_reviews %}
+          <span>
+            <button type="button" class="alert-link"
+                    hx-get="{% url 'review_detail' r.pk %}"
+                    hx-target="#modal" hx-swap="innerHTML">
+              «{{ r.product_title|truncatechars:60 }}»
+            </button>
+            · Aprobada hace {{ r.days_since_approval }} día{{ r.days_since_approval|pluralize:"s" }} ({{ r.approved_on|default:r.created_at.date|date:"j b" }})
+          </span>
+        {% endfor %}
+      {% endif %}
     </div>
   {% endif %}
   <div class="cal-toolbar">
