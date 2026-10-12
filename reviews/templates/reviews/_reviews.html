@@ -1033,6 +1033,43 @@ section in place, no URL change.{% endcomment %}
       color: var(--accent);
       font-weight: 700;
     }
+    .rev-stat-gamification {
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .rev-stat-gamification.status-asleep {
+      opacity: .85;
+    }
+    .rev-stat-gamification.status-progress {
+      color: var(--accent);
+    }
+    .rev-stat-gamification.status-par {
+      color: var(--success);
+    }
+    .rev-stat-gamification.status-birdie {
+      color: #0284c7;
+    }
+    .rev-stat-gamification.status-eagle {
+      color: #d97706;
+    }
+    .rev-stat-gamification.status-albatross {
+      color: #9333ea;
+    }
+    .rev-stat-gamification.status-fire {
+      color: #ea580c;
+      font-weight: 800;
+    }
+    @media (prefers-color-scheme: dark) {
+      .rev-stat-gamification.status-birdie { color: #38bdf8; }
+      .rev-stat-gamification.status-eagle { color: #fbbf24; }
+      .rev-stat-gamification.status-albatross { color: #c084fc; }
+      .rev-stat-gamification.status-fire { color: #fb923c; }
+    }
+    @media (max-width: 600px) {
+      .rev-stat-pace-sep {
+        display: none;
+      }
+    }
 
     /* ---- desktop only: the mobile single column is already right ---- */
     @media (min-width: 700px) {
@@ -1387,6 +1424,11 @@ section in place, no URL change.{% endcomment %}
                 {% else %}
                   <span><strong>Mantenimiento:</strong> <span class="rev-stat-pace-highlight">{{ stats.target_reviews_per_day }} reseñas/día</span> para conservar el 90%</span>
                 {% endif %}
+              </div>
+              <span class="rev-stat-pace-sep">·</span>
+              <div class="rev-stat-pace-item" title="{{ stats.today_title }}">
+                <span class="rev-stat-pace-icon">⛳</span>
+                <span><strong>Hoy:</strong> <span class="rev-stat-pace-highlight">{{ stats.today_reviews }}/{{ stats.today_target }}</span> <span class="rev-stat-gamification {{ stats.today_gamification_class }}">{{ stats.today_status }}</span></span>
               </div>
             </div>
           {% endif %}

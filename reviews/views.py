@@ -2,6 +2,7 @@ from datetime import date, timedelta
 import math
 from urllib.parse import urlencode
 
+from django.db.models import Q
 from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -61,6 +62,37 @@ def _find_cycle(raw):
     return VineCycle.objects.filter(starts_on=parsed).first()
 
 
+def _gamification_status(today_reviews, today_target):
+    """Computes the golf-themed daily gamification status, CSS class, and title.
+
+    Scale (relative to today_target >= 1):
+    - 0 to < mitad: 😴 (Hay que espabilar)
+    - mitad to today_target - 1: ✍️ (En progreso)
+    - today_target: ¡Par!
+    - today_target + 1: 🐦 ¡Birdie!
+    - today_target + 2: 🦅 ¡Eagle!
+    - today_target + 3: 🪶 ¡Albatros!
+    - today_target + 4+: 🔥 ¡On fire!
+    """
+    diff = today_reviews - today_target
+    half = today_target / 2
+
+    if diff < 0:
+        if today_reviews < half:
+            return "😴", "status-asleep", "Hay que espabilar"
+        return "✍️", "status-progress", "¡En progreso!"
+    elif diff == 0:
+        return "¡Par!", "status-par", "¡Objetivo diario cumplido!"
+    elif diff == 1:
+        return "🐦 ¡Birdie!", "status-birdie", "¡1 por encima del objetivo!"
+    elif diff == 2:
+        return "🦅 ¡Eagle!", "status-eagle", "¡2 por encima del objetivo!"
+    elif diff == 3:
+        return "🪶 ¡Albatros!", "status-albatross", "¡3 por encima del objetivo!"
+    else:
+        return "🔥 ¡On fire!", "status-fire", "¡En racha!"
+
+
 def _cycle_stats(cycle, today):
     """Computes Amazon Vine evaluation metrics for the given cycle.
 
@@ -76,6 +108,9 @@ def _cycle_stats(cycle, today):
     - needed_for_90: Extra reviews needed to reach 90% of current orders.
     - needed_for_60: Extra reviews needed to reach 60% of current orders.
     - is_risk_zone: True if pct < 60 and orders_count > 0 and is_current.
+    - today_reviews: Vine reviews written today in this cycle.
+    - today_target: Daily review goal (immutable during the day, min 1).
+    - today_status: Golf gamification emoji / status.
     """
     if not cycle:
         return None
@@ -132,6 +167,23 @@ def _cycle_stats(cycle, today):
     gold_needed_reviews = max(0, 80 - written_reviews)
     is_risk_zone = (pct < 60 and orders_count > 0 and is_current)
 
+    today_reviews = (
+        Review.objects.vine(include_non_vine=False)
+        .written()
+        .in_cycle(cycle.starts_on, cycle.ends_on)
+        .filter(
+            Q(approved_on=today)
+            | Q(approved_on__isnull=True, published_on=today)
+            | Q(approved_on__isnull=True, published_on__isnull=True, created_at__date=today)
+        )
+        .count()
+    ) if is_current else 0
+
+    # Base target is immutable during the day: reviews already done today
+    # are subtracted so that completing reviews today does not lower the bar
+    # mid-day.
+    written_at_start = max(0, written_reviews - today_reviews)
+
     # Order pace (last 15 days) and review target to reach/keep 90%
     recent_days = 15
     window_start = max(cycle.starts_on, today - timedelta(days=recent_days))
@@ -149,13 +201,17 @@ def _cycle_stats(cycle, today):
         projected_new_orders = round(orders_per_day * horizon_days)
         projected_total_orders = orders_count + projected_new_orders
         target_reviews = math.ceil(0.90 * projected_total_orders)
-        needed_in_horizon = max(0, target_reviews - written_reviews)
-        target_reviews_per_day = math.ceil(needed_in_horizon / horizon_days) if needed_in_horizon > 0 else 0
+        needed_at_start = max(0, target_reviews - written_at_start)
+        target_reviews_per_day = math.ceil(needed_at_start / horizon_days) if needed_at_start > 0 else 0
         target_reviews_per_week = target_reviews_per_day * 7
+        today_target = max(1, target_reviews_per_day)
     else:
         horizon_days = 0
         target_reviews_per_day = 0
         target_reviews_per_week = 0
+        today_target = 1
+
+    today_status, today_class, today_title = _gamification_status(today_reviews, today_target)
 
     return {
         "orders_count": orders_count,
@@ -177,6 +233,11 @@ def _cycle_stats(cycle, today):
         "horizon_days": horizon_days,
         "target_reviews_per_day": target_reviews_per_day,
         "target_reviews_per_week": target_reviews_per_week,
+        "today_reviews": today_reviews,
+        "today_target": today_target,
+        "today_status": today_status,
+        "today_gamification_class": today_class,
+        "today_title": today_title,
     }
 
 

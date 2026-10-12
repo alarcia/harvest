@@ -16,7 +16,7 @@ from packages.models import Config, Package, PickupPoint
 
 from .models import ReferenceReview, Review, VineCycle
 from .suggest import SuggestionUnavailable, suggest_draft
-from .views import _cycle_stats
+from .views import _cycle_stats, _gamification_status
 
 
 def _package(ordered_on=None, picked_up_on=None, state=None, is_vine=True,
@@ -1436,6 +1436,74 @@ class CycleStatsTests(TestCase):
         self.assertGreater(stats["target_reviews_per_day"], 0)
         self.assertEqual(stats["target_reviews_per_week"], stats["target_reviews_per_day"] * 7)
         self.assertIn(stats["horizon_days"], range(7, 31))
+
+    def test_gamification_scale_steps(self):
+        # Target = 4 (half = 2.0)
+        self.assertEqual(_gamification_status(0, 4), ("😴", "status-asleep", "Hay que espabilar"))
+        self.assertEqual(_gamification_status(1, 4), ("😴", "status-asleep", "Hay que espabilar"))
+        self.assertEqual(_gamification_status(2, 4), ("✍️", "status-progress", "¡En progreso!"))
+        self.assertEqual(_gamification_status(3, 4), ("✍️", "status-progress", "¡En progreso!"))
+        self.assertEqual(_gamification_status(4, 4), ("¡Par!", "status-par", "¡Objetivo diario cumplido!"))
+        self.assertEqual(_gamification_status(5, 4), ("🐦 ¡Birdie!", "status-birdie", "¡1 por encima del objetivo!"))
+        self.assertEqual(_gamification_status(6, 4), ("🦅 ¡Eagle!", "status-eagle", "¡2 por encima del objetivo!"))
+        self.assertEqual(_gamification_status(7, 4), ("🪶 ¡Albatros!", "status-albatross", "¡3 por encima del objetivo!"))
+        self.assertEqual(_gamification_status(8, 4), ("🔥 ¡On fire!", "status-fire", "¡En racha!"))
+        self.assertEqual(_gamification_status(15, 4), ("🔥 ¡On fire!", "status-fire", "¡En racha!"))
+
+    def test_gamification_scale_with_target_one(self):
+        # Target = 1 (maintenance or single review goal, half = 0.5)
+        self.assertEqual(_gamification_status(0, 1), ("😴", "status-asleep", "Hay que espabilar"))
+        self.assertEqual(_gamification_status(1, 1), ("¡Par!", "status-par", "¡Objetivo diario cumplido!"))
+        self.assertEqual(_gamification_status(2, 1), ("🐦 ¡Birdie!", "status-birdie", "¡1 por encima del objetivo!"))
+        self.assertEqual(_gamification_status(3, 1), ("🦅 ¡Eagle!", "status-eagle", "¡2 por encima del objetivo!"))
+        self.assertEqual(_gamification_status(4, 1), ("🪶 ¡Albatros!", "status-albatross", "¡3 por encima del objetivo!"))
+        self.assertEqual(_gamification_status(5, 1), ("🔥 ¡On fire!", "status-fire", "¡En racha!"))
+
+    def test_cycle_stats_today_target_immutable_during_day(self):
+        # Create orders such that a target > 0 is needed
+        for i in range(12):
+            pkg = _package(ordered_on=self.today - timedelta(days=i), is_vine=True)
+            Review.objects.create(package=pkg, product_title=f"Prod {i}", status=Review.Status.PENDING)
+
+        stats_before = _cycle_stats(self.cycle, self.today)
+        initial_target = stats_before["target_reviews_per_day"]
+        self.assertGreater(initial_target, 0)
+        self.assertEqual(stats_before["today_reviews"], 0)
+        self.assertEqual(stats_before["today_target"], initial_target)
+        self.assertEqual(stats_before["today_status"], "😴")
+
+        # Now simulate approving a review TODAY
+        pending = Review.objects.filter(status=Review.Status.PENDING).first()
+        pending.status = Review.Status.APPROVED
+        pending.approved_on = self.today
+        pending.save(update_fields=["status", "approved_on"])
+
+        stats_after = _cycle_stats(self.cycle, self.today)
+        self.assertEqual(stats_after["today_reviews"], 1)
+        # Daily target must remain identical to start of day (immutable)
+        self.assertEqual(stats_after["target_reviews_per_day"], initial_target)
+        self.assertEqual(stats_after["today_target"], initial_target)
+
+    def test_cycle_stats_maintenance_defaults_to_target_one(self):
+        # No pending orders, already reached high percentage
+        pkg = _package(ordered_on=self.today - timedelta(days=1), is_vine=True)
+        Review.objects.create(package=pkg, product_title="Prod 1", status=Review.Status.PUBLISHED, approved_on=self.today - timedelta(days=1))
+
+        stats = _cycle_stats(self.cycle, self.today)
+        # Even if target_reviews_per_day is 0 (or maintenance), today_target is at least 1
+        self.assertEqual(stats["today_reviews"], 0)
+        self.assertEqual(stats["today_target"], max(1, stats["target_reviews_per_day"]))
+        self.assertEqual(stats["today_status"], "😴")
+
+    def test_reviews_view_renders_today_gamification_in_strip(self):
+        pkg = _package(ordered_on=self.today - timedelta(days=2), is_vine=True)
+        Review.objects.create(package=pkg, product_title="Item", status=Review.Status.PENDING)
+
+        response = self.client.get(reverse("reviews_list"), HTTP_HX_REQUEST="true")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "<strong>Hoy:</strong>")
+        self.assertContains(response, "⛳")
+        self.assertContains(response, "😴")
 
 
 class UrgentUncappedTests(TestCase):
