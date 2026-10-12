@@ -345,6 +345,13 @@ class Review(models.Model):
         return self.get_days_since_approval()
 
     @property
+    def validation_days(self):
+        """Days Amazon took to validate and publish the review after it was approved."""
+        if self.approved_on and self.published_on:
+            return max(0, (self.published_on - self.approved_on).days)
+        return None
+
+    @property
     def is_vine(self):
         """A package-less row is always a historical import — Vine in
         practice, same assumption the "No vine" toggle's default rests on."""

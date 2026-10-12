@@ -1,6 +1,8 @@
 <li class="rev-item" data-product-title="{{ r.product_title|default:'' }}"
     data-is-vine="{% if r.is_vine %}true{% else %}false{% endif %}"{% if is_other_cycle %} data-other-cycle="true"{% endif %}
     data-review-on="{% if r.approved_on %}{{ r.approved_on|date:'Y-m-d' }}{% elif r.published_on %}{{ r.published_on|date:'Y-m-d' }}{% else %}{{ r.created_at|date:'Y-m-d' }}{% endif %}"
+    data-written-on="{% if r.approved_on %}{{ r.approved_on|date:'Y-m-d' }}{% elif r.published_on %}{{ r.published_on|date:'Y-m-d' }}{% else %}{{ r.created_at|date:'Y-m-d' }}{% endif %}"
+    data-published-on="{% if r.published_on %}{{ r.published_on|date:'Y-m-d' }}{% endif %}"
     data-ordered-on="{% if r.package and r.package.ordered_on %}{{ r.package.ordered_on|date:'Y-m-d' }}{% endif %}"
     data-received-on="{% if r.package and r.package.received_on %}{{ r.package.received_on|date:'Y-m-d' }}{% endif %}">
   <button type="button" class="rev-row-btn"
@@ -13,7 +15,9 @@
         {% if r.status == "approved" %}<i class="status-badge status-approved">Aprobada</i>
         {% elif r.status == "published" %}<i class="status-badge status-published">Publicada</i>{% endif %}
         {% if r.rating %}· {{ r.rating }}★{% endif %}
-        {% if r.approved_on or r.published_on %}· Escrita el {{ r.approved_on|default:r.published_on|date:"j" }} de {{ r.approved_on|default:r.published_on|date:"F" }}{% endif %}
+        {% if r.approved_on %}· Escrita el {{ r.approved_on|date:"j" }} de {{ r.approved_on|date:"F" }}{% endif %}
+        {% if r.published_on %}· Publicada el {{ r.published_on|date:"j" }} de {{ r.published_on|date:"F" }}{% if r.validation_days is not None %} <span class="rev-delay">({% if r.validation_days == 0 %}mismo día{% elif r.validation_days == 1 %}tardó 1 día{% else %}tardó {{ r.validation_days }} días{% endif %})</span>{% endif %}{% endif %}
+        {% if not r.approved_on and not r.published_on %}· {{ r.created_at|date:"j" }} de {{ r.created_at|date:"F" }}{% endif %}
       </span>
       <span class="rev-dates">
         {% if r.package.ordered_on %}Pedido el {{ r.package.ordered_on|date:"j" }} de {{ r.package.ordered_on|date:"F" }}{% endif %}

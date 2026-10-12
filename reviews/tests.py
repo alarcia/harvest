@@ -569,16 +569,57 @@ class ReviewsListViewTests(TestCase):
             rating=5,
         )
         response = self._get()
-        # Card contains written date from approved_on, not Amazon approval (published_on)
+        # Card contains both written date (approved_on) and Amazon validation (published_on) with delay
         self.assertContains(response, f"Escrita el {pkg.review.approved_on.day} de ")
+        self.assertContains(response, f"Publicada el {pkg.review.published_on.day} de ")
+        self.assertContains(response, "tardó 3 días")
         # Card contains order and delivery/pickup dates
         self.assertContains(response, f"Pedido el {pkg.ordered_on.day} de ")
         self.assertContains(response, f"Recogido el {pkg.picked_up_on.day} de ")
 
-        # Detail modal also displays "Escrita el"
+        # Detail modal also displays "Escrita el", "Publicada el", and the delay
         detail_resp = self.client.get(reverse("review_detail", args=[pkg.review.pk]))
         self.assertContains(detail_resp, f"<b>Escrita</b> el {pkg.review.approved_on.day} de ")
         self.assertContains(detail_resp, f"<b>Publicada</b> el {pkg.review.published_on.day} de ")
+        self.assertContains(detail_resp, "tardó 3 días")
+
+    def test_written_review_only_published_displays_published_date(self):
+        pkg = _package(ordered_on=self.today - timedelta(days=15),
+                       picked_up_on=self.today - timedelta(days=13),
+                       description="Cargador USB-C")
+        rev = Review.objects.create(
+            package=pkg,
+            product_title="Cargador USB-C",
+            status=Review.Status.PUBLISHED,
+            published_on=self.today - timedelta(days=3),
+            title="Carga rápida",
+            rating=4,
+        )
+        self.assertIsNone(rev.validation_days)
+        response = self._get()
+        self.assertContains(response, f"Publicada el {rev.published_on.day} de ")
+        # Does not claim it was written on that date
+        self.assertNotContains(response, f"Escrita el {rev.published_on.day} de ")
+
+    def test_validation_days_property(self):
+        rev = Review(
+            product_title="Test",
+            approved_on=self.today - timedelta(days=4),
+            published_on=self.today - timedelta(days=4),
+        )
+        self.assertEqual(rev.validation_days, 0)
+
+        rev.published_on = self.today - timedelta(days=3)
+        self.assertEqual(rev.validation_days, 1)
+
+        rev.published_on = self.today
+        self.assertEqual(rev.validation_days, 4)
+
+        rev.published_on = None
+        self.assertIsNone(rev.validation_days)
+
+        rev.approved_on = None
+        self.assertIsNone(rev.validation_days)
 
     def test_unwritten_reviews_have_sort_controls_and_date_attributes(self):
         pkg = _package(ordered_on=self.today - timedelta(days=12),
@@ -615,13 +656,18 @@ class ReviewsListViewTests(TestCase):
         )
         response = self._get()
         self.assertContains(response, 'id="rev-sort-written"')
-        self.assertContains(response, 'data-sort-by="review"')
+        self.assertContains(response, 'data-sort-by="written"')
+        self.assertContains(response, 'data-sort-by="published"')
         self.assertContains(response, 'data-sort-by="received"')
         self.assertContains(response, 'data-sort-by="ordered"')
+        self.assertContains(response, 'Escrita')
+        self.assertContains(response, 'Publicada')
         expected_review = (self.today - timedelta(days=15)).isoformat()
         expected_ordered = (self.today - timedelta(days=20)).isoformat()
         expected_received = (self.today - timedelta(days=18)).isoformat()
         self.assertContains(response, f'data-review-on="{expected_review}"')
+        self.assertContains(response, f'data-written-on="{expected_review}"')
+        self.assertContains(response, 'data-published-on=""')
         self.assertContains(response, f'data-ordered-on="{expected_ordered}"')
         self.assertContains(response, f'data-received-on="{expected_received}"')
 

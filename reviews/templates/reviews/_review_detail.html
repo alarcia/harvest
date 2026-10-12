@@ -52,7 +52,7 @@ For closed reviews (approved/published), it displays the read-only review with c
         {% endif %}
         {% if review.rating %}<span><b>Puntuación</b> {{ review.rating }}★</span>{% endif %}
         {% if review.approved_on %}<span><b>Escrita</b> el {{ review.approved_on|date:"j" }} de {{ review.approved_on|date:"F" }}</span>{% endif %}
-        {% if review.published_on %}<span><b>Publicada</b> el {{ review.published_on|date:"j" }} de {{ review.published_on|date:"F" }}</span>{% endif %}
+        {% if review.published_on %}<span><b>Publicada</b> el {{ review.published_on|date:"j" }} de {{ review.published_on|date:"F" }}{% if review.validation_days is not None %} <span class="rev-delay">({% if review.validation_days == 0 %}mismo día{% elif review.validation_days == 1 %}tardó 1 día{% else %}tardó {{ review.validation_days }} días{% endif %})</span>{% endif %}</span>{% endif %}
       </div>
 
       {% if review.title %}

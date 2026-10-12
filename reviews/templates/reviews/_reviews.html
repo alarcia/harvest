@@ -166,6 +166,10 @@ section in place, no URL change.{% endcomment %}
       display: flex;
       align-items: center;
       justify-content: flex-start;
+      overflow-x: auto;
+      max-width: 100%;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
     }
     @media (max-width: 480px) {
       .rev .rev-sort-btn {
@@ -353,6 +357,14 @@ section in place, no URL change.{% endcomment %}
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+    .rev-group.confirmed .rev-meta {
+      white-space: normal;
+      line-height: 1.35;
+    }
+    .rev-delay {
+      font-weight: 500;
+      opacity: .85;
     }
     .rev-row.is-due .rev-meta, .rev .rev-row-btn.is-due .rev-meta { color: var(--danger); font-weight: 600; }
     /* The product's own dates — ordered, and the day it reached his hands.
@@ -1499,9 +1511,13 @@ section in place, no URL change.{% endcomment %}
           <div class="rev-sort-bar" id="rev-sort-written"{% if not confirmed %} style="display: none;"{% endif %}>
             <span class="rev-sort-label">Ordenar:</span>
             <div class="rev-sort-pills" role="radiogroup" aria-label="Ordenar reseñas escritas">
-              <button type="button" class="rev-sort-btn active" data-sort-group="written" data-sort-by="review" data-sort-dir="desc" title="Ordenar por fecha de reseña">
-                <span>Fecha reseña</span>
+              <button type="button" class="rev-sort-btn active" data-sort-group="written" data-sort-by="written" data-sort-dir="desc" title="Ordenar por fecha escrita en Harvest">
+                <span>Escrita</span>
                 <span class="rev-sort-dir" aria-hidden="true">↓</span>
+              </button>
+              <button type="button" class="rev-sort-btn" data-sort-group="written" data-sort-by="published" data-sort-dir="desc" title="Ordenar por fecha publicada en Amazon">
+                <span>Publicada</span>
+                <span class="rev-sort-dir" aria-hidden="true"></span>
               </button>
               <button type="button" class="rev-sort-btn" data-sort-group="written" data-sort-by="received" data-sort-dir="desc" title="Ordenar por fecha de recogida">
                 <span>Recogido</span>
@@ -1809,9 +1825,12 @@ section in place, no URL change.{% endcomment %}
             }
             let valA = '';
             let valB = '';
-            if (sortBy === 'review') {
-              valA = a.dataset.reviewOn || '';
-              valB = b.dataset.reviewOn || '';
+            if (sortBy === 'written' || sortBy === 'review') {
+              valA = a.dataset.writtenOn || a.dataset.reviewOn || '';
+              valB = b.dataset.writtenOn || b.dataset.reviewOn || '';
+            } else if (sortBy === 'published') {
+              valA = a.dataset.publishedOn || '';
+              valB = b.dataset.publishedOn || '';
             } else if (sortBy === 'received') {
               valA = a.dataset.receivedOn || '';
               valB = b.dataset.receivedOn || '';
@@ -1967,15 +1986,16 @@ section in place, no URL change.{% endcomment %}
           try {
             const savedSort = sessionStorage.getItem('harvest_rev_sort_written');
             const savedDir = sessionStorage.getItem('harvest_rev_sort_written_dir') || 'desc';
-            if (savedSort && (savedSort !== 'review' || savedDir !== 'desc')) {
-              const matchingBtn = writtenBar.querySelector(`.rev-sort-btn[data-sort-by="${savedSort}"]`);
+            const normalizedSort = (savedSort === 'review') ? 'written' : savedSort;
+            if (normalizedSort && (normalizedSort !== 'written' || savedDir !== 'desc')) {
+              const matchingBtn = writtenBar.querySelector(`.rev-sort-btn[data-sort-by="${normalizedSort}"]`);
               if (matchingBtn) {
                 matchingBtn.dataset.sortDir = savedDir;
                 writtenBtns.forEach(b => b.classList.remove('active'));
                 matchingBtn.classList.add('active');
                 const dirSpan = matchingBtn.querySelector('.rev-sort-dir');
                 if (dirSpan) dirSpan.textContent = savedDir === 'asc' ? '↑' : '↓';
-                applyWrittenSort(savedSort, savedDir);
+                applyWrittenSort(normalizedSort, savedDir);
               }
             }
           } catch (e) {}
