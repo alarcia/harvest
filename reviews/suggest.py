@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 # this is set well clear of any review the user would write rather than
 # trimmed to save tenths of a cent. Too low is the expensive setting — a reply
 # cut mid-sentence is a call paid for and thrown away.
-_MAX_TOKENS = 2000
+_MAX_TOKENS = 4000
 
 # One socket timeout for the whole exchange. The user is watching a modal
 # spinner, and gunicorn has its own worker timeout behind this one.
@@ -175,6 +175,13 @@ def _parse(data):
     makes this reliable enough to parse strictly: anything else is a
     malformed answer, not a shape to guess at.
     """
+    if data.get("stop_reason") == "max_tokens":
+        logger.warning("Propuesta truncada: se ha alcanzado el límite de tokens (max_tokens)")
+        raise SuggestionUnavailable(
+            "La propuesta ha quedado incompleta al superar el límite de longitud. "
+            "Vuelve a intentarlo."
+        )
+
     try:
         blocks = data["content"]
         raw = "".join(b.get("text", "") for b in blocks if b.get("type") == "text").strip()
@@ -187,12 +194,12 @@ def _parse(data):
             raw = raw[start:]
         # `raw_decode` rather than `loads`: it reads the first complete object
         # and ignores whatever follows, so a stray closing line after the JSON
-        # costs nothing.
-        proposal, _ = json.JSONDecoder().raw_decode(raw)
+        # costs nothing. strict=False accepts unescaped control chars in strings.
+        proposal, _ = json.JSONDecoder(strict=False).raw_decode(raw)
         title = str(proposal["title"]).strip()
         text = str(proposal["text"]).strip()
     except (KeyError, IndexError, TypeError, ValueError) as exc:
-        logger.warning("Propuesta ilegible: %s", type(exc).__name__)
+        logger.warning("Propuesta ilegible: %s (%s)", type(exc).__name__, exc)
         raise SuggestionUnavailable(
             "La propuesta ha llegado en un formato que no se entiende. "
             "Vuelve a intentarlo."
@@ -233,6 +240,7 @@ def suggest_draft(review):
     data = _post({
         "model": settings.SUGGEST_MODEL,
         "max_tokens": _MAX_TOKENS,
+        "thinking": {"type": "disabled"},
         "system": _FORMAT,
         "messages": [
             {"role": "user", "content": _prompt(review, config)},

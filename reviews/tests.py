@@ -1326,6 +1326,20 @@ class SuggestDraftTests(TestCase):
                 suggest_draft(self.review)
         self.assertIn("no se entiende", str(broken.exception))
 
+    def test_truncated_answer_by_max_tokens_reports_length_limit(self):
+        with patch("reviews.suggest._post", return_value={"content": [], "stop_reason": "max_tokens"}):
+            with self.assertRaises(SuggestionUnavailable) as truncated:
+                suggest_draft(self.review)
+        self.assertIn("límite de longitud", str(truncated.exception))
+
+    def test_answer_with_unescaped_newlines_in_json_is_parsed(self):
+        # strict=False allows literal newlines inside string values
+        raw = '{"title": "Mando bueno", "text": "Línea 1\nLínea 2"}'
+        with patch("reviews.suggest._post", return_value={"content": [{"type": "text", "text": raw}]}):
+            title, text = suggest_draft(self.review)
+        self.assertEqual(title, "Mando bueno")
+        self.assertEqual(text, "Línea 1\nLínea 2")
+
     def test_without_a_template_it_asks_for_one_and_spends_nothing(self):
         Config.objects.filter(pk=1).update(suggestion_prompt="")
         with patch("reviews.suggest._post") as post:
