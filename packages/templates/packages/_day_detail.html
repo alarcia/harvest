@@ -21,7 +21,7 @@ back.{% endcomment %}
     {% endif %}
     <ul class="day-list">
       {% for c in chips %}
-        <li style="--i:{{ forloop.counter0 }}">
+        <li style="--i: {{ forloop.counter0 }};">
           <button class="pkg src-{{ c.source }} is-{{ c.kind }}{% if c.closed %} pkg-closed{% endif %}"
                   hx-get="{{ c.detail_url }}?from_day={{ day|date:'Y-m-d' }}"
                   hx-target="#modal" hx-swap="innerHTML">

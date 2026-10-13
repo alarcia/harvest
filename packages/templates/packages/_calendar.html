@@ -651,7 +651,7 @@ chip behind the open card stops lying.{% endcomment %}
         the cell. --i staggers the agenda rows' entrance.{% endcomment %}
         {% widthratio forloop.parentloop.counter0 1 7 as row_offset %}
         <div class="day{% if day.is_today %} today{% endif %}{% if day.is_past %} past{% endif %}{% if not day.in_month %} out{% endif %}{% if forloop.counter > 5 %} weekend{% endif %}"
-             style="--i:{{ row_offset|add:forloop.counter0 }}"
+             style="--i: {{ row_offset|add:forloop.counter0 }};"
              {% if day.chips %}hx-get="{% url 'day_detail' day.date|date:'Y-m-d' %}" hx-target="#modal" hx-swap="innerHTML"{% endif %}>
           <span class="num">{{ day.date.day }}</span>
           <span class="dow">{{ day.date|date:"D" }}</span>
