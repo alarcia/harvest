@@ -1028,6 +1028,19 @@ class ReviewSuggestTests(TestCase):
         # With tabs, saving notes stays on the card's suggest tab.
         self.assertContains(response, "Se enreda un poco con el uso")
         self.assertContains(response, "Guardar notas")
+        self.assertContains(response, "¡Guardado!")
+        # Saving notes does not trigger package-updated, avoiding background list reload.
+        self.assertNotIn("HX-Trigger", response.headers)
+
+    def test_saving_notes_button_does_not_swap_modal(self):
+        panel = self._open().content.decode()
+        button = panel[panel.index('class="rev-save-notes"'):]
+        button = button[:button.index("</button>")]
+        self.assertIn('hx-swap="none"', button)
+        self.assertIn('hx-disabled-elt="this"', button)
+        self.assertIn('hx-on:htmx:after-request="onNotesSaved(this, event)"', button)
+        self.assertIn('txt-saved', button)
+        self.assertIn('¡Guardado!', button)
 
     def test_suggesting_needs_the_stars_first(self):
         response = self.client.post(self.url, {

@@ -581,17 +581,23 @@ section in place, no URL change.{% endcomment %}
       margin-top: .4rem;
     }
     .rev-save-notes {
+      display: inline-flex !important;
+      align-items: center;
+      justify-content: center;
+      gap: .3rem;
       width: auto !important;
+      height: auto !important;
       margin: 0 !important;
       padding: .25rem .55rem !important;
       font-size: .74rem;
       font-weight: 600;
+      line-height: 1;
       color: var(--muted);
       border: 1px solid var(--border);
       border-radius: 6px;
       background: var(--card);
       cursor: pointer;
-      transition: color .2s ease, border-color .2s ease, background-color .2s ease;
+      transition: color .2s ease, border-color .2s ease, background-color .2s ease, transform .1s ease;
     }
     .rev-save-notes:hover {
       color: var(--fg);
@@ -600,6 +606,18 @@ section in place, no URL change.{% endcomment %}
     .rev-save-notes:active {
       transform: scale(.97);
     }
+    .rev-save-notes .ico-check,
+    .rev-save-notes .txt-saved { display: none; }
+    .rev-save-notes .txt-save { display: inline-block; }
+    .rev-save-notes.saved {
+      color: var(--success);
+      border-color: var(--success);
+      background: color-mix(in srgb, var(--success) 12%, var(--card));
+    }
+    .rev-save-notes.saved .txt-save { display: none; }
+    .rev-save-notes.saved .ico-check,
+    .rev-save-notes.saved .txt-saved { display: inline-block; }
+    @media (prefers-reduced-motion: reduce) { .rev-save-notes { transition: none; } }
     .rev-btn-incorporate {
       background: var(--success) !important;
       color: var(--card) !important;

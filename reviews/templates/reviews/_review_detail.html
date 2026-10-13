@@ -50,7 +50,7 @@ For closed reviews (approved/published), it displays the read-only review with c
             el {{ review.package.received_on|date:"j" }} de {{ review.package.received_on|date:"F" }}
           </span>
         {% endif %}
-        {% if review.rating %}<span><b>Puntuación</b> {{ review.rating }}★</span>{% endif %}
+        <span id="rev-meta-rating" {% if not review.rating %}hidden{% endif %}><b>Puntuación</b> <span id="rev-meta-rating-val">{{ review.rating }}★</span></span>
         {% if review.approved_on %}<span><b>Escrita</b> el {{ review.approved_on|date:"j" }} de {{ review.approved_on|date:"F" }}</span>{% endif %}
         {% if review.published_on %}<span><b>Publicada</b> el {{ review.published_on|date:"j" }} de {{ review.published_on|date:"F" }}{% if review.validation_days is not None %} <span class="rev-delay">({% if review.validation_days == 0 %}mismo día{% elif review.validation_days == 1 %}tardó 1 día{% else %}tardó {{ review.validation_days }} días{% endif %})</span>{% endif %}</span>{% endif %}
       </div>
@@ -179,9 +179,19 @@ For closed reviews (approved/published), it displays the read-only review with c
           <label class="confirm-label" for="rev-notes">Notas sobre el producto (opcional)</label>
           <textarea id="rev-notes" name="notes" rows="6"
                     placeholder="Lo que has notado usándolo: qué va bien, qué falla, para quién sirve…"
-                    oninput="this.parentElement.querySelector('.rev-charcount').textContent = this.value.length + ' caracteres'">{{ notes|default:review.notes }}</textarea>
+                    oninput="onNotesInput(this)">{{ notes|default:review.notes }}</textarea>
           <div class="rev-notes-footer">
-            <button type="submit" name="action" value="save" class="rev-save-notes">Guardar notas</button>
+            <button type="button" class="rev-save-notes"
+                    hx-post="{% url 'review_suggest' review.pk %}"
+                    hx-vals='{"action": "save"}'
+                    hx-include="#rev-suggest-form"
+                    hx-swap="none"
+                    hx-disabled-elt="this"
+                    hx-on:htmx:after-request="onNotesSaved(this, event)">
+              <svg class="ico-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span class="txt-save">Guardar notas</span>
+              <span class="txt-saved">¡Guardado!</span>
+            </button>
             <p class="rev-charcount">{{ notes|default:review.notes|length }} caracteres</p>
           </div>
 
@@ -228,6 +238,43 @@ For closed reviews (approved/published), it displays the read-only review with c
   </div>
 </div>
 <script>
+  function onNotesSaved(btn, evt) {
+    var xhr = evt && evt.detail && evt.detail.xhr;
+    if (xhr && (xhr.status < 200 || xhr.status >= 400)) return;
+    btn.classList.add('saved');
+    if (btn._t) clearTimeout(btn._t);
+    btn._t = setTimeout(function() { btn.classList.remove('saved'); }, 3500);
+
+    var notesArea = document.getElementById('rev-notes');
+    var tabBtn = document.getElementById('rev-tab-btn-suggest');
+    if (notesArea && tabBtn) {
+      var dot = tabBtn.querySelector('.rev-dot');
+      if (notesArea.value.trim().length > 0) {
+        if (!dot) {
+          var span = document.createElement('span');
+          span.className = 'rev-dot';
+          span.textContent = '●';
+          tabBtn.appendChild(span);
+        }
+      } else if (dot) {
+        dot.remove();
+      }
+    }
+
+    var checkedStar = document.querySelector('input[name="rating"]:checked');
+    var ratingMeta = document.getElementById('rev-meta-rating');
+    var ratingVal = document.getElementById('rev-meta-rating-val');
+    if (checkedStar && ratingMeta && ratingVal) {
+      ratingVal.textContent = checkedStar.value + '★';
+      ratingMeta.hidden = false;
+    }
+  }
+  function onNotesInput(textarea) {
+    var count = textarea.parentElement.querySelector('.rev-charcount');
+    if (count) count.textContent = textarea.value.length + ' caracteres';
+    var saveBtn = textarea.parentElement.querySelector('.rev-save-notes');
+    if (saveBtn) saveBtn.classList.remove('saved');
+  }
   function copyRevText(targetId, btn) {
     var el = document.getElementById(targetId);
     if (!el) return;

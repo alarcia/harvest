@@ -433,6 +433,7 @@
     /* Card-for-card swaps keep the backdrop still; only a fresh open fades
        it in. Closing plays the exit before removal. */
     body.modal-open .modal-back:not(.closing) { animation: none; }
+    body.modal-open .modal-back:not(.closing) .modal-card { animation: none; }
     .modal-back.closing { animation: back-out .16s ease-in forwards; }
     .modal-back.closing .modal-card { animation: card-out .16s ease-in forwards; }
     @keyframes back-in { from { opacity: 0; } }
