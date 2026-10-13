@@ -14,13 +14,9 @@ is written under, and it is also why the client below is a plain generic HTTP
 call configured by `SUGGEST_*` environment variables rather than a vendor
 library — nothing in git names a service, a model, or a header.
 
-**Two walls stand between a loop in the app and a bill.** The outer one is at
-the provider (prepaid balance, auto-reload off) and is the one that really
-can't be climbed. The inner one is `Config.claim_suggestion()`, booked *after*
-`is_configured()` and *before* the request: an install with the feature off
-never touches the counter, and an attempt that fails still costs its slot,
-because it may well have been billed anyway. There are deliberately **no
-retries** — a silent retry is a silent charge.
+**The wall between a loop in the app and a bill is at the provider.** Prepaid
+balance with auto-reload off is the one that really can't be climbed. There
+are deliberately **no retries** — a silent retry is a silent charge.
 """
 
 import json
@@ -227,14 +223,6 @@ def suggest_draft(review):
     if not config.suggestion_prompt.strip():
         raise SuggestionUnavailable(
             "Falta la plantilla de la propuesta en la configuración."
-        )
-
-    claimed, limit = Config.claim_suggestion()
-    if not claimed:
-        raise SuggestionUnavailable(
-            "Las sugerencias de borrador están desactivadas." if limit == 0 else
-            f"Se ha alcanzado el tope de {limit} sugerencias de este mes. "
-            f"Puedes subirlo en la configuración."
         )
 
     data = _post({

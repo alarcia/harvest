@@ -9,10 +9,7 @@ class ConfigAdmin(admin.ModelAdmin):
     only one would leave ingestion reading a different row than the user edits,
     so both are off."""
 
-    # The suggestion counter is on the list so "how much have I spent this
-    # month" is answered without opening the row.
-    list_display = ("__str__", "eu_import_surcharge",
-                    "suggestions_per_month", "suggestions_used")
+    list_display = ("__str__", "eu_import_surcharge")
 
     def has_add_permission(self, request):
         return not Config.objects.exists()

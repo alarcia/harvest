@@ -1145,18 +1145,10 @@ class ReviewSuggestTests(TestCase):
 
 @override_settings(SUGGEST_API_URL="https://example.invalid/v1",
                    SUGGEST_API_KEY="test-key", SUGGEST_MODEL="test-model")
-class SuggestionBudgetTests(TestCase):
-    """The monthly cap on suggestions — the one guard Harvest itself can put
-    between a loop in the app and a bill at the provider.
-
-    The remote call is still missing, so `suggest_draft` always ends in
-    "todavía no está disponible"; what these check is *which* refusal comes
-    out, because that is what says whether a request would have been made."""
+class SuggestionPreflightTests(TestCase):
+    """Pre-flight checks for draft suggestions — missing template or missing config."""
 
     def setUp(self):
-        # A template has to be in place: `suggest_draft` checks for one before
-        # it books anything, so without this every test here would fail on the
-        # wrong step.
         Config.objects.update_or_create(
             pk=1, defaults={"suggestion_prompt": "Redacta sobre {producto}"})
         self.review = Review.objects.create(
@@ -1165,54 +1157,18 @@ class SuggestionBudgetTests(TestCase):
             notes="Cierra bien y pesa poco", rating=4,
         )
 
-    def test_the_month_runs_out_and_says_so(self):
-        Config.objects.filter(pk=1).update(suggestions_per_month=2)
-        for _ in range(2):
-            claimed, limit = Config.claim_suggestion()
-            self.assertTrue(claimed)
-            self.assertEqual(limit, 2)
-        self.assertEqual(Config.claim_suggestion(), (False, 2))
-
-        with self.assertRaises(SuggestionUnavailable) as spent:
-            suggest_draft(self.review)
-        self.assertIn("tope de 2 sugerencias", str(spent.exception))
-
-    def test_a_new_month_starts_over_without_anything_having_to_run(self):
-        Config.objects.filter(pk=1).update(suggestions_per_month=1)
-        july = date(2026, 7, 20)
-        self.assertEqual(Config.claim_suggestion(july)[0], True)
-        self.assertEqual(Config.claim_suggestion(date(2026, 7, 31))[0], False)
-        # No job fires on the 1st: the first caller of a new month finds a
-        # stale stamp and resets it on the way past.
-        self.assertEqual(Config.claim_suggestion(date(2026, 8, 1))[0], True)
-        config = Config.load()
-        self.assertEqual(config.suggestions_month, date(2026, 8, 1))
-        self.assertEqual(config.suggestions_used, 1)
-
-    def test_zero_switches_the_feature_off_rather_than_meaning_unlimited(self):
-        Config.objects.filter(pk=1).update(suggestions_per_month=0)
-        self.assertEqual(Config.claim_suggestion(), (False, 0))
-        with self.assertRaises(SuggestionUnavailable) as off:
-            suggest_draft(self.review)
-        self.assertIn("desactivadas", str(off.exception))
-        self.assertEqual(Config.load().suggestions_used, 0)
-
     @override_settings(SUGGEST_API_URL="", SUGGEST_API_KEY="")
-    def test_an_unconfigured_install_never_spends_a_slot(self):
-        # The order matters: nothing can be billed while the feature is off, so
-        # nothing may be counted either — otherwise the cap would drain itself
-        # on an install that can't make a single request.
+    def test_an_unconfigured_install_raises_unavailable(self):
         with self.assertRaises(SuggestionUnavailable):
             suggest_draft(self.review)
-        self.assertEqual(Config.load().suggestions_used, 0)
 
-    def test_the_panel_shows_the_refusal_the_user_can_act_on(self):
-        Config.objects.filter(pk=1).update(suggestions_per_month=0)
+    def test_the_panel_shows_the_refusal_when_template_missing(self):
+        Config.objects.filter(pk=1).update(suggestion_prompt="")
         response = self.client.post(
             reverse("review_suggest", args=[self.review.pk]),
             {"action": "suggest", "notes": "Cierra bien", "rating": "4"},
         )
-        self.assertContains(response, "desactivadas")
+        self.assertContains(response, "Falta la plantilla")
         # The notes still saved: asking for help and being told no is not a
         # reason to lose what was typed.
         self.assertEqual(Review.objects.get(pk=self.review.pk).notes, "Cierra bien")
@@ -1353,14 +1309,13 @@ class SuggestDraftTests(TestCase):
         self.assertEqual(title, "Mando bueno")
         self.assertEqual(text, "Línea 1\nLínea 2")
 
-    def test_without_a_template_it_asks_for_one_and_spends_nothing(self):
+    def test_without_a_template_it_asks_for_one(self):
         Config.objects.filter(pk=1).update(suggestion_prompt="")
         with patch("reviews.suggest._post") as post:
             with self.assertRaises(SuggestionUnavailable) as missing:
                 suggest_draft(self.review)
         self.assertIn("plantilla", str(missing.exception))
         post.assert_not_called()
-        self.assertEqual(Config.load().suggestions_used, 0)
 
     def test_the_panel_shows_the_proposal_once_it_arrives(self):
         with patch("reviews.suggest._post",
