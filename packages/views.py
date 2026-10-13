@@ -50,6 +50,7 @@ _marks = calendar.package_marks
 _chips = calendar.get_chips
 _day_chips = calendar.day_chips
 _day_pickup_summary = calendar.day_pickup_summary
+_group_day_chips = calendar.group_day_chips
 _can_confirm_pickup = calendar.can_confirm_pickup
 _can_confirm_arrival = calendar.can_confirm_arrival
 
@@ -149,9 +150,11 @@ def day_detail(request, day):
         raise Http404("Bad date")
     today = timezone.localdate()
     raw_chips = calendar.get_chips(the_day, the_day, today)
+    chips = calendar.day_chips(raw_chips, the_day)
     return render(request, "packages/_day_detail.html", {
         "day": the_day,
-        "chips": calendar.day_chips(raw_chips, the_day),
+        "chips": chips,
+        "chip_entries": calendar.group_day_chips(chips),
         "pickup_summary": calendar.day_pickup_summary(raw_chips),
     })
 
@@ -162,6 +165,18 @@ def _package_card(request, pkg, back_day):
     point = pkg.pickup_point
     today = timezone.localdate()
     in_transit = pkg.state == Package.State.IN_TRANSIT
+    shared_packages = []
+    if pkg.pickup_code and pkg.state == Package.State.AWAITING_PICKUP:
+        siblings = (Package.objects
+                    .filter(state=Package.State.AWAITING_PICKUP,
+                            pickup_point_id=pkg.pickup_point_id,
+                            pickup_code=pkg.pickup_code)
+                    .exclude(pk=pkg.pk)
+                    .order_by("pk"))
+        shared_packages = [
+            {"pkg": sib, "label": calendar.package_label(sib)}
+            for sib in siblings
+        ]
     return render(request, "packages/_package_detail.html", {
         "package": pkg,
         "label": calendar.package_label(pkg),
@@ -169,6 +184,7 @@ def _package_card(request, pkg, back_day):
         "point_maps_url": point.maps_url,
         "source": calendar.source_family(point),
         "state_label": calendar.state_label(pkg),
+        "shared_packages": shared_packages,
         # The card is where the delivery window gets spelled out in full: the
         # chip only has room to say "Estimado", so this is the one place the
         # user can see what Amazon actually promised.

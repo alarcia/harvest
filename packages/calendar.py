@@ -457,6 +457,8 @@ def get_chips(start, end, today):
         chips.extend(
             {"date": day, "kind": kind, "tag": STATE_TAGS[kind], "note": note,
              "label": label, "source": source, "detail_url": detail_url,
+             "pkg_id": pkg.pk,
+             "pickup_code": pkg.pickup_code,
              "point_id": pkg.pickup_point_id,
              "point_kind": pkg.pickup_point.kind,
              "point_name": pkg.pickup_point.label,
@@ -528,7 +530,14 @@ def day_chips(chips, day):
                 collapsed.extend(group)
         todays = rest + collapsed
 
-    return sorted(todays, key=lambda c: URGENCY_RANK[c["kind"]])
+    def _chip_sort_key(c):
+        urgency = URGENCY_RANK[c["kind"]]
+        point_id = c.get("point_id", 0)
+        code = (c.get("pickup_code") or "").strip()
+        code_key = f"0_{code}" if code else f"1_{c.get('pkg_id', 0)}"
+        return (urgency, point_id, code_key)
+
+    return sorted(todays, key=_chip_sort_key)
 
 
 _day_chips = day_chips
@@ -537,29 +546,87 @@ _day_chips = day_chips
 def day_pickup_summary(chips):
     """Summarize points to visit for packages awaiting pickup on a day.
 
-    Returns a list of dicts: [{'name': 'Morera', 'count': 4, 'source': 'amazon'}, ...]
+    Returns a list of dicts:
+    [{'name': 'Morera', 'count': 4, 'product_count': 6, 'has_groups': True, 'source': 'amazon', ...}, ...]
+    where 'count' is the number of physical packages to collect, and 'product_count' is the total items.
     ordered by count descending, then point name.
     Ignores home deliveries (no trip needed) and packages not awaiting pickup.
     """
-    counts_by_point = {}
+    by_point = {}
     for c in chips:
         if c.get("kind") in AWAITING_PICKUP_KINDS and c.get("point_kind") != PickupPoint.Kind.HOME:
             pid = c["point_id"]
-            if pid not in counts_by_point:
-                counts_by_point[pid] = {
+            if pid not in by_point:
+                by_point[pid] = {
                     "name": c.get("point_name", ""),
-                    "count": 0,
+                    "package_keys": set(),
+                    "product_count": 0,
                     "source": c.get("source", "amazon"),
                     "maps_url": c.get("point_maps_url", ""),
                 }
-            counts_by_point[pid]["count"] += 1
+            code = (c.get("pickup_code") or "").strip()
+            pkg_key = f"code:{code}" if code else f"pkg:{c.get('pkg_id', id(c))}"
+            by_point[pid]["package_keys"].add(pkg_key)
+            by_point[pid]["product_count"] += 1
 
-    summary = list(counts_by_point.values())
+    summary = []
+    for data in by_point.values():
+        pkg_count = len(data["package_keys"])
+        prod_count = data["product_count"]
+        summary.append({
+            "name": data["name"],
+            "count": pkg_count,
+            "product_count": prod_count,
+            "has_groups": prod_count > pkg_count,
+            "source": data["source"],
+            "maps_url": data["maps_url"],
+        })
     summary.sort(key=lambda item: (-item["count"], item["name"]))
     return summary
 
 
 _day_pickup_summary = day_pickup_summary
+
+
+def group_day_chips(chips):
+    """Group awaiting-pickup chips that share a pickup code and point into physical packages.
+
+    Returns a list of entry dicts:
+    - {'is_group': True, 'pickup_code': '897406', 'point_name': '...', 'chips': [c1, c2, ...]}
+    - {'is_group': False, 'chip': c}
+    """
+    code_groups = defaultdict(list)
+    for c in chips:
+        code = (c.get("pickup_code") or "").strip()
+        if c.get("kind") in AWAITING_PICKUP_KINDS and code:
+            code_groups[(c.get("point_id"), code)].append(c)
+
+    multi_groups = {k: v for k, v in code_groups.items() if len(v) > 1}
+
+    seen_groups = set()
+    entries = []
+    for c in chips:
+        code = (c.get("pickup_code") or "").strip()
+        group_key = (c.get("point_id"), code) if (c.get("kind") in AWAITING_PICKUP_KINDS and code) else None
+        if group_key and group_key in multi_groups:
+            if group_key not in seen_groups:
+                seen_groups.add(group_key)
+                entries.append({
+                    "is_group": True,
+                    "pickup_code": code,
+                    "point_name": c.get("point_name", ""),
+                    "source": c.get("source", "amazon"),
+                    "chips": multi_groups[group_key],
+                })
+        else:
+            entries.append({
+                "is_group": False,
+                "chip": c,
+            })
+    return entries
+
+
+_group_day_chips = group_day_chips
 
 
 def can_confirm_pickup(pkg):

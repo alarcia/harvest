@@ -14,29 +14,73 @@ back.{% endcomment %}
         <span class="summary-label">Por recoger:</span>
         {% for item in pickup_summary %}
           <span class="summary-item src-{{ item.source }}">
-            <b>{{ item.count }}</b> {% if item.maps_url %}<a href="{{ item.maps_url }}" target="_blank" rel="noopener" class="pickup-point-link" title="Abrir ruta en Google Maps">{{ item.name }} ↗</a>{% else %}{{ item.name }}{% endif %}
+            <b>{{ item.count }}</b> {% if item.has_groups %}<span class="summary-prod-note">({{ item.product_count }} productos)</span> {% endif %}{% if item.maps_url %}<a href="{{ item.maps_url }}" target="_blank" rel="noopener" class="pickup-point-link" title="Abrir ruta en Google Maps">{{ item.name }} ↗</a>{% else %}{{ item.name }}{% endif %}
           </span>{% if not forloop.last %}<span class="summary-sep">·</span>{% endif %}
         {% endfor %}
       </div>
     {% endif %}
     <ul class="day-list">
-      {% for c in chips %}
-        <li style="--i: {{ forloop.counter0 }};">
-          <button class="pkg src-{{ c.source }} is-{{ c.kind }}{% if c.closed %} pkg-closed{% endif %}"
-                  hx-get="{{ c.detail_url }}?from_day={{ day|date:'Y-m-d' }}"
-                  hx-target="#modal" hx-swap="innerHTML">
-            <span class="pkg-meta">
-              <span class="pkg-tag">{% if c.closed or c.kind == "action_needed" %}⚠ {% elif c.kind == "picked" %}✓ {% endif %}<b>{{ c.tag }}{% if c.note %} ({{ c.note }}){% endif %}</b></span>
-              {% if c.point_name %}
-                <span class="pkg-sep">·</span>
-                <span class="pkg-loc">{% if c.point_kind == "home" %}🏠 {% endif %}{{ c.point_name }}</span>
-              {% endif %}
-            </span>
-            <span class="pkg-name">{{ c.label }}</span>
-          </button>
-        </li>
+      {% for entry in chip_entries %}
+        {% if entry.is_group %}
+          <li class="pkg-group" style="--i: {{ forloop.counter0 }};">
+            <div class="pkg-group-header">
+              <span class="pkg-group-title">📦 Paquete conjunto · {{ entry.chips|length }} productos</span>
+              {% if entry.pickup_code %}<span class="pkg-group-code">Código <code>{{ entry.pickup_code }}</code></span>{% endif %}
+            </div>
+            <div class="pkg-group-items">
+              {% for c in entry.chips %}
+                <button class="pkg src-{{ c.source }} is-{{ c.kind }}{% if c.closed %} pkg-closed{% endif %}"
+                        hx-get="{{ c.detail_url }}?from_day={{ day|date:'Y-m-d' }}"
+                        hx-target="#modal" hx-swap="innerHTML">
+                  <span class="pkg-meta">
+                    <span class="pkg-tag">{% if c.closed or c.kind == "action_needed" %}⚠ {% elif c.kind == "picked" %}✓ {% endif %}<b>{{ c.tag }}{% if c.note %} ({{ c.note }}){% endif %}</b></span>
+                    {% if c.point_name %}
+                      <span class="pkg-sep">·</span>
+                      <span class="pkg-loc">{% if c.point_kind == "home" %}🏠 {% endif %}{{ c.point_name }}</span>
+                    {% endif %}
+                  </span>
+                  <span class="pkg-name">{{ c.label }}</span>
+                </button>
+              {% endfor %}
+            </div>
+          </li>
+        {% else %}
+          {% with c=entry.chip %}
+            <li style="--i: {{ forloop.counter0 }};">
+              <button class="pkg src-{{ c.source }} is-{{ c.kind }}{% if c.closed %} pkg-closed{% endif %}"
+                      hx-get="{{ c.detail_url }}?from_day={{ day|date:'Y-m-d' }}"
+                      hx-target="#modal" hx-swap="innerHTML">
+                <span class="pkg-meta">
+                  <span class="pkg-tag">{% if c.closed or c.kind == "action_needed" %}⚠ {% elif c.kind == "picked" %}✓ {% endif %}<b>{{ c.tag }}{% if c.note %} ({{ c.note }}){% endif %}</b></span>
+                  {% if c.point_name %}
+                    <span class="pkg-sep">·</span>
+                    <span class="pkg-loc">{% if c.point_kind == "home" %}🏠 {% endif %}{{ c.point_name }}</span>
+                  {% endif %}
+                </span>
+                <span class="pkg-name">{{ c.label }}</span>
+              </button>
+            </li>
+          {% endwith %}
+        {% endif %}
       {% empty %}
-        <li class="day-empty">Nada este día</li>
+        {% for c in chips %}
+          <li style="--i: {{ forloop.counter0 }};">
+            <button class="pkg src-{{ c.source }} is-{{ c.kind }}{% if c.closed %} pkg-closed{% endif %}"
+                    hx-get="{{ c.detail_url }}?from_day={{ day|date:'Y-m-d' }}"
+                    hx-target="#modal" hx-swap="innerHTML">
+              <span class="pkg-meta">
+                <span class="pkg-tag">{% if c.closed or c.kind == "action_needed" %}⚠ {% elif c.kind == "picked" %}✓ {% endif %}<b>{{ c.tag }}{% if c.note %} ({{ c.note }}){% endif %}</b></span>
+                {% if c.point_name %}
+                  <span class="pkg-sep">·</span>
+                  <span class="pkg-loc">{% if c.point_kind == "home" %}🏠 {% endif %}{{ c.point_name }}</span>
+                {% endif %}
+              </span>
+              <span class="pkg-name">{{ c.label }}</span>
+            </button>
+          </li>
+        {% empty %}
+          <li class="day-empty">Nada este día</li>
+        {% endfor %}
       {% endfor %}
     </ul>
   </div>

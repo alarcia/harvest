@@ -53,6 +53,26 @@
       {% if package.pickup_code %}
         <span><b>Código de recogida</b> <code class="modal-code">{{ package.pickup_code }}</code></span>
       {% endif %}
+      {% if shared_packages %}
+        <div class="modal-shared-box">
+          <span class="shared-box-title">📦 <b>Mismo paquete</b> · Comparte código con {{ shared_packages|length }} producto{{ shared_packages|length|pluralize }}:</span>
+          <ul class="shared-box-list">
+            {% for item in shared_packages %}
+              <li>
+                <button type="button" class="shared-box-item"
+                        hx-get="{% url 'package_detail' item.pkg.pk %}{% if back_day %}?from_day={{ back_day|date:'Y-m-d' }}{% endif %}"
+                        hx-target="#modal" hx-swap="innerHTML">
+                  {% if item.pkg.image_url %}
+                    <img class="shared-box-thumb" src="{{ item.pkg.image_url }}" alt="">
+                  {% endif %}
+                  <span class="shared-box-name">{{ item.label }}</span>
+                  <span class="shared-box-arrow">→</span>
+                </button>
+              </li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
       {% if package.carrier %}
         <span><b>Transportista</b> {{ package.carrier }}{% if package.carrier_tracking_number %} · {{ package.carrier_tracking_number }}{% endif %}</span>
       {% endif %}

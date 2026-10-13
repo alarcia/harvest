@@ -360,6 +360,11 @@ chip behind the open card stops lying.{% endcomment %}
     .day-pickup-summary .summary-item b {
       font-weight: 700;
     }
+    .day-pickup-summary .summary-prod-note {
+      font-weight: 500;
+      font-size: .78rem;
+      opacity: .85;
+    }
     .day-pickup-summary .summary-sep {
       color: var(--muted);
       opacity: .6;
@@ -373,6 +378,57 @@ chip behind the open card stops lying.{% endcomment %}
       padding: 0;
       display: grid;
       gap: .5rem;
+    }
+    .pkg-group {
+      list-style: none;
+      border: 1px solid color-mix(in srgb, var(--border) 90%, var(--fg));
+      background: color-mix(in srgb, var(--fg) 2.5%, transparent);
+      border-radius: .75rem;
+      padding: .45rem .5rem .5rem;
+      display: flex;
+      flex-direction: column;
+      gap: .35rem;
+      animation: row-in .3s ease-out both;
+      animation-delay: calc(var(--i, 0) * 35ms);
+    }
+    .pkg-group-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .5rem;
+      padding: .1rem .3rem .15rem;
+      font-size: .78rem;
+      line-height: 1.25;
+    }
+    .pkg-group-title {
+      font-weight: 700;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: .35rem;
+    }
+    .pkg-group-code {
+      font-size: .75rem;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .pkg-group-code code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-weight: 700;
+      font-size: .8rem;
+      background: var(--card);
+      color: var(--fg);
+      padding: .1rem .35rem;
+      border-radius: .3rem;
+      border: 1px solid var(--border);
+    }
+    .pkg-group-items {
+      display: flex;
+      flex-direction: column;
+      gap: .35rem;
+    }
+    .pkg-group-items :where(.pkg) {
+      animation: none;
     }
     :where(.day-list) .pkg {
       display: flex;

@@ -3235,6 +3235,82 @@ class CalendarViewTests(TestCase):
         self.assertIn('class="pickup-point-link"', html)
         self.assertIn("Les Mesures ↗</a>", html)
 
+    def test_day_detail_shows_pickup_summary_with_grouped_packages(self):
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER,
+                              display_name="Les Mesures")
+        # 3 products in one package (same pickup code), 1 individual product
+        Package.objects.create(pickup_point=counter, state=Package.State.AWAITING_PICKUP,
+                               description="Producto A", deadline=today, pickup_code="897406")
+        Package.objects.create(pickup_point=counter, state=Package.State.AWAITING_PICKUP,
+                               description="Producto B", deadline=today, pickup_code="897406")
+        Package.objects.create(pickup_point=counter, state=Package.State.AWAITING_PICKUP,
+                               description="Producto C", deadline=today, pickup_code="897406")
+        Package.objects.create(pickup_point=counter, state=Package.State.AWAITING_PICKUP,
+                               description="Producto D", deadline=today, pickup_code="123456")
+
+        html = self.client.get(reverse("day_detail", args=[today.isoformat()])).content.decode()
+        self.assertIn("Por recoger:", html)
+        self.assertIn("<b>2</b>", html)
+        self.assertIn("(4 productos)", html)
+        self.assertIn("Les Mesures", html)
+
+    def test_day_detail_groups_packages_sharing_pickup_code(self):
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER,
+                              display_name="Les Mesures")
+        p1 = Package.objects.create(pickup_point=counter, state=Package.State.AWAITING_PICKUP,
+                                    description="Adviento Calendario", deadline=today, pickup_code="897406")
+        p2 = Package.objects.create(pickup_point=counter, state=Package.State.AWAITING_PICKUP,
+                                    description="Llavero Coche", deadline=today, pickup_code="897406")
+        p3 = Package.objects.create(pickup_point=counter, state=Package.State.AWAITING_PICKUP,
+                                    description="Cortadores Galleta", deadline=today, pickup_code="897406")
+        p4 = Package.objects.create(pickup_point=counter, state=Package.State.AWAITING_PICKUP,
+                                    description="Alfombrilla Carga", deadline=today, pickup_code="999888")
+
+        html = self.client.get(reverse("day_detail", args=[today.isoformat()])).content.decode()
+        self.assertIn("pkg-group", html)
+        self.assertIn("Paquete conjunto · 3 productos", html)
+        self.assertIn("897406", html)
+        self.assertIn("Adviento Calendario", html)
+        self.assertIn("Llavero Coche", html)
+        self.assertIn("Cortadores Galleta", html)
+        self.assertIn("Alfombrilla Carga", html)
+
+    def test_package_detail_shows_shared_sibling_packages(self):
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER,
+                              display_name="Les Mesures")
+        p1 = Package.objects.create(pickup_point=counter, state=Package.State.AWAITING_PICKUP,
+                                    description="Adviento Calendario", deadline=today, pickup_code="897406")
+        p2 = Package.objects.create(pickup_point=counter, state=Package.State.AWAITING_PICKUP,
+                                    description="Llavero Coche", deadline=today, pickup_code="897406")
+        p3 = Package.objects.create(pickup_point=counter, state=Package.State.AWAITING_PICKUP,
+                                    description="Cortadores Galleta", deadline=today, pickup_code="897406")
+
+        html = self.client.get(reverse("package_detail", args=[p1.pk]),
+                               {"from_day": today.isoformat()}).content.decode()
+        self.assertIn("modal-shared-box", html)
+        self.assertIn("Mismo paquete", html)
+        self.assertIn("Llavero Coche", html)
+        self.assertIn("Cortadores Galleta", html)
+        # It shouldn't list itself among the siblings
+        self.assertNotIn("shared-box-item\">Adviento Calendario", html)
+        self.assertIn(f"from_day={today.isoformat()}", html)
+
+    def test_package_detail_no_shared_box_when_single_package(self):
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER,
+                              display_name="Les Mesures")
+        pkg = Package.objects.create(pickup_point=counter, state=Package.State.AWAITING_PICKUP,
+                                     description="Solo Paquete", deadline=today, pickup_code="555666")
+        html = self.client.get(reverse("package_detail", args=[pkg.pk])).content.decode()
+        self.assertNotIn("modal-shared-box", html)
+
     def test_package_detail_shows_maps_link(self):
         today = timezone.localdate()
         counter = self._point("Amazon Counter - Les Mesures",

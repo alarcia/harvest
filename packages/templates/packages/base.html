@@ -524,6 +524,72 @@
       letter-spacing: .08em;
       font-variant-numeric: tabular-nums;
     }
+    .modal-shared-box {
+      margin: .65rem 0 .2rem;
+      padding: .5rem .65rem;
+      background: color-mix(in srgb, var(--fg) 3%, transparent);
+      border: 1px solid var(--border);
+      border-radius: .6rem;
+      display: flex;
+      flex-direction: column;
+      gap: .35rem;
+    }
+    .shared-box-title {
+      font-size: .78rem;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+    .shared-box-title b {
+      color: var(--fg);
+    }
+    .shared-box-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: .3rem;
+    }
+    .shared-box-item {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      width: 100%;
+      padding: .35rem .5rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: .45rem;
+      text-align: left;
+      font: inherit;
+      color: var(--fg);
+      cursor: pointer;
+      transition: background .15s ease, transform .1s ease;
+    }
+    .shared-box-item:active {
+      transform: scale(.98);
+    }
+    .shared-box-thumb {
+      width: 1.8rem;
+      height: 1.8rem;
+      object-fit: contain;
+      border-radius: 4px;
+      background: #fff;
+      flex-shrink: 0;
+    }
+    .shared-box-name {
+      font-size: .8rem;
+      font-weight: 500;
+      line-height: 1.25;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .shared-box-arrow {
+      color: var(--muted);
+      font-size: .85rem;
+      flex-shrink: 0;
+    }
     .modal-barcode { display: inline-block; margin-top: .85rem; font-size: .9rem; }
 
     /* A standing fact about the place, not about this package: the shop's
