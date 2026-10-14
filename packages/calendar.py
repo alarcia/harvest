@@ -53,6 +53,7 @@ VIEW_WEEKS = {"fortnight": 2}
 STATE_TAGS = {
     "ordered": "Pedido",
     "shipped": "Enviado",
+    "last_mile": "En reparto",
     "estimated": "Estimado",
     "deadline_estimated": "Último día",
     "leaves_estimated": "Se va",
@@ -75,6 +76,7 @@ URGENCY_RANK = {
     "leaves": 0,
     "action_needed": 0,
     "waiting": 1,
+    "last_mile": 1,
     "shipped": 2,
     "ordered": 2,
     "estimated": 3,
@@ -112,6 +114,7 @@ _PEPE_WARN_WEEKDAY = PEPE_WARN_WEEKDAY
 
 STATE_LABELS = {
     Package.State.IN_TRANSIT: "En camino",
+    Package.State.LAST_MILE: "En reparto",
     Package.State.AWAITING_PICKUP: "Listo para recoger",
     Package.State.PICKED_UP: "Recogido",
     Package.State.DELIVERED: "Entregado",
@@ -373,7 +376,7 @@ def package_marks(pkg, today):
     "waiting" paints only today (not every day of the remaining window), and a
     picked-up package leaves nothing but the check on its day. `note` is a small
     qualifier shown in parentheses, empty for most marks."""
-    if pkg.state == Package.State.IN_TRANSIT:
+    if pkg.state in (Package.State.IN_TRANSIT, Package.State.LAST_MILE):
         fact_day, fact_kind = None, None
         if pkg.shipped_on:
             fact_day, fact_kind = pkg.shipped_on, "shipped"
@@ -381,20 +384,26 @@ def package_marks(pkg, today):
             fact_day, fact_kind = pkg.ordered_on, "ordered"
         marks = []
         est_day = effective_estimate(pkg, today)
-        # Ship and estimated arrival on the *same* day ("Enviado hoy, llega
-        # hoy", the rare same-day delivery): one chip that says both, so the
-        # arrival still shows where the user looks for it instead of vanishing.
-        # Only while the estimate still sits where the email put it
-        # (`est_day == pkg.estimated_arrival`): one that slipped onto today is
-        # a different, weaker statement and keeps its own chip to say so.
-        if est_day and est_day == pkg.estimated_arrival == fact_day:
-            note = "llega hoy" if fact_day == today else "llega el mismo día"
-            marks.append((fact_day, fact_kind, note))
-        else:
-            if fact_kind:
+        if pkg.state == Package.State.LAST_MILE:
+            delivery_day = est_day or today
+            if fact_kind and fact_day and fact_day < delivery_day:
                 marks.append((fact_day, fact_kind, ""))
-            if est_day:
-                marks.append((est_day, "estimated", estimate_note(pkg, today)))
+            marks.append((delivery_day, "last_mile", ""))
+        else:
+            # Ship and estimated arrival on the *same* day ("Enviado hoy, llega
+            # hoy", the rare same-day delivery): one chip that says both, so the
+            # arrival still shows where the user looks for it instead of vanishing.
+            # Only while the estimate still sits where the email put it
+            # (`est_day == pkg.estimated_arrival`): one that slipped onto today is
+            # a different, weaker statement and keeps its own chip to say so.
+            if est_day and est_day == pkg.estimated_arrival == fact_day:
+                note = "llega hoy" if fact_day == today else "llega el mismo día"
+                marks.append((fact_day, fact_kind, note))
+            else:
+                if fact_kind:
+                    marks.append((fact_day, fact_kind, ""))
+                if est_day:
+                    marks.append((est_day, "estimated", estimate_note(pkg, today)))
         leaves_day = preview_leaves_day(pkg, today)
         if leaves_day:
             marks.append((leaves_day - timedelta(days=1), "deadline_estimated", "estimado"))
@@ -647,7 +656,7 @@ def can_confirm_arrival(pkg, today=None):
     In-transit packages whose delivery estimate has lapsed ("con retraso")
     can be marked as delivered directly from the card.
     """
-    if pkg.state != Package.State.IN_TRANSIT:
+    if pkg.state not in (Package.State.IN_TRANSIT, Package.State.LAST_MILE):
         return False
     if today is None:
         today = timezone.localdate()

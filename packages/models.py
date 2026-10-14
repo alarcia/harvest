@@ -272,6 +272,7 @@ class Package(models.Model):
 
     class State(models.TextChoices):
         IN_TRANSIT = "in_transit", "In transit"
+        LAST_MILE = "last_mile", "En reparto"
         AWAITING_PICKUP = "awaiting_pickup", "Awaiting pickup"
         PICKED_UP = "picked_up", "Picked up"
         # Terminal state for home deliveries: no pickup trip, the "Entregado"

@@ -87,10 +87,11 @@ class Outcome:
 # PICKED_UP and DELIVERED are both terminal (a pickup and a home delivery).
 _RANK = {
     Package.State.IN_TRANSIT: 0,
-    Package.State.AWAITING_PICKUP: 1,
-    Package.State.PICKED_UP: 2,
-    Package.State.DELIVERED: 2,
-    Package.State.RETURNED: 2,
+    Package.State.LAST_MILE: 1,
+    Package.State.AWAITING_PICKUP: 2,
+    Package.State.PICKED_UP: 3,
+    Package.State.DELIVERED: 3,
+    Package.State.RETURNED: 3,
 }
 
 
@@ -485,7 +486,7 @@ def _apply(parsed):
             pkg = Package(
                 pickup_point=point,
                 order_id=parsed.order_id or "",
-                state=Package.State.IN_TRANSIT,
+                state=Package.State.LAST_MILE if kind == EmailKind.OUT_FOR_DELIVERY else Package.State.IN_TRANSIT,
             )
         if point is not None:
             pkg.pickup_point = point
@@ -498,6 +499,10 @@ def _apply(parsed):
             # dot has a day to sit on. Never overwrites a real "Pedido", which
             # may still turn up out of order for a normal re-dated order.
             pkg.ordered_on = pkg.ordered_on or sent_on
+        elif kind == EmailKind.OUT_FOR_DELIVERY:
+            pkg.shipped_on = pkg.shipped_on or sent_on
+            if _RANK[pkg.state] < _RANK[Package.State.LAST_MILE]:
+                pkg.state = Package.State.LAST_MILE
         else:
             pkg.shipped_on = pkg.shipped_on or sent_on
         if parsed.shipment_id:
@@ -520,6 +525,8 @@ def _apply(parsed):
         created = pkg.pk is None
         pkg.save()
         notes = []
+        if kind == EmailKind.OUT_FOR_DELIVERY:
+            notes.append("En reparto")
         if kind == EmailKind.ORDERED and parsed.payment_review:
             # Explains a row born without an estimated arrival: the audit trail
             # has to say Amazon withheld the date, not that we lost it.

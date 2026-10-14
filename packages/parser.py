@@ -48,7 +48,7 @@ from django.utils.timezone import get_default_timezone
 
 class EmailKind(Enum):
     """One value per Amazon template we know. Model states are coarser:
-    ORDERED/ESTIMATE_UPDATED/SHIPPED/OUT_FOR_DELIVERY are all `in_transit`;
+    ORDERED/ESTIMATE_UPDATED/SHIPPED are `in_transit`; OUT_FOR_DELIVERY is `last_mile`;
     READY_FOR_PICKUP
     and DELIVERY_ATTEMPT both land on `awaiting_pickup` (the second at a
     carrier's office instead of an Amazon point); NO_LONGER_AVAILABLE,
@@ -182,7 +182,11 @@ _KIND_PATTERNS = [
     (EmailKind.PICKED_UP, r"paquete ha sido recogido"),
     (EmailKind.DELIVERED, r"paquete se ha entregado|paquete ha sido entregado"),
     (EmailKind.REVIEW_PUBLISHED, r"tu reseña está en directo|gracias por su reseña"),
-    (EmailKind.OUT_FOR_DELIVERY, r"paquete está en reparto"),
+    (EmailKind.OUT_FOR_DELIVERY,
+     r"paquete está en reparto"
+     r"|tu paquete llegar[aá] hoy"
+     r"|^en reparto\b"
+     r"|^llega hoy\b"),
     (EmailKind.SHIPPED, r"paquete se ha enviado"),
     (EmailKind.ORDERED, r"gracias por tu pedido"),
     # "Dirección de envío actualizada" — the destination changed after the

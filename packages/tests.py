@@ -262,6 +262,20 @@ class ParseEmailTests(SimpleTestCase):
         self.assertIsNotNone(parsed.pickup_location)
         self.assertFalse(parsed.pickup_location.startswith("Amazon"))
 
+    def test_out_for_delivery_subject_matches(self):
+        eml = (
+            b"From: auto-confirm@amazon.es\r\n"
+            b"Subject: En reparto: Auriculares Bluetooth\r\n"
+            b"Message-ID: <test-out-1@amazon.es>\r\n"
+            b"Date: Wed, 14 Oct 2026 09:00:00 +0200\r\n"
+            b"MIME-Version: 1.0\r\n"
+            b"Content-Type: text/html; charset=utf-8\r\n\r\n"
+            b"<html><body><p>Pedido n. 403-1111111-1111111</p>"
+            b"<p>Llega hoy</p></body></html>"
+        )
+        parsed = parse_email(eml)
+        self.assertEqual(parsed.kind, EmailKind.OUT_FOR_DELIVERY)
+
     def test_ordered_paid_to_locker(self):
         # A non-Vine purchase — and its email *still* prints "Total 0.00€"
         # (settled with gift balance?), so the total alone can't prove Vine.
@@ -994,17 +1008,39 @@ class IngestTests(TestCase):
             Package.objects.get().state, Package.State.AWAITING_PICKUP
         )
 
-    def test_home_delivery_tracked_as_in_transit(self):
-        # A home delivery ("En reparto" to a relative's address) is now
-        # tracked: an in_transit package at a HOME point, no pickup trip.
+    def test_home_delivery_tracked_as_last_mile(self):
+        # A home delivery ("En reparto" to a relative's address) is tracked
+        # as last_mile at a HOME point, no pickup trip.
         record, _ = process_message(
             fixture("012-fwd-llega-hoy-necesitas-una-contrasena-temporal-para-tu-entr.eml")
         )
         self.assertTrue(record.processed)
         pkg = Package.objects.get()
-        self.assertEqual(pkg.state, Package.State.IN_TRANSIT)
+        self.assertEqual(pkg.state, Package.State.LAST_MILE)
         self.assertEqual(pkg.pickup_point.kind, PickupPoint.Kind.HOME)
         self.assertEqual(pkg.estimated_arrival, date(2026, 5, 12))  # "Llega hoy"
+
+    def test_out_for_delivery_transitions_in_transit_to_last_mile(self):
+        home = PickupPoint.objects.create(name="Casa", kind=PickupPoint.Kind.HOME)
+        pkg = Package.objects.create(
+            pickup_point=home, order_id="403-4159988-6701146",
+            state=Package.State.IN_TRANSIT,
+        )
+        process_message(
+            fixture("012-fwd-llega-hoy-necesitas-una-contrasena-temporal-para-tu-entr.eml")
+        )
+        pkg.refresh_from_db()
+        self.assertEqual(pkg.state, Package.State.LAST_MILE)
+
+    def test_shipped_does_not_downgrade_last_mile(self):
+        home = PickupPoint.objects.create(name="Casa", kind=PickupPoint.Kind.HOME)
+        pkg = Package.objects.create(
+            pickup_point=home, order_id="408-7650369-0268310",
+            state=Package.State.LAST_MILE,
+        )
+        process_message(fixture("020-enviado-kalvica-11-pares-pendientes.eml"))
+        pkg.refresh_from_db()
+        self.assertEqual(pkg.state, Package.State.LAST_MILE)
 
     def test_home_delivery_shipped_tracked_in_transit(self):
         # A real auto-forwarded "Enviado" email shipped to a home address.
@@ -2510,6 +2546,20 @@ class CalendarViewTests(TestCase):
             pickup_point=point, state=Package.State.DELIVERED,
             actual_arrival=day, description=description,
         )
+
+    def test_last_mile_chip_renders_with_is_last_mile_and_en_reparto_tag(self):
+        point = self._point("Amazon Locker - Test", PickupPoint.Kind.AMAZON_LOCKER)
+        today = timezone.localdate()
+        Package.objects.create(
+            pickup_point=point,
+            description="Altavoz Portátil",
+            state=Package.State.LAST_MILE,
+            estimated_arrival=today,
+            shipped_on=today - timedelta(days=2),
+        )
+        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+        self.assertIn(b"is-last_mile", html)
+        self.assertIn("En reparto".encode(), html)
 
     def test_carrier_pickup_gets_the_action_needed_chip(self):
         # A UPS delivery attempt (PickupPoint.Kind.CARRIER) has no known

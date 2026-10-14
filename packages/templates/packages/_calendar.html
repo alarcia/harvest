@@ -234,6 +234,27 @@ chip behind the open card stops lying.{% endcomment %}
       border: 1px dashed color-mix(in srgb, currentColor 65%, transparent);
       background: color-mix(in srgb, currentColor 7%, transparent);
     }
+    /* En reparto / Last mile: imminent arrival. Border in continuous motion. */
+    .pkg.is-last_mile {
+      position: relative;
+      border: 1.5px solid transparent;
+      background:
+        linear-gradient(color-mix(in srgb, currentColor 10%, var(--card)), color-mix(in srgb, currentColor 10%, var(--card))) padding-box,
+        repeating-linear-gradient(
+          -45deg,
+          currentColor 0,
+          currentColor 6px,
+          transparent 6px,
+          transparent 12px
+        ) border-box;
+      background-size: 100% 100%, 28px 28px;
+      animation: border-crawl 1.2s linear infinite;
+      box-shadow: 0 0 6px color-mix(in srgb, currentColor 25%, transparent);
+    }
+    @keyframes border-crawl {
+      from { background-position: 0 0, 0 0; }
+      to   { background-position: 0 0, 28px 0; }
+    }
     /* Waiting at the pickup point: the actionable state, so it's the loudest. */
     .pkg.is-waiting { color: var(--bg); }
     .pkg.is-waiting.src-amazon { background: var(--amazon); }
@@ -519,7 +540,7 @@ chip behind the open card stops lying.{% endcomment %}
     }
     @media (prefers-reduced-motion: reduce) {
       .cal .cal-grid, .cal .cal-title, .cal .day, .cal .pkg,
-      .day-list .pkg { animation: none !important; }
+      .day-list .pkg, .cal .pkg.is-last_mile, .view-month .day .pkg.is-last_mile { animation: none !important; }
     }
 
     /* ---- phone layout (below the 700px desktop breakpoint) ---- */
@@ -566,6 +587,15 @@ chip behind the open card stops lying.{% endcomment %}
       .view-month .day .pkg.is-estimated {
         background: transparent;
         border: 2px solid currentColor;
+      }
+      .view-month .day .pkg.is-last_mile {
+        background: currentColor;
+        box-shadow: 0 0 5px currentColor;
+        animation: dot-blink 1.2s ease-in-out infinite;
+      }
+      @keyframes dot-blink {
+        0%, 100% { opacity: 1; transform: scale(1.15); }
+        50%      { opacity: .2; transform: scale(.7); }
       }
       .view-month .day .pkg.is-waiting.src-amazon { background: var(--amazon); }
       .view-month .day .pkg.is-waiting.src-store { background: var(--store); }

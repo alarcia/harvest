@@ -164,7 +164,7 @@ def _package_card(request, pkg, back_day):
     pickup confirmation, which lands back on the very same card."""
     point = pkg.pickup_point
     today = timezone.localdate()
-    in_transit = pkg.state == Package.State.IN_TRANSIT
+    in_transit = pkg.state in (Package.State.IN_TRANSIT, Package.State.LAST_MILE)
     shared_packages = []
     if pkg.pickup_code and pkg.state == Package.State.AWAITING_PICKUP:
         siblings = (Package.objects
