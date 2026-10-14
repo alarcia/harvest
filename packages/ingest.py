@@ -56,11 +56,13 @@ import imaplib
 import logging
 import re
 from datetime import timedelta
+from decimal import Decimal
 from email import message_from_bytes, policy
 from email.utils import parsedate_to_datetime
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from reviews.models import Review
@@ -242,13 +244,17 @@ def _find_all_packages(parsed, point):
             found[pkg.pk] = pkg
     ids = set(parsed.order_ids) | ({parsed.order_id} if parsed.order_id else set())
     if ids:
-        for pkg in Package.objects.filter(order_id__in=ids):
+        qs = Package.objects.filter(order_id__in=ids)
+        if parsed.shipment_ids:
+            qs = qs.filter(Q(shipment_id__in=parsed.shipment_ids) | Q(shipment_id=""))
+        for pkg in qs:
             found[pkg.pk] = pkg
     asins = {item.asin for item in parsed.items if item.asin}
     if asins and point is not None:
-        for pkg in (Package.objects
-                    .filter(asin__in=asins, pickup_point=point)
-                    .exclude(pk__in=found)):
+        qs = Package.objects.filter(asin__in=asins, pickup_point=point).exclude(pk__in=found)
+        if parsed.shipment_ids:
+            qs = qs.filter(Q(shipment_id__in=parsed.shipment_ids) | Q(shipment_id=""))
+        for pkg in qs:
             found[pkg.pk] = pkg
     return list(found.values())
 
@@ -465,6 +471,160 @@ def _apply(parsed):
         return pkg, f"Recepción en Pepe y Dalda: {pkg.description}"
 
     point = _pickup_point(parsed.pickup_location)
+
+    if kind in (EmailKind.ORDERED, EmailKind.ESTIMATE_UPDATED) and parsed.items:
+        saved_packages = []
+        is_multi = len(parsed.items) > 1
+        for item in parsed.items:
+            item_order_id = item.order_id or parsed.order_id or ""
+            item_loc = item.pickup_location or parsed.pickup_location
+            item_point = _pickup_point(item_loc) or point
+            if item_point is None:
+                continue
+            item_est = item.estimated_arrival or parsed.estimated_arrival
+            item_est_end = item.estimated_arrival_end or parsed.estimated_arrival_end
+            item_title = item.title[:255]
+            item_asin = item.asin or ""
+            item_image = item.image_url or ""
+
+            pkg = None
+            if item_asin:
+                pkg = Package.objects.filter(order_id=item_order_id, asin=item_asin).first()
+            if pkg is None and item_title:
+                pkg = Package.objects.filter(order_id=item_order_id, description=item_title).first()
+            if pkg is None and not is_multi:
+                matches = Package.objects.filter(order_id=item_order_id)
+                unshipped = [p for p in matches if not p.shipment_id]
+                pkg = (unshipped or list(matches))[0] if matches else None
+
+            created = False
+            if pkg is None:
+                pkg = Package(
+                    pickup_point=item_point,
+                    order_id=item_order_id,
+                    state=Package.State.IN_TRANSIT,
+                )
+                created = True
+
+            pkg.pickup_point = item_point
+            if kind == EmailKind.ORDERED:
+                pkg.ordered_on = sent_on
+            else:
+                pkg.ordered_on = pkg.ordered_on or sent_on
+
+            if not pkg.description:
+                pkg.description = item_title
+            if not pkg.asin and item_asin:
+                pkg.asin = item_asin
+            if not pkg.image_url and item_image:
+                pkg.image_url = item_image
+            if item_est:
+                pkg.estimated_arrival = item_est
+                pkg.estimated_arrival_end = item_est_end
+
+            if is_multi:
+                pkg.is_vine = False
+                pkg.cost = parsed.total if parsed.total is not None else Decimal("0.00")
+            else:
+                _apply_cost(pkg, parsed, authoritative=False)
+
+            if (kind == EmailKind.ESTIMATE_UPDATED and not pkg.shipped_on
+                    and _could_be_vine(parsed)):
+                pkg.is_vine = True
+
+            pkg.save()
+            _sync_review_for_package(pkg)
+            saved_packages.append(pkg)
+
+        if not saved_packages:
+            if point is None:
+                return None, "Sin destino identificable: ignorado"
+
+        notes = []
+        if is_multi:
+            notes.append(f"Pedido de {len(saved_packages)} productos registrado")
+        if kind == EmailKind.ORDERED and parsed.payment_review:
+            notes.append("Pago en revisión: el pedido aún no tiene fecha")
+        if kind == EmailKind.ESTIMATE_UPDATED:
+            notes.append("Nueva estimación de entrega")
+            if any(p.pk for p in saved_packages):
+                notes.append("alta de un Vine en versión preliminar "
+                             "(nunca hubo correo de pedido)" if saved_packages[0].is_vine
+                             else "alta de un pedido del que nunca llegó el correo")
+        return (saved_packages[0] if saved_packages else None), " · ".join(notes)
+
+    if kind in (EmailKind.SHIPPED, EmailKind.OUT_FOR_DELIVERY) and parsed.items:
+        saved_packages = []
+        order_ids = set(parsed.order_ids) | ({parsed.order_id} if parsed.order_id else set())
+        already_matched_pks = set()
+        was_any_vine = False
+
+        for item in parsed.items:
+            item_asin = item.asin or ""
+            item_title = item.title[:255]
+            pkg = None
+            if item_asin:
+                pkg = Package.objects.filter(order_id__in=order_ids, asin=item_asin).exclude(pk__in=already_matched_pks).first()
+            if pkg is None and item_title:
+                pkg = Package.objects.filter(order_id__in=order_ids, description=item_title).exclude(pk__in=already_matched_pks).first()
+            if pkg is None:
+                pkg = Package.objects.filter(order_id__in=order_ids, shipment_id="").exclude(pk__in=already_matched_pks).first()
+            if pkg is None:
+                if point is None:
+                    continue
+                pkg = Package(
+                    pickup_point=point,
+                    order_id=parsed.order_id or "",
+                    state=Package.State.LAST_MILE if kind == EmailKind.OUT_FOR_DELIVERY else Package.State.IN_TRANSIT,
+                )
+
+            if point is not None:
+                pkg.pickup_point = point
+            if kind == EmailKind.OUT_FOR_DELIVERY:
+                pkg.shipped_on = pkg.shipped_on or sent_on
+                if _RANK[pkg.state] < _RANK[Package.State.LAST_MILE]:
+                    pkg.state = Package.State.LAST_MILE
+            else:
+                pkg.shipped_on = pkg.shipped_on or sent_on
+
+            if parsed.shipment_id:
+                pkg.shipment_id = parsed.shipment_id
+
+            if not pkg.description:
+                pkg.description = item_title
+            if not pkg.asin and item_asin:
+                pkg.asin = item_asin
+            if not pkg.image_url and item.image_url:
+                pkg.image_url = item.image_url
+            if parsed.estimated_arrival:
+                pkg.estimated_arrival = parsed.estimated_arrival
+                pkg.estimated_arrival_end = parsed.estimated_arrival_end
+
+            if pkg.is_vine:
+                was_any_vine = True
+            _apply_cost(pkg, parsed, authoritative=(kind == EmailKind.SHIPPED))
+            pkg.save()
+            already_matched_pks.add(pkg.pk)
+            _sync_review_for_package(pkg)
+            saved_packages.append(pkg)
+
+        if not saved_packages:
+            if point is None:
+                return None, "Sin destino identificable: ignorado"
+
+        notes = []
+        if kind == EmailKind.OUT_FOR_DELIVERY:
+            notes.append("En reparto")
+        if len(saved_packages) > 1:
+            notes.append(f"{len(saved_packages)} productos enviados")
+        if kind == EmailKind.SHIPPED and parsed.total:
+            first_pkg = saved_packages[0] if saved_packages else None
+            if first_pkg and first_pkg.is_vine:
+                notes.append(f"Recargo UE de {parsed.total}€ en el envío: sigue siendo Vine")
+            elif was_any_vine:
+                notes.append(f"Coste real {parsed.total}€ en el envío: desmarcado como Vine")
+
+        return (saved_packages[0] if saved_packages else None), " · ".join(notes)
 
     if kind in (EmailKind.ORDERED, EmailKind.ESTIMATE_UPDATED,
                 EmailKind.SHIPPED, EmailKind.OUT_FOR_DELIVERY):

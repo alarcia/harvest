@@ -1482,22 +1482,23 @@ class IngestTests(TestCase):
 
     def test_order_held_for_payment_records_only_the_order_day(self):
         # The whole news of that email is "this order exists, on this day":
-        # one row in transit, the ○ on the day it was placed and nothing else
+        # rows in transit, the ○ on the day it was placed and nothing else
         # on the board — no estimate to draw, hence no deadline forecast
         # hanging off one either. The counter it's headed to is still read.
         record, _ = process_message(
             fixture("180-fwd-pedido-amazon-basics-almohadillas-y-1-productos-mas.eml"))
-        pkg = Package.objects.get()
-        self.assertEqual(pkg.state, Package.State.IN_TRANSIT)
-        self.assertEqual(pkg.ordered_on, date(2026, 7, 30))
-        self.assertIsNone(pkg.estimated_arrival)
-        self.assertIsNone(pkg.deadline)
-        self.assertEqual(pkg.pickup_point.kind, PickupPoint.Kind.AMAZON_COUNTER)
-        self.assertEqual(pkg.cost, Decimal("40.48"))
-        self.assertFalse(pkg.is_vine)
+        self.assertEqual(Package.objects.count(), 2)
+        for pkg in Package.objects.all():
+            self.assertEqual(pkg.state, Package.State.IN_TRANSIT)
+            self.assertEqual(pkg.ordered_on, date(2026, 7, 30))
+            self.assertIsNone(pkg.estimated_arrival)
+            self.assertIsNone(pkg.deadline)
+            self.assertEqual(pkg.pickup_point.kind, PickupPoint.Kind.AMAZON_COUNTER)
+            self.assertEqual(pkg.cost, Decimal("40.48"))
+            self.assertFalse(pkg.is_vine)
+            self.assertEqual(_marks(pkg, date(2026, 8, 2)),
+                             [(date(2026, 7, 30), "ordered", "")])
         self.assertIn("Pago en revisión", record.note)
-        self.assertEqual(_marks(pkg, date(2026, 8, 2)),
-                         [(date(2026, 7, 30), "ordered", "")])
 
     def test_split_venue_line_lands_on_the_known_counter(self):
         # Same physical counter as the fixture-006 order, written across three
@@ -1519,9 +1520,10 @@ class IngestTests(TestCase):
         process_message(_amazon_email(
             "¡Gracias por tu pedido!", _HOME_DESTINATION, total="0.00",
             extra_items=[("svet Mantel Antimanchas Tacto Tela", "B0H26JP26F")]))
-        pkg = Package.objects.get()
-        self.assertFalse(pkg.is_vine)
-        self.assertEqual(pkg.cost, Decimal("0.00"))  # still what was charged
+        self.assertEqual(Package.objects.count(), 2)
+        for pkg in Package.objects.all():
+            self.assertFalse(pkg.is_vine)
+            self.assertEqual(pkg.cost, Decimal("0.00"))  # still what was charged
 
     def test_multi_item_estimate_update_is_never_vine(self):
         # The estimate-update template flags Vine outright — it only goes out
@@ -1531,8 +1533,9 @@ class IngestTests(TestCase):
             "Actualización sobre la fecha estimada de entrega", _HOME_DESTINATION,
             total=None,
             extra_items=[("svet Mantel Antimanchas Tacto Tela", "B0H26JP26F")]))
-        pkg = Package.objects.get()
-        self.assertFalse(pkg.is_vine)
+        self.assertEqual(Package.objects.count(), 2)
+        for pkg in Package.objects.all():
+            self.assertFalse(pkg.is_vine)
 
     def test_pickup_sweeps_whole_point(self):
         # A package is awaiting at the Les Mesures counter (its Ready email).
@@ -1692,7 +1695,8 @@ class IngestTests(TestCase):
         process_message(
             fixture("180-fwd-pedido-amazon-basics-almohadillas-y-1-productos-mas.eml")
         )
-        pkg = Package.objects.get()
+        self.assertEqual(Package.objects.count(), 2)
+        pkg = Package.objects.first()
         self.assertFalse(pkg.is_vine)
         review = Review.objects.get(package=pkg)
         self.assertEqual(review.status, Review.Status.PENDING)
@@ -1904,6 +1908,109 @@ class IngestTests(TestCase):
         review = Review.objects.get(package=pkg)
         self.assertEqual(review.status, Review.Status.PENDING)
         self.assertEqual(review.due_on, date(2026, 7, 26))  # 12 Jul + 14 days
+
+    def test_multi_item_order_creates_separate_packages(self):
+        # A multi-item order must create individual packages for each product,
+        # never grouping them with '+' into a single row.
+        msg_bytes = _amazon_email(
+            "¡Gracias por tu pedido!",
+            "Amazon Counter - Les Mesures AVDA SALORIA, 30 BAJO LLEIDA , 25700",
+            order_id="408-1111111-1111111",
+            item="Producto Alpha",
+            asin="B000ALPHA1",
+            extra_items=[
+                ("Producto Beta", "B000BETA02"),
+                ("Producto Gamma", "B000GAMMA3"),
+            ],
+        )
+        record, _ = process_message(msg_bytes)
+        self.assertTrue(record.processed)
+        self.assertEqual(Package.objects.count(), 3)
+        asins = set(Package.objects.values_list("asin", flat=True))
+        self.assertEqual(asins, {"B000ALPHA1", "B000BETA02", "B000GAMMA3"})
+        for pkg in Package.objects.all():
+            self.assertNotIn("+", pkg.description)
+            self.assertEqual(pkg.order_id, "408-1111111-1111111")
+            self.assertFalse(pkg.is_vine)
+
+    def test_multi_item_shipped_updates_all_items_with_shipment(self):
+        # When products ship together in the same box, each package gets the
+        # shipment_id without losing its individual description.
+        order_bytes = _amazon_email(
+            "¡Gracias por tu pedido!",
+            "Amazon Counter - Les Mesures AVDA SALORIA, 30 BAJO LLEIDA , 25700",
+            order_id="408-2222222-2222222",
+            item="Organizador Consola",
+            asin="B000SPIGEN",
+            extra_items=[("Bandeja Silicona", "B000LANTU0")],
+        )
+        process_message(order_bytes)
+        self.assertEqual(Package.objects.count(), 2)
+
+        ship_msg = EmailMessage()
+        ship_msg["Subject"] = "Enviado: Organizador Consola y 1 producto más"
+        ship_msg["Message-ID"] = "<shipped-multi@example.com>"
+        ship_msg["Date"] = "Wed, 14 Oct 2026 10:00:00 +0200"
+        ship_msg.set_content(
+            "<div>Tu paquete se ha enviado</div>"
+            "<div>Llega el jueves, 15 de octubre</div>"
+            "<div>Amazon Counter - Les Mesures AVDA SALORIA, 30 BAJO LLEIDA , 25700</div>"
+            "<div>Pedido n.º</div><div>408-2222222-2222222</div>"
+            '<a href="https://www.amazon.es/track?orderId=408-2222222-2222222&shipmentId=TcRdZ1MrY">Track</a>'
+            '<a href="https://www.amazon.es/dp/B000SPIGEN/ref=fed_asin_title">'
+            '<img src="https://m.media-amazon.com/images/I/x.jpg" alt="Organizador Consola"></a>'
+            '<a href="https://www.amazon.es/dp/B000LANTU0/ref=fed_asin_title">'
+            '<img src="https://m.media-amazon.com/images/I/y.jpg" alt="Bandeja Silicona"></a>',
+            subtype="html",
+        )
+        process_message(ship_msg.as_bytes())
+
+        p1 = Package.objects.get(asin="B000SPIGEN")
+        p2 = Package.objects.get(asin="B000LANTU0")
+        self.assertEqual(p1.shipment_id, "TcRdZ1MrY")
+        self.assertEqual(p2.shipment_id, "TcRdZ1MrY")
+        self.assertEqual(p1.description, "Organizador Consola")
+        self.assertEqual(p2.description, "Bandeja Silicona")
+        self.assertNotIn("+", p1.description)
+        self.assertNotIn("+", p2.description)
+
+    def test_split_shipment_ready_for_pickup_isolation(self):
+        # In a split order, when box 1 arrives at the counter, box 2 (still in transit)
+        # must not be marked awaiting_pickup.
+        point = PickupPoint.objects.create(name="Counter Test", kind=PickupPoint.Kind.AMAZON_COUNTER, location_key="25700")
+        pkg1 = Package.objects.create(
+            pickup_point=point, order_id="408-3333333-3333333", shipment_id="BOX111",
+            description="Box 1 Item", asin="B000BOX111", state=Package.State.IN_TRANSIT,
+        )
+        pkg2 = Package.objects.create(
+            pickup_point=point, order_id="408-3333333-3333333", shipment_id="BOX222",
+            description="Box 2 Item", asin="B000BOX222", state=Package.State.IN_TRANSIT,
+        )
+
+        ready_msg = EmailMessage()
+        ready_msg["Subject"] = "Paquete listo para recogida"
+        ready_msg["Message-ID"] = "<ready-box1@example.com>"
+        ready_msg["Date"] = "Wed, 14 Oct 2026 14:00:00 +0200"
+        ready_msg.set_content(
+            "<h2>Listo para recogida</h2>"
+            "<p>El paquete está listo para su recogida</p>"
+            "<p>El código de recogida es 998877</p>"
+            "<p>Amazon Counter - Test, 25700</p>"
+            "<p>antes del 20 de octubre</p>"
+            "<p>Pedido n.º 408-3333333-3333333</p>"
+            '<a href="https://www.amazon.es/track?orderId=408-3333333-3333333&shipmentId=BOX111">Track</a>'
+            '<a href="https://www.amazon.es/dp/B000BOX111/ref=fed_asin_title">'
+            '<img src="https://m.media-amazon.com/images/I/x.jpg" alt="Box 1 Item"></a>',
+            subtype="html",
+        )
+        process_message(ready_msg.as_bytes())
+
+        pkg1.refresh_from_db()
+        pkg2.refresh_from_db()
+        self.assertEqual(pkg1.state, Package.State.AWAITING_PICKUP)
+        self.assertEqual(pkg1.pickup_code, "998877")
+        self.assertEqual(pkg2.state, Package.State.IN_TRANSIT)
+        self.assertEqual(pkg2.pickup_code, "")
 
 
 class PepeAddressTests(SimpleTestCase):

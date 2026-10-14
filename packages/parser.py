@@ -99,6 +99,10 @@ class Item:
     title: str
     asin: str | None
     image_url: str | None
+    order_id: str | None = None
+    estimated_arrival: date | None = None
+    estimated_arrival_end: date | None = None
+    pickup_location: str | None = None
 
 
 @dataclass(frozen=True)
@@ -505,7 +509,7 @@ def _clean_img_url(src):
     return src.split("#", 1)[1] if "#http" in src else src
 
 
-def _items(soup):
+def _items(soup, sent_at=None):
     """Products from the item links: the image alt carries the full title.
 
     Only anchors whose ref_ contains `fed_asin_title` (lifecycle emails) or
@@ -521,10 +525,61 @@ def _items(soup):
         if not (img and img.get("alt")):
             continue
         match = _ASIN_ANY.search(unquote(anchor["href"]))
+        title = _INVISIBLE.sub("", img["alt"]).strip()
+        asin = match.group(1) if match else None
+        image_url = _clean_img_url(img["src"]) if img.get("src") else None
+
+        order_id = None
+        est_arrival = None
+        est_arrival_end = None
+        loc = None
+
+        if sent_at:
+            curr = anchor.parent
+            section_tag = None
+            while curr:
+                if getattr(curr, "name", None) in ("tbody", "table", "div"):
+                    if _ORDER_ID.search(curr.get_text(" ")):
+                        section_tag = curr
+                        break
+                curr = curr.parent
+
+            if section_tag:
+                sec_lines = _text_lines(str(section_tag))
+                sec_haystack = "\n".join(sec_lines)
+                om = _ORDER_ID.search(sec_haystack)
+                if om:
+                    order_id = om.group(0)
+                arrives = None
+                for l in sec_lines:
+                    m = _ARRIVES.search(l)
+                    if m:
+                        arrives = m.group(1)
+                        break
+                window = None
+                if not arrives:
+                    for l in sec_lines:
+                        m = _ARRIVES_RANGE.search(l)
+                        if m:
+                            window = m
+                            arrives = m.group(1)
+                            break
+                if arrives:
+                    est_arrival = _resolve_date(arrives, sent_at)
+                    if window and est_arrival:
+                        est_arrival_end = _resolve_date(window.group(2), est_arrival)
+                        if est_arrival_end and est_arrival_end <= est_arrival:
+                            est_arrival_end = None
+                loc = _pickup_location(sec_lines)
+
         items.append(Item(
-            title=_INVISIBLE.sub("", img["alt"]).strip(),
-            asin=match.group(1) if match else None,
-            image_url=_clean_img_url(img["src"]) if img.get("src") else None,
+            title=title,
+            asin=asin,
+            image_url=image_url,
+            order_id=order_id,
+            estimated_arrival=est_arrival,
+            estimated_arrival_end=est_arrival_end,
+            pickup_location=loc,
         ))
     return tuple(items)
 
@@ -662,7 +717,7 @@ def parse_email(raw):
         order_ids=frozenset(text_ids + url_ids),
         shipment_id=shipment_id,
         shipment_ids=shipment_ids,
-        items=_items(soup),
+        items=_items(soup, sent_at),
         pickup_location=pickup_location,
         total=Decimal(total_raw.group(1).replace(",", ".")) if total_raw else None,
         estimated_arrival=estimated_arrival,
