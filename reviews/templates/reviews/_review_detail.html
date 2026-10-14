@@ -30,7 +30,7 @@ For closed reviews (approved/published), it displays the read-only review with c
                 onclick="switchRevTab('suggest')">
           {% include "reviews/_spark.html" with gradient=1 %}
           <span>Notas y sugerencia</span>
-          {% if review.notes %}<span class="rev-dot">●</span>{% endif %}
+          {% if has_notes|default:review.notes %}<span class="rev-dot">●</span>{% endif %}
         </button>
       </div>
     {% endif %}
@@ -38,7 +38,7 @@ For closed reviews (approved/published), it displays the read-only review with c
     <div id="rev-pane-review" class="rev-tab-pane" {% if active_tab == 'suggest' %}hidden{% endif %}>
       <div class="modal-rows">
         <span>
-          <b>Estado</b> {{ status_label }}
+          <b>Estado</b> <span id="rev-meta-status">{{ status_label }}</span>
           {% if review.is_vine %} · <i class="vine-badge">Vine</i>{% endif %}
         </span>
         {% comment %}The product's dates before the review's own: "desde cuándo
@@ -267,6 +267,18 @@ For closed reviews (approved/published), it displays the read-only review with c
     if (checkedStar && ratingMeta && ratingVal) {
       ratingVal.textContent = checkedStar.value + '★';
       ratingMeta.hidden = false;
+    }
+
+    var statusSpan = document.getElementById('rev-meta-status');
+    var rawText = document.getElementById('raw-rev-text');
+    var rawTitle = document.getElementById('raw-rev-title');
+    var hasWrittenText = (rawText && rawText.value.trim().length > 0) || (rawTitle && rawTitle.value.trim().length > 0);
+    if (statusSpan && notesArea) {
+      if (notesArea.value.trim().length > 0) {
+        statusSpan.textContent = 'Borrador';
+      } else if (!hasWrittenText) {
+        statusSpan.textContent = 'Pendiente';
+      }
     }
   }
   function onNotesInput(textarea) {

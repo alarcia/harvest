@@ -352,6 +352,18 @@ class Review(models.Model):
         return None
 
     @property
+    def is_draft(self):
+        """A review is considered a draft if its status is DRAFT, or if it is
+        an unwritten review (PENDING) that has suggestion notes written
+        (initial thoughts jotted down to finish later). Approved and published
+        reviews are never drafts."""
+        if self.status == self.Status.DRAFT:
+            return True
+        if self.status == self.Status.PENDING and bool(self.notes and self.notes.strip()):
+            return True
+        return False
+
+    @property
     def is_vine(self):
         """A package-less row is always a historical import — Vine in
         practice, same assumption the "No vine" toggle's default rests on."""

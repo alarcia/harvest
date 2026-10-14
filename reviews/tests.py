@@ -381,6 +381,43 @@ class ReviewsListViewTests(TestCase):
         self.assertEqual(response.context["vencidas_count"], 1)
         self.assertContains(response, "vencida desde el")
 
+    def test_review_with_notes_only_sits_in_borradores(self):
+        # A review that has suggestion notes is considered a draft, so it appears
+        # at the top under Borradores instead of in Pendientes.
+        pkg = _package(ordered_on=self._in_current(), picked_up_on=self._in_current())
+        review = Review.objects.create(
+            package=pkg, product_title="Con notas", status=Review.Status.PENDING,
+            notes="Primeras impresiones del producto",
+        )
+        response = self._get()
+        self.assertIn(review, response.context["borradores"])
+        self.assertNotIn(review, response.context["pendientes"])
+        self.assertNotIn(review, response.context["vencidas"])
+
+    def test_overdue_review_with_notes_sits_in_borradores_and_counts_in_badge(self):
+        pkg = _package(ordered_on=self._in_current(), picked_up_on=self._in_current())
+        review = Review.objects.create(
+            package=pkg, product_title="Con notas urgente", status=Review.Status.PENDING,
+            notes="Primeras impresiones",
+            due_on=self.today - timedelta(days=4),
+        )
+        response = self._get()
+        self.assertIn(review, response.context["borradores"])
+        self.assertEqual(list(response.context["vencidas"]), [])
+        self.assertEqual(response.context["vencidas_count"], 1)
+        self.assertContains(response, "vencida desde el")
+
+    def test_non_vine_review_with_notes_sits_in_non_vine_borradores(self):
+        pkg = _package(ordered_on=self._in_current(), picked_up_on=self._in_current(),
+                       is_vine=False, description="Compra normal")
+        review = Review.objects.create(
+            package=pkg, product_title=pkg.description, status=Review.Status.PENDING,
+            notes="Notas de compra personal",
+        )
+        response = self._get(non_vine="1")
+        self.assertIn(review, response.context["borradores"])
+        self.assertNotIn(review, response.context["pendientes"])
+
     def test_overdue_non_vine_review_never_counts_in_badge_nor_urgent_group(self):
         # Non-Vine purchases are voluntary, so they must never nag via the badge
         # nor join the "Urgentes" section, even when overdue or with non_vine toggle on.
@@ -702,6 +739,20 @@ class ReviewDetailViewTests(TestCase):
         self.assertContains(response, "4★")
         self.assertContains(response, "Editar borrador")
 
+    def test_card_with_notes_only_is_considered_draft_but_has_no_written_text(self):
+        review = Review.objects.create(
+            product_title="Algo", status=Review.Status.PENDING,
+            notes="Mis notas breves",
+        )
+        response = self.client.get(reverse("review_detail", args=[review.pk]))
+        self.assertContains(response, "<b>Estado</b> <span id=\"rev-meta-status\">Borrador</span>", html=True)
+        self.assertContains(response, "Sin texto guardado.")
+        self.assertContains(response, "Escribir borrador")
+        self.assertNotContains(response, "Editar borrador")
+        self.assertNotContains(response, "Ya la he publicado en Amazon")
+        self.assertNotContains(response, "Borrador: todavía sin publicar en Amazon.")
+        self.assertContains(response, '<span class="rev-dot">●</span>')
+
     def test_draft_card_provides_copy_buttons_for_title_and_text(self):
         review = Review.objects.create(
             product_title="Algo", status=Review.Status.DRAFT,
@@ -902,6 +953,15 @@ class ReviewApproveTests(TestCase):
                 self.assertEqual(self.client.get(self.url).status_code, 404)
                 self.assertEqual(self.client.post(self.url).status_code, 404)
 
+    def test_a_draft_with_only_notes_cannot_be_approved(self):
+        self.review.notes = "Notas para la sugerencia"
+        self.review.title = ""
+        self.review.text = ""
+        self.review.status = Review.Status.PENDING
+        self.review.save()
+        self.assertEqual(self.client.get(self.url).status_code, 404)
+        self.assertEqual(self.client.post(self.url).status_code, 404)
+
 
 class StuckApprovedReviewTests(TestCase):
     def setUp(self):
@@ -1013,7 +1073,7 @@ class ReviewSuggestTests(TestCase):
         self.assertEqual(self.review.title, "")
         self.assertEqual(self.review.status, Review.Status.PENDING)
 
-    def test_saving_notes_keeps_them_without_touching_the_review(self):
+    def test_saving_notes_keeps_them_and_considers_review_a_draft(self):
         response = self.client.post(self.url, {
             "action": "save", "notes": "Se enreda un poco con el uso",
             "rating": "4", "title": "Titular a medias", "text": "A medias.",
@@ -1021,16 +1081,29 @@ class ReviewSuggestTests(TestCase):
         self.review.refresh_from_db()
         self.assertEqual(self.review.notes, "Se enreda un poco con el uso")
         self.assertEqual(self.review.rating, 4)
-        # Notes are not a review: this is still a pending chore, and the text
-        # in the editor is still unsaved.
+        # Text in the editor is still unsaved, but having notes makes it a draft.
         self.assertEqual(self.review.status, Review.Status.PENDING)
+        self.assertTrue(self.review.is_draft)
         self.assertEqual(self.review.text, "")
         # With tabs, saving notes stays on the card's suggest tab.
         self.assertContains(response, "Se enreda un poco con el uso")
         self.assertContains(response, "Guardar notas")
         self.assertContains(response, "¡Guardado!")
-        # Saving notes does not trigger package-updated, avoiding background list reload.
-        self.assertNotIn("HX-Trigger", response.headers)
+        # Saving notes triggers package-updated so the background list moves the review to Borradores.
+        self.assertEqual(response["HX-Trigger"], "package-updated")
+
+    def test_clearing_notes_reverts_review_from_being_a_draft(self):
+        self.review.notes = "Unas notas previas"
+        self.review.save()
+        self.assertTrue(self.review.is_draft)
+
+        response = self.client.post(self.url, {
+            "action": "save", "notes": "", "rating": "",
+        })
+        self.review.refresh_from_db()
+        self.assertEqual(self.review.notes, "")
+        self.assertFalse(self.review.is_draft)
+        self.assertEqual(response["HX-Trigger"], "package-updated")
 
     def test_saving_notes_button_does_not_swap_modal(self):
         panel = self._open().content.decode()
@@ -1694,4 +1767,24 @@ class ReviewsSearchTests(TestCase):
         self.assertContains(response, 'data-other-cycle="true"')
 
 
+class ReviewModelPropertyTests(TestCase):
+    def test_is_draft_property(self):
+        # DRAFT status is always draft
+        r_draft = Review(status=Review.Status.DRAFT)
+        self.assertTrue(r_draft.is_draft)
 
+        # PENDING with non-empty notes is draft
+        r_pending_notes = Review(status=Review.Status.PENDING, notes="Apuntes")
+        self.assertTrue(r_pending_notes.is_draft)
+
+        # PENDING with empty/whitespace notes is not draft
+        r_pending_empty = Review(status=Review.Status.PENDING, notes="")
+        self.assertFalse(r_pending_empty.is_draft)
+        r_pending_whitespace = Review(status=Review.Status.PENDING, notes="   \n ")
+        self.assertFalse(r_pending_whitespace.is_draft)
+
+        # APPROVED or PUBLISHED reviews are never drafts, even with notes
+        r_approved = Review(status=Review.Status.APPROVED, notes="Apuntes")
+        self.assertFalse(r_approved.is_draft)
+        r_published = Review(status=Review.Status.PUBLISHED, notes="Apuntes")
+        self.assertFalse(r_published.is_draft)

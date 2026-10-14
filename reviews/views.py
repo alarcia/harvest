@@ -306,8 +306,8 @@ def reviews_list(request):
 
     # Partition reviews by Vine vs Non-Vine (both are rendered into DOM for instant toggle)
     vine_open = [r for r in open_reviews if r.is_vine]
-    vine_pending = [r for r in vine_open if r.status == Review.Status.PENDING]
-    vine_borradores = sorted((r for r in vine_open if r.status == Review.Status.DRAFT),
+    vine_pending = [r for r in vine_open if not r.is_draft]
+    vine_borradores = sorted((r for r in vine_open if r.is_draft),
                              key=lambda r: _ordered_on(r, date.max))
     if is_current:
         vine_vencidas = sorted((r for r in vine_pending if r.due_on and r.due_on <= today),
@@ -322,9 +322,9 @@ def reviews_list(request):
                             key=_confirmed_on, reverse=True)
 
     non_vine_open = [r for r in open_reviews if not r.is_vine]
-    non_vine_borradores = sorted((r for r in non_vine_open if r.status == Review.Status.DRAFT),
+    non_vine_borradores = sorted((r for r in non_vine_open if r.is_draft),
                                  key=lambda r: _ordered_on(r, date.max))
-    non_vine_pendientes = sorted((r for r in non_vine_open if r.status == Review.Status.PENDING),
+    non_vine_pendientes = sorted((r for r in non_vine_open if not r.is_draft),
                                  key=_due_on)
     non_vine_vencidas = []  # non-Vine purchases are voluntary; never urgent
     non_vine_confirmed = sorted((r for r in confirmed_reviews if not r.is_vine),
@@ -357,11 +357,11 @@ def reviews_list(request):
         .exclude(pk__in=current_ids)
     )
     other_borradores = sorted(
-        (r for r in other_open if r.status == Review.Status.DRAFT),
+        (r for r in other_open if r.is_draft),
         key=lambda r: _ordered_on(r, date.max)
     )
     other_pendientes = sorted(
-        (r for r in other_open if r.status == Review.Status.PENDING),
+        (r for r in other_open if not r.is_draft),
         key=_due_on
     )
     other_confirmed = sorted(
@@ -407,7 +407,7 @@ def _review_card(
     """Renders the review card. When editable (pending or draft), it provides
     both the Reseña reading view and the Notas y sugerencia panel behind
     segmented tabs."""
-    is_draft = review.status == Review.Status.DRAFT
+    is_draft = review.is_draft
     can_edit = review.status in Review.EDITABLE
     current_title = (draft_title if draft_title is not None else review.title).strip()
     current_text = (draft_text if draft_text is not None else review.text).strip()
@@ -422,20 +422,24 @@ def _review_card(
         not is_incorporated
         and (current_title or current_text)
     )
+    has_written_draft = bool(review.title.strip() or review.text.strip())
+    status_label = "Borrador" if is_draft else STATUS_LABELS.get(review.status, review.status)
+    actual_notes = notes if notes is not None else review.notes
     return render(request, "reviews/_review_detail.html", {
         "review": review,
-        "status_label": STATUS_LABELS.get(review.status, review.status),
+        "status_label": status_label,
         # Pending ⇒ nothing written yet, draft ⇒ rewrite what's there. Past
         # that the text is a record of what's on Amazon, not a working copy.
         "can_edit": can_edit,
-        "has_draft": is_draft,
-        # Only a draft can be closed by hand: there has to be something
+        "has_draft": has_written_draft,
+        # Only a draft with written text can be closed by hand: there has to be something
         # written before "ya la he publicado" can mean anything.
-        "can_approve": is_draft,
+        "can_approve": has_written_draft and is_draft,
         "active_tab": active_tab,
         "stars": STAR_VALUES,
         "rating": rating if rating is not None else review.rating,
-        "notes": notes if notes is not None else review.notes,
+        "notes": actual_notes,
+        "has_notes": bool(actual_notes and actual_notes.strip()),
         "draft_title": draft_title if draft_title is not None else review.title,
         "draft_text": draft_text if draft_text is not None else review.text,
         "suggestions_enabled": is_configured(),
@@ -467,6 +471,7 @@ def _editor(request, review, title, rating, text, error=None):
         "rating": rating,
         "text": text,
         "stars": STAR_VALUES,
+        "has_notes": bool(review.notes and review.notes.strip()),
         "error": error,
     })
 
@@ -564,7 +569,7 @@ def review_approve(request, pk):
     review = get_object_or_404(
         Review.objects.select_related("package", "package__pickup_point"), pk=pk
     )
-    if review.status != Review.Status.DRAFT:
+    if review.status != Review.Status.DRAFT or not (review.title.strip() or review.text.strip()):
         raise Http404("Not a draft awaiting approval")
 
     if request.method == "POST":
@@ -668,6 +673,6 @@ def review_suggest(request, pk):
         request, review, active_tab="suggest", error=error, notes=notes, rating=rating,
         draft_title=draft_title, draft_text=draft_text,
     )
-    if action == "suggest":
+    if action in ("save", "suggest"):
         response["HX-Trigger"] = "package-updated"
     return response

@@ -36,7 +36,7 @@ twenty minutes of writing, and on a phone the backdrop is most of the screen.
               hx-target="#modal" hx-swap="innerHTML">
         {% include "reviews/_spark.html" with gradient=1 %}
         <span>Notas y sugerencia</span>
-        {% if review.notes %}<span class="rev-dot">●</span>{% endif %}
+        {% if has_notes|default:review.notes %}<span class="rev-dot">●</span>{% endif %}
       </button>
 
       <label class="confirm-label" for="rev-title">Título</label>
