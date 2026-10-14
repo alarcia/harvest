@@ -3155,6 +3155,55 @@ class CalendarViewTests(TestCase):
         html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
         self.assertIn(reverse("day_detail", args=[today.isoformat()]).encode(), html)
 
+    def test_month_view_truncates_chips_with_more_indicator(self):
+        # When a day in month view has > 3 chips, chips from the 4th onwards
+        # get .pkg-extra (hidden on desktop) and a "+N más" button is shown.
+        today = timezone.localdate()
+        point = self._point("Fnac", PickupPoint.Kind.ALT_STORE)
+        for i in range(5):
+            Package.objects.create(
+                pickup_point=point, state=Package.State.IN_TRANSIT,
+                estimated_arrival=today, description=f"Producto {i}",
+            )
+        html = self.client.get(
+            reverse("home") + "?view=month", HTTP_HX_REQUEST="true"
+        ).content.decode()
+        self.assertIn("+2 más", html)
+        self.assertIn('class="pkg pkg-more"', html)
+        self.assertIn("pkg-extra", html.split("</style>")[1])
+
+    def test_month_view_no_overflow_under_limit(self):
+        # When a day in month view has <= 3 chips, no "+N más" button is shown.
+        today = timezone.localdate()
+        point = self._point("Fnac", PickupPoint.Kind.ALT_STORE)
+        for i in range(3):
+            Package.objects.create(
+                pickup_point=point, state=Package.State.IN_TRANSIT,
+                estimated_arrival=today, description=f"Producto {i}",
+            )
+        html = self.client.get(
+            reverse("home") + "?view=month", HTTP_HX_REQUEST="true"
+        ).content.decode()
+        self.assertNotIn('class="pkg pkg-more"', html)
+        self.assertNotIn("pkg-extra", html.split("</style>")[1])
+
+    def test_fortnight_view_truncates_chips_with_more_indicator(self):
+        # When a day in fortnight view has > 8 chips, chips from the 8th onwards
+        # get .pkg-extra and a "+N más" button is shown.
+        today = timezone.localdate()
+        point = self._point("Fnac", PickupPoint.Kind.ALT_STORE)
+        for i in range(10):
+            Package.objects.create(
+                pickup_point=point, state=Package.State.IN_TRANSIT,
+                estimated_arrival=today, description=f"Producto {i}",
+            )
+        html = self.client.get(
+            reverse("home") + "?view=fortnight", HTTP_HX_REQUEST="true"
+        ).content.decode()
+        self.assertIn("+3 más", html)
+        self.assertIn('class="pkg pkg-more"', html)
+        self.assertIn("pkg-extra", html.split("</style>")[1])
+
     def test_day_detail_lists_chips_with_a_way_back(self):
         # The day modal names the day's packages, and each chip's URL carries
         # from_day so the package card can draw its ‹ back to the day.
