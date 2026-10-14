@@ -55,22 +55,20 @@
       {% endif %}
       {% if shared_packages %}
         <div class="modal-shared-box">
-          <span class="shared-box-title">📦 <b>Mismo paquete</b> · Comparte código con {{ shared_packages|length }} producto{{ shared_packages|length|pluralize }}:</span>
-          <ul class="shared-box-list">
+          <span class="shared-box-title"><b>Mismo paquete</b> · {{ shared_packages|length }} más:</span>
+          <div class="shared-box-chips">
             {% for item in shared_packages %}
-              <li>
-                <button type="button" class="shared-box-item"
-                        hx-get="{% url 'package_detail' item.pkg.pk %}{% if back_day %}?from_day={{ back_day|date:'Y-m-d' }}{% endif %}"
-                        hx-target="#modal" hx-swap="innerHTML">
-                  {% if item.pkg.image_url %}
-                    <img class="shared-box-thumb" src="{{ item.pkg.image_url }}" alt="">
-                  {% endif %}
-                  <span class="shared-box-name">{{ item.label }}</span>
-                  <span class="shared-box-arrow">→</span>
-                </button>
-              </li>
+              <button type="button" class="shared-chip shared-box-item"
+                      hx-get="{% url 'package_detail' item.pkg.pk %}{% if back_day %}?from_day={{ back_day|date:'Y-m-d' }}{% endif %}"
+                      hx-target="#modal" hx-swap="innerHTML"
+                      title="{{ item.label }}">
+                {% if item.pkg.image_url %}
+                  <img class="shared-chip-thumb" src="{{ item.pkg.image_url }}" alt="">
+                {% endif %}
+                <span class="shared-chip-name">{{ item.label }}</span>
+              </button>
             {% endfor %}
-          </ul>
+          </div>
         </div>
       {% endif %}
       {% if package.carrier %}
