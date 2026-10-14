@@ -3195,6 +3195,13 @@ class CalendarViewTests(TestCase):
         frag = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content.decode()
         self.assertIn("position: relative", frag)
 
+    def test_day_number_badge_does_not_shrink(self):
+        # .day .num must have flex-shrink: 0 and aspect-ratio: 1 so today's circle badge
+        # doesn't get squished vertically when day cells are tightly packed with chips.
+        frag = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content.decode()
+        self.assertIn("flex-shrink: 0", frag)
+        self.assertIn("aspect-ratio: 1", frag)
+
     def test_day_cell_opens_the_day_modal(self):
         # A day with chips carries the day-detail URL: the whole cell is the
         # tap target that blows the day up into the modal.
