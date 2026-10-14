@@ -12,4 +12,6 @@ urlpatterns = [
     path("picked/<str:day>/", views.picked_detail, name="picked_detail"),
     path("delivered/<str:day>/<int:point_id>/", views.delivered_detail, name="delivered_detail"),
     path("day/<str:day>/", views.day_detail, name="day_detail"),
+    path("stats/", views.stats_modal, name="stats_modal"),
 ]
+

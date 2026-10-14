@@ -73,15 +73,20 @@ chip behind the open card stops lying.{% endcomment %}
     }
     .cal-nav button:active { transform: scale(.94); }
 
-    .cal-views {
+    .cal-views-group {
       grid-area: views;
+      display: inline-flex;
+      align-items: center;
+      gap: .35rem;
+    }
+    .cal-views {
       display: inline-flex;
       align-items: center;
       padding: .2rem;
       border-radius: 999px;
       background: var(--border);
       width: fit-content;
-      min-width: 11rem;
+      min-width: 10.5rem;
       box-shadow: inset 0 1px 2px rgba(0, 0, 0, .05);
     }
     .cal-views button {
@@ -102,6 +107,30 @@ chip behind the open card stops lying.{% endcomment %}
     }
     .cal-views button:not(.active):hover {
       color: var(--fg);
+    }
+
+    .cal-stats-btn {
+      display: grid;
+      place-items: center;
+      height: 2.1rem;
+      width: 2.1rem;
+      min-width: 2.1rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--card);
+      font-size: 1rem;
+      line-height: 1;
+      cursor: pointer;
+      color: var(--fg);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, .04);
+      transition: transform .1s ease, background .15s ease, border-color .15s ease;
+    }
+    .cal-stats-btn:hover {
+      background: color-mix(in srgb, var(--accent) 8%, var(--card));
+      border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+    }
+    .cal-stats-btn:active {
+      transform: scale(.94);
     }
 
     /* Legend for the package marks; goes away once the codes are second nature. */
@@ -687,10 +716,12 @@ chip behind the open card stops lying.{% endcomment %}
       .cal-title {
         font-size: 1.45rem;
       }
-      .cal-views {
+      .cal-views-group {
         flex: 0 0 auto;
-        min-width: 12.5rem;
         margin-right: auto;
+      }
+      .cal-views {
+        min-width: 12.5rem;
       }
       .cal-views button {
         padding: .35rem 1rem;
@@ -737,11 +768,14 @@ chip behind the open card stops lying.{% endcomment %}
         {{ range_start|date:"j b" }} – {{ range_end|date:"j b" }} <span class="year">{{ range_end|date:"Y" }}</span>
       {% endif %}
     </h1>
-    <nav class="cal-views" aria-label="Vista del calendario">
-      {% for v, label, link in nav.views %}
-        <button class="{% if v == view %}active{% endif %}" hx-get="{{ link.get }}" hx-push-url="{{ link.push }}">{{ label }}</button>
-      {% endfor %}
-    </nav>
+    <div class="cal-views-group">
+      <nav class="cal-views" aria-label="Vista del calendario">
+        {% for v, label, link in nav.views %}
+          <button class="{% if v == view %}active{% endif %}" hx-get="{{ link.get }}" hx-push-url="{{ link.push }}">{{ label }}</button>
+        {% endfor %}
+      </nav>
+      <button type="button" class="cal-stats-btn" hx-get="{% url 'stats_modal' %}" hx-target="#modal" hx-swap="innerHTML" title="Estadísticas de envíos" aria-label="Estadísticas">📊</button>
+    </div>
     <div class="cal-legend">
       <span class="lg"><i class="sw dot amazon"></i>Amazon</span>
       <span class="lg"><i class="sw dot pepe"></i>Pepe y Dalda</span>

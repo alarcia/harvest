@@ -3778,3 +3778,92 @@ class ManualArrivalTests(TestCase):
                          {"actual_arrival": self.today.isoformat()})
         other.refresh_from_db()
         self.assertEqual(other.state, Package.State.IN_TRANSIT)
+
+
+class StatsTests(TestCase):
+    def setUp(self):
+        self.today = timezone.localdate()
+        self.point = PickupPoint.objects.create(
+            name="Amazon Counter - Les Mesures",
+            display_name="Les Mesures",
+            kind=PickupPoint.Kind.AMAZON_COUNTER,
+        )
+
+    def test_stats_button_in_calendar(self):
+        response = self.client.get(reverse("home"), HTTP_HX_REQUEST="true")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'class="cal-stats-btn"', response.content)
+        self.assertIn(reverse("stats_modal").encode(), response.content)
+
+    def test_stats_modal_empty_database(self):
+        response = self.client.get(reverse("stats_modal"))
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "packages/_stats_modal.html")
+        self.assertIn("Estadísticas de envíos".encode(), response.content)
+        self.assertIn("Volumen de pedidos".encode(), response.content)
+        self.assertIn("Velocidad entre estados".encode(), response.content)
+
+    def test_stats_computation_with_data(self):
+        from .stats import get_delivery_stats
+
+        now = timezone.now()
+        pkg = Package.objects.create(
+            pickup_point=self.point,
+            description="Paquete Test",
+            ordered_on=self.today - timedelta(days=5),
+            shipped_on=self.today - timedelta(days=3),
+            estimated_arrival=self.today - timedelta(days=1),
+            actual_arrival=self.today - timedelta(days=1),
+            picked_up_on=self.today,
+            state=Package.State.PICKED_UP,
+        )
+        RawEmail.objects.create(
+            message_id="msg-ord-1",
+            kind="ordered",
+            package=pkg,
+            received_at=now - timedelta(hours=120),
+        )
+        RawEmail.objects.create(
+            message_id="msg-shp-1",
+            kind="shipped",
+            package=pkg,
+            received_at=now - timedelta(hours=72),
+        )
+        RawEmail.objects.create(
+            message_id="msg-ofd-1",
+            kind="out_for_delivery",
+            package=pkg,
+            received_at=now - timedelta(hours=28),
+        )
+        RawEmail.objects.create(
+            message_id="msg-ready-1",
+            kind="ready_for_pickup",
+            package=pkg,
+            received_at=now - timedelta(hours=24),
+        )
+        RawEmail.objects.create(
+            message_id="msg-pck-1",
+            kind="picked_up",
+            package=pkg,
+            received_at=now - timedelta(hours=4),
+        )
+
+        stats = get_delivery_stats()
+        self.assertEqual(stats["volume"]["total"], 1)
+        self.assertEqual(stats["velocity"]["ordered_to_shipped"]["count"], 1)
+        self.assertEqual(stats["velocity"]["shipped_to_arrival"]["count"], 1)
+        self.assertEqual(stats["velocity"]["last_mile_to_arrival"]["count"], 1)
+        self.assertEqual(stats["velocity"]["waiting_to_pickup"]["count"], 1)
+        self.assertEqual(stats["velocity"]["cycle_total"]["count"], 1)
+        self.assertAlmostEqual(stats["velocity"]["ordered_to_shipped"]["mean"], 48.0, places=1)
+        self.assertAlmostEqual(stats["velocity"]["last_mile_to_arrival"]["mean"], 4.0, places=1)
+        self.assertEqual(stats["punctuality"]["on_time"], 1)
+        self.assertEqual(stats["punctuality"]["on_time_pct"], 100)
+        self.assertEqual(len(stats["destinations"]), 1)
+        self.assertEqual(stats["destinations"][0]["name"], "Les Mesures")
+
+        response = self.client.get(reverse("stats_modal"))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Les Mesures".encode(), response.content)
+        self.assertIn("4,0 h".encode(), response.content)
+

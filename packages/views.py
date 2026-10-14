@@ -10,7 +10,7 @@ from django.views.decorators.http import require_POST
 
 from reviews.models import Review
 
-from . import calendar
+from . import calendar, stats as stats_module
 from .forms import PackageForm
 from .ingest import _sync_review_for_package, scan_now, set_review_due
 from .models import Package, PickupPoint, RawEmail
@@ -476,3 +476,10 @@ def add_package(request):
     else:
         form = PackageForm()
     return render(request, "packages/package_form.html", {"form": form})
+
+
+def stats_modal(request):
+    """The delivery and shipping statistics modal."""
+    data = stats_module.get_delivery_stats()
+    return render(request, "packages/_stats_modal.html", {"stats": data})
+
