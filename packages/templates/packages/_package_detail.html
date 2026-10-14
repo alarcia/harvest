@@ -113,11 +113,6 @@
         Ver oficina en el localizador de {{ package.carrier }} ↗
       </a>
     {% endif %}
-    {% if point_maps_url %}
-      <a class="modal-barcode" href="{{ point_maps_url }}" target="_blank" rel="noopener">
-        Cómo llegar en Google Maps ↗
-      </a>
-    {% endif %}
     {% if can_confirm_pickup %}
       {% comment %}Manual close for the pickups no email ever confirms (alt
       store, carrier office). Opens a confirmation step instead of acting on

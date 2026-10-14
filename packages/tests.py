@@ -3321,7 +3321,7 @@ class CalendarViewTests(TestCase):
         html = self.client.get(reverse("package_detail", args=[pkg.pk])).content.decode()
         self.assertIn('class="point-maps-link"', html)
         self.assertIn('href="https://www.google.com/maps/dir/?api=1&amp;destination=42.3551436,1.4561642"', html)
-        self.assertIn("Cómo llegar en Google Maps ↗", html)
+        self.assertNotIn("Cómo llegar en Google Maps ↗", html)
 
     def test_pickuppoint_save_normalizes_maps_url(self):
         dirty = (
