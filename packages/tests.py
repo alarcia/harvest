@@ -2012,6 +2012,56 @@ class IngestTests(TestCase):
         self.assertEqual(pkg2.state, Package.State.IN_TRANSIT)
         self.assertEqual(pkg2.pickup_code, "")
 
+    def test_consolidated_ready_for_pickup_updates_multiple_shipments(self):
+        # When products from different shipments or orders arrive together at the
+        # same pickup point and Amazon sends a single consolidated ready email
+        # that only names one shipment_id in the tracking URL, all pictured items
+        # must transition to awaiting_pickup.
+        point = PickupPoint.objects.create(name="Counter Test", kind=PickupPoint.Kind.AMAZON_COUNTER, location_key="25700")
+        pkg1 = Package.objects.create(
+            pickup_point=point, order_id="408-1111111-1111111", shipment_id="BOX111",
+            description="Item One", asin="B000ITEM01", state=Package.State.IN_TRANSIT,
+        )
+        pkg2 = Package.objects.create(
+            pickup_point=point, order_id="408-2222222-2222222", shipment_id="BOX222",
+            description="Item Two", asin="B000ITEM02", state=Package.State.IN_TRANSIT,
+        )
+
+        ready_msg = EmailMessage()
+        ready_msg["Subject"] = "Paquete listo para recogida"
+        ready_msg["Message-ID"] = "<ready-multi-shipments@example.com>"
+        ready_msg["Date"] = "Thu, 15 Oct 2026 10:28:28 +0200"
+        ready_msg.set_content(
+            "<h2>Listo para recogida</h2>"
+            "<p>El paquete está listo para su recogida</p>"
+            "<p>El código de recogida es 785720</p>"
+            "<p>Amazon Counter - Test, 25700</p>"
+            "<p>antes del 22 de octubre</p>"
+            "<p>Pedido n.º 408-1111111-1111111</p>"
+            '<a href="https://www.amazon.es/track?orderId=408-1111111-1111111&shipmentId=BOX111">Track</a>'
+            '<a href="https://www.amazon.es/dp/B000ITEM01/ref=fed_asin_title">'
+            '<img src="https://m.media-amazon.com/images/I/x.jpg" alt="Item One"></a>'
+            '<a href="https://www.amazon.es/dp/B000ITEM02/ref=fed_asin_title">'
+            '<img src="https://m.media-amazon.com/images/I/y.jpg" alt="Item Two"></a>',
+            subtype="html",
+        )
+        record, _ = process_message(ready_msg.as_bytes())
+        self.assertTrue(record.processed)
+        self.assertIn("2 paquetes actualizados", record.note)
+
+        pkg1.refresh_from_db()
+        pkg2.refresh_from_db()
+        self.assertEqual(pkg1.state, Package.State.AWAITING_PICKUP)
+        self.assertEqual(pkg1.pickup_code, "785720")
+        self.assertEqual(pkg1.actual_arrival, date(2026, 10, 15))
+        self.assertEqual(pkg1.deadline, date(2026, 10, 22))
+
+        self.assertEqual(pkg2.state, Package.State.AWAITING_PICKUP)
+        self.assertEqual(pkg2.pickup_code, "785720")
+        self.assertEqual(pkg2.actual_arrival, date(2026, 10, 15))
+        self.assertEqual(pkg2.deadline, date(2026, 10, 22))
+
+
 
 class PepeAddressTests(SimpleTestCase):
     """`Config.is_pepe_address`: the whole judgement about whether an Amazon

@@ -252,9 +252,9 @@ def _find_all_packages(parsed, point):
     asins = {item.asin for item in parsed.items if item.asin}
     if asins and point is not None:
         qs = Package.objects.filter(asin__in=asins, pickup_point=point).exclude(pk__in=found)
-        if parsed.shipment_ids:
-            qs = qs.filter(Q(shipment_id__in=parsed.shipment_ids) | Q(shipment_id=""))
-        for pkg in qs:
+        active = [p for p in qs if _RANK[p.state] < _RANK[Package.State.PICKED_UP]]
+        candidates = active if active else list(qs)
+        for pkg in candidates:
             found[pkg.pk] = pkg
     return list(found.values())
 
@@ -263,12 +263,17 @@ def _fill(pkg, parsed):
     """Copy fields the email knows and the package doesn't. Never overwrites
     user-edited data with blanks. Cost/Vine is deliberately *not* here — it
     follows a lifecycle rule of its own (see _apply_cost)."""
+    item = (
+        next((it for it in parsed.items if it.asin and it.asin == pkg.asin), None)
+        if (parsed.items and pkg.asin)
+        else (parsed.items[0] if parsed.items and len(parsed.items) == 1 else None)
+    )
     if not pkg.description:
-        pkg.description = _description(parsed)
-    if not pkg.asin and parsed.asin:
-        pkg.asin = parsed.asin
-    if not pkg.image_url and parsed.image_url:
-        pkg.image_url = parsed.image_url
+        pkg.description = (item.title if item else _description(parsed))[:255]
+    if not pkg.asin:
+        pkg.asin = (item.asin if item else parsed.asin) or ""
+    if not pkg.image_url:
+        pkg.image_url = (item.image_url if item else parsed.image_url) or ""
     if parsed.estimated_arrival:
         pkg.estimated_arrival = parsed.estimated_arrival
         # A delivery window only lives between "Pedido" and "Enviado" — the
@@ -759,6 +764,7 @@ def _apply(parsed):
                 order_id=parsed.order_id or "",
                 shipment_id=parsed.shipment_id or "",
             )]
+        updated = 0
         for pkg in matches:
             if _RANK[pkg.state] >= _RANK[Package.State.PICKED_UP]:
                 continue  # already resolved; a re-forward must not reopen it
@@ -773,8 +779,9 @@ def _apply(parsed):
                 pkg.barcode_url = parsed.barcode_url
             _fill(pkg, parsed)
             pkg.save()
-        note = ("" if len(matches) == 1
-                else f"Recogida consolidada: {len(matches)} paquetes actualizados")
+            updated += 1
+        note = ("" if updated <= 1
+                else f"Recogida consolidada: {updated} paquetes actualizados")
         return matches[0], note
 
     if kind == EmailKind.DELIVERY_ATTEMPT:
