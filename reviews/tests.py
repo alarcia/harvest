@@ -1089,8 +1089,8 @@ class ReviewSuggestTests(TestCase):
         self.assertContains(response, "Se enreda un poco con el uso")
         self.assertContains(response, "Guardar notas")
         self.assertContains(response, "¡Guardado!")
-        # Saving notes triggers package-updated so the background list moves the review to Borradores.
-        self.assertEqual(response["HX-Trigger"], "package-updated")
+        # Saving notes does not trigger package-updated, avoiding background list reload.
+        self.assertNotIn("HX-Trigger", response.headers)
 
     def test_clearing_notes_reverts_review_from_being_a_draft(self):
         self.review.notes = "Unas notas previas"
@@ -1103,7 +1103,8 @@ class ReviewSuggestTests(TestCase):
         self.review.refresh_from_db()
         self.assertEqual(self.review.notes, "")
         self.assertFalse(self.review.is_draft)
-        self.assertEqual(response["HX-Trigger"], "package-updated")
+        # Clearing notes does not trigger package-updated, avoiding background list reload.
+        self.assertNotIn("HX-Trigger", response.headers)
 
     def test_saving_notes_button_does_not_swap_modal(self):
         panel = self._open().content.decode()

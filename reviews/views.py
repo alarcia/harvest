@@ -673,6 +673,6 @@ def review_suggest(request, pk):
         request, review, active_tab="suggest", error=error, notes=notes, rating=rating,
         draft_title=draft_title, draft_text=draft_text,
     )
-    if action in ("save", "suggest"):
+    if action == "suggest":
         response["HX-Trigger"] = "package-updated"
     return response
