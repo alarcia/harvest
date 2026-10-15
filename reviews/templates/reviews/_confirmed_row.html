@@ -9,7 +9,7 @@
           hx-get="{% url 'review_detail' r.pk %}" hx-target="#modal" hx-swap="innerHTML">
     {% if r.package.image_url %}<img class="rev-thumb" src="{{ r.package.image_url }}" alt="">{% endif %}
     <div class="rev-body">
-      <span class="rev-name" title="{{ r.product_title|default:'Producto desconocido' }}">{{ r.product_title|default:"Producto desconocido" }}{% if r.is_vine %} <i class="vine-badge">Vine</i>{% endif %}</span>
+      <span class="rev-name" title="{{ r.product_title|default:'Producto desconocido' }}">{{ r.product_title|default:"Producto desconocido" }}</span>
       {% if r.title %}<span class="rev-headline">«{{ r.title }}»</span>{% endif %}
       <span class="rev-meta">
         {% if r.status == "approved" %}<i class="status-badge status-approved">Aprobada</i>
