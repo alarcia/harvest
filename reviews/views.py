@@ -665,14 +665,10 @@ def review_suggest(request, pk):
         draft_title, draft_text = review.suggestion_title, review.suggestion
 
     if action in ("back", "incorporate"):
-        response = _editor(request, review, draft_title, rating, draft_text)
-        response["HX-Trigger"] = "package-updated"
-        return response
+        return _editor(request, review, draft_title, rating, draft_text)
 
-    response = _review_card(
+    return _review_card(
         request, review, active_tab="suggest", error=error, notes=notes, rating=rating,
         draft_title=draft_title, draft_text=draft_text,
     )
-    if action == "suggest":
-        response["HX-Trigger"] = "package-updated"
-    return response
+

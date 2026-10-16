@@ -1138,6 +1138,8 @@ class ReviewSuggestTests(TestCase):
             "action": "suggest", "notes": "Muy cómoda", "rating": "5",
         })
         self.assertContains(response, "todavía no está")
+        # Suggesting a draft does not trigger package-updated, avoiding background reload.
+        self.assertNotIn("HX-Trigger", response.headers)
         self.review.refresh_from_db()
         self.assertEqual(self.review.notes, "Muy cómoda")  # never lost to a failed request
         self.assertEqual(self.review.status, Review.Status.PENDING)
@@ -1167,6 +1169,8 @@ class ReviewSuggestTests(TestCase):
         self.assertEqual(self.review.text, "")
         # The proposal survives — comparing against it is the user's business.
         self.assertEqual(self.review.suggestion, "El cuerpo propuesto, para reescribir.")
+        # Incorporating proposal into editor does not trigger package-updated.
+        self.assertNotIn("HX-Trigger", response.headers)
 
     def test_only_the_action_that_writes_the_proposal_is_marked(self):
         # The spark and its cool gradient mark text the user didn't write.
@@ -1405,6 +1409,8 @@ class SuggestDraftTests(TestCase):
         # moves a proposal across, and only the editor saves it.
         self.assertEqual(saved.title, "")
         self.assertEqual(saved.status, Review.Status.PENDING)
+        # Generating a suggestion does not trigger package-updated, avoiding background list reload.
+        self.assertNotIn("HX-Trigger", response.headers)
 
 
 class VineCycleBoundaryTests(TestCase):
