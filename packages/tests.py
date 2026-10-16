@@ -2651,6 +2651,10 @@ class MapsUrlNormalizationTests(SimpleTestCase):
         url = "https://www.google.com/maps/search/?api=1&query=42.3551436,1.4561642"
         self.assertEqual(normalize_maps_url(url), url)
 
+    def test_already_clean_search_url_with_place_id(self):
+        url = "https://www.google.com/maps/search/?api=1&query=CARLIN%20LA%20SEU&query_place_id=ChIJYzPNj5DtpRIRjNKz3EEGMok"
+        self.assertEqual(normalize_maps_url(url), url)
+
     def test_directions_url_converts_to_search_url(self):
         url = "https://www.google.com/maps/dir/?api=1&destination=42.3551436,1.4561642"
         self.assertEqual(
@@ -2658,7 +2662,7 @@ class MapsUrlNormalizationTests(SimpleTestCase):
             "https://www.google.com/maps/search/?api=1&query=42.3551436,1.4561642",
         )
 
-    def test_dirty_directions_url_with_origin(self):
+    def test_dirty_directions_url_with_origin_and_hex_id(self):
         url = (
             "https://www.google.com/maps/dir/37.9669299,-0.7039628/"
             "CARLIN+LA+SEU,+Avinguda+del+Sal%C3%B2ria,+30,+25700+La+Seu+d'Urgell,+Lleida/"
@@ -2667,10 +2671,33 @@ class MapsUrlNormalizationTests(SimpleTestCase):
         )
         self.assertEqual(
             normalize_maps_url(url),
-            "https://www.google.com/maps/search/?api=1&query=42.3551436,1.4561642",
+            "https://www.google.com/maps/search/?api=1&query=CARLIN%20LA%20SEU&query_place_id=ChIJYzPNj5DtpRIRjNKz3EEGMok",
         )
 
-    def test_place_url_with_at_coordinates(self):
+    def test_place_url_with_hex_id_and_name(self):
+        url = (
+            "https://www.google.com/maps/place/CARLIN+LA+SEU/@42.3551475,1.4535893,17z/data="
+            "!3m1!4b1!4m6!3m5!1s0x12a5ed908fcd3363:0x89320641dcb3d28c!8m2!3d42.3551436!4d1.4561642"
+            "!16s%2Fg%2F11fm6krtj6?entry=ttu&g_ep=EgoyMDI2MTAxMy4wIKXMDSoASAFQAw%3D%3D"
+        )
+        self.assertEqual(
+            normalize_maps_url(url),
+            "https://www.google.com/maps/search/?api=1&query=CARLIN%20LA%20SEU&query_place_id=ChIJYzPNj5DtpRIRjNKz3EEGMok",
+        )
+
+    def test_direct_place_id(self):
+        self.assertEqual(
+            normalize_maps_url("ChIJYzPNj5DtpRIRjNKz3EEGMok", default_label="Les Mesures"),
+            "https://www.google.com/maps/search/?api=1&query=Les%20Mesures&query_place_id=ChIJYzPNj5DtpRIRjNKz3EEGMok",
+        )
+
+    def test_direct_hex_pair(self):
+        self.assertEqual(
+            normalize_maps_url("0x12a5ed908fcd3363:0x89320641dcb3d28c", default_label="Les Mesures"),
+            "https://www.google.com/maps/search/?api=1&query=Les%20Mesures&query_place_id=ChIJYzPNj5DtpRIRjNKz3EEGMok",
+        )
+
+    def test_place_url_without_place_id_falls_back_to_coordinates(self):
         url = "https://www.google.com/maps/place/CARLIN/@42.3551436,1.4561642,17z/data=..."
         self.assertEqual(
             normalize_maps_url(url),
@@ -3608,6 +3635,37 @@ class CalendarViewTests(TestCase):
         self.assertEqual(
             point.maps_url,
             "https://www.google.com/maps/search/?api=1&query=42.3551436,1.4561642",
+        )
+
+    def test_pickuppoint_save_normalizes_place_id(self):
+        point = PickupPoint.objects.create(
+            name="Amazon Counter - Les Mesures",
+            display_name="Les Mesures",
+            kind=PickupPoint.Kind.AMAZON_COUNTER,
+            maps_url="ChIJYzPNj5DtpRIRjNKz3EEGMok",
+        )
+        point.refresh_from_db()
+        self.assertEqual(
+            point.maps_url,
+            "https://www.google.com/maps/search/?api=1&query=Les%20Mesures&query_place_id=ChIJYzPNj5DtpRIRjNKz3EEGMok",
+        )
+
+    def test_pickuppoint_save_normalizes_full_maps_url(self):
+        raw_url = (
+            "https://www.google.com/maps/place/CARLIN+LA+SEU/@42.3551475,1.4535893,17z/data="
+            "!3m1!4b1!4m6!3m5!1s0x12a5ed908fcd3363:0x89320641dcb3d28c!8m2!3d42.3551436!4d1.4561642"
+            "!16s%2Fg%2F11fm6krtj6?entry=ttu&g_ep=EgoyMDI2MTAxMy4wIKXMDSoASAFQAw%3D%3D"
+        )
+        point = PickupPoint.objects.create(
+            name="Amazon Counter - Les Mesures",
+            display_name="Les Mesures",
+            kind=PickupPoint.Kind.AMAZON_COUNTER,
+            maps_url=raw_url,
+        )
+        point.refresh_from_db()
+        self.assertEqual(
+            point.maps_url,
+            "https://www.google.com/maps/search/?api=1&query=CARLIN%20LA%20SEU&query_place_id=ChIJYzPNj5DtpRIRjNKz3EEGMok",
         )
 
     def test_package_detail_from_day_offers_the_way_back(self):

@@ -1,3 +1,4 @@
+from django import forms
 from django.contrib import admin
 
 from .models import Config, Package, PickupPoint, RawEmail
@@ -27,6 +28,11 @@ class PickupPointAdmin(admin.ModelAdmin):
     list_editable = ("display_name", "maps_url")
     list_filter = ("kind",)
     search_fields = ("name", "display_name")
+
+    def formfield_for_dbfield(self, db_field, **kwargs):
+        if db_field.name == "maps_url":
+            kwargs["form_class"] = forms.CharField
+        return super().formfield_for_dbfield(db_field, **kwargs)
 
 
 @admin.register(Package)

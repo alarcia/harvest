@@ -1,4 +1,6 @@
+import base64
 import re
+import struct
 import unicodedata
 import urllib.parse
 from datetime import timedelta
@@ -135,51 +137,118 @@ class Config(models.Model):
         return any(_fold(marker) in haystack for marker in markers if marker)
 
 
-def normalize_maps_url(url: str) -> str:
-    """Extract coordinates or place query from any Google Maps URL,
-    normalizing it to a universal search URL so opening it displays the
-    place card (hours, share button, etc.) rather than launching direct navigation.
+def hex_to_chij(id1_hex: str, id2_hex: str) -> str | None:
+    """Convert Google Maps 64-bit hex pair to standard ChIJ Place ID."""
+    try:
+        id1 = int(id1_hex, 16)
+        id2 = int(id2_hex, 16)
+        if id1 == 0 or id2 == 0:
+            return None
+        data = b"\x0a\x12\x09" + struct.pack("<Q", id1) + b"\x11" + struct.pack("<Q", id2)
+        return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+    except Exception:
+        return None
+
+
+def normalize_maps_url(url: str, default_label: str = "") -> str:
+    """Extract coordinates, place ID or search query from any Google Maps URL or ID,
+    normalizing it to a universal search URL with query_place_id so opening it
+    displays the place card (hours, share button, etc.) rather than launching direct navigation.
     """
     url = (url or "").strip()
     if not url:
         return ""
-    # If already a universal search URL:
+
+    # Direct Place ID: e.g. ChIJ...
+    if re.match(r"^ChIJ[a-zA-Z0-9_-]{20,}$", url):
+        query = default_label or url
+        return f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(query)}&query_place_id={url}"
+
+    # Direct Hex pair: e.g. 0x12a5ed908fcd3363:0x89320641dcb3d28c
+    m_hex = re.match(r"^(0x[0-9a-fA-F]{10,}):(0x[0-9a-fA-F]{10,})$", url)
+    if m_hex:
+        place_id = hex_to_chij(m_hex.group(1), m_hex.group(2))
+        if place_id:
+            query = default_label or "Lugar"
+            return f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(query)}&query_place_id={place_id}"
+
+    # If already a universal search URL with query_place_id:
+    if "google.com/maps/search/" in url and "query_place_id=" in url:
+        return url
+
+    # Extract Place ID if present in URL
+    place_id = None
+    m_chij = re.search(r"[?&]query_place_id=(ChIJ[a-zA-Z0-9_-]+)", url)
+    if not m_chij:
+        m_chij = re.search(r"place_id:(ChIJ[a-zA-Z0-9_-]+)", url)
+    if m_chij:
+        place_id = m_chij.group(1)
+    else:
+        # Check for 64-bit hex pair (e.g. 0x12a5ed908fcd3363:0x89320641dcb3d28c)
+        m_hex_url = re.search(r"(0x[0-9a-fA-F]{10,}):(0x[0-9a-fA-F]{10,})", url)
+        if m_hex_url:
+            place_id = hex_to_chij(m_hex_url.group(1), m_hex_url.group(2))
+
+    # Extract place name if present in /maps/place/<name>/ or /maps/dir/<origin>/<dest>/
+    place_name = None
+    m_place = re.search(r"/maps/place/([^/@?]+)", url)
+    if m_place:
+        raw_name = urllib.parse.unquote_plus(m_place.group(1)).strip()
+        if not re.match(r"^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$", raw_name):
+            place_name = raw_name
+    else:
+        m_dir = re.search(r"/maps/dir/[^/]+/([^/@?]+)", url)
+        if m_dir:
+            raw_dest = urllib.parse.unquote_plus(m_dir.group(1)).strip()
+            if not re.match(r"^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$", raw_dest):
+                place_name = raw_dest
+
+    if place_name and "," in place_name:
+        parts = place_name.split(",")
+        if len(parts[0].strip()) >= 3:
+            place_name = parts[0].strip()
+
+    if place_id:
+        query = place_name or default_label or "Lugar"
+        return f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(query)}&query_place_id={place_id}"
+
+    # If already a universal search URL with query (and no place_id):
     if "google.com/maps/search/" in url and "query=" in url:
         return url
 
-    # If it is a directions URL with destination parameter, extract destination:
-    m = re.search(r'[?&]destination=([^&]+)', url)
+    # If it is a directions URL with destination parameter:
+    m = re.search(r"[?&]destination=([^&]+)", url)
     if m:
         dest = urllib.parse.unquote(m.group(1))
         return f"https://www.google.com/maps/search/?api=1&query={dest}"
 
-    # 1. Look for coordinates in data parameter !2m2!1d<lng>!2d<lat>
-    m = re.search(r'!2m2!1d(-?\d+(?:\.\d+)?)(?:!2d|-?\d+)?!2d(-?\d+(?:\.\d+)?)', url)
+    # Look for coordinates in data parameter !2m2!1d<lng>!2d<lat>
+    m = re.search(r"!2m2!1d(-?\d+(?:\.\d+)?)(?:!2d|-?\d+)?!2d(-?\d+(?:\.\d+)?)", url)
     if not m:
-        m = re.search(r'!1d(-?\d+(?:\.\d+)?)[^!]*!2d(-?\d+(?:\.\d+)?)', url)
+        m = re.search(r"!1d(-?\d+(?:\.\d+)?)[^!]*!2d(-?\d+(?:\.\d+)?)", url)
     if m:
         lng, lat = m.group(1), m.group(2)
         return f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
 
-    # 2. Look for @lat,lng in URL (e.g. /maps/place/.../@42.3551436,1.4561642,17z)
-    m = re.search(r'@(-?\d+\.\d+),(-?\d+\.\d+)', url)
+    # Look for @lat,lng in URL (e.g. /maps/place/.../@42.3551436,1.4561642,17z)
+    m = re.search(r"@(-?\d+\.\d+),(-?\d+\.\d+)", url)
     if m:
         lat, lng = m.group(1), m.group(2)
         return f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
 
-    # 3. Look for /dir/<origin>/<destination>/
-    m = re.search(r'/maps/dir/([^/]+)/([^/@?]+)', url)
+    # Look for /dir/<origin>/<destination>/
+    m = re.search(r"/maps/dir/([^/]+)/([^/@?]+)", url)
     if m:
         dest = m.group(2)
         return f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(urllib.parse.unquote(dest))}"
 
-    # 4. Raw coordinates "lat, lng"
-    m = re.match(r'^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$', url)
+    # Raw coordinates "lat, lng"
+    m = re.match(r"^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$", url)
     if m:
         return f"https://www.google.com/maps/search/?api=1&query={m.group(1)},{m.group(2)}"
 
-    # 5. Legacy maps.google.com/?q=...
-    m = re.search(r'[?&]q=([^&]+)', url)
+    # Legacy maps.google.com/?q=...
+    m = re.search(r"[?&]q=([^&]+)", url)
     if m:
         q = urllib.parse.unquote(m.group(1))
         return f"https://www.google.com/maps/search/?api=1&query={q}"
@@ -248,9 +317,9 @@ class PickupPoint(models.Model):
     maps_url = models.URLField(
         max_length=500, blank=True,
         verbose_name="enlace de Google Maps",
-        help_text="Enlace de Google Maps del punto. Si se pega un enlace "
-                  "con ruta o búsqueda, se limpiará automáticamente para "
-                  "abrir la ficha del lugar.",
+        help_text="Enlace o ID de Google Maps del punto (URL completa, Place ID "
+                  "ChIJ... o par hexadecimal 0x...:0x...). Se normalizará "
+                  "automáticamente para abrir la ficha del lugar.",
     )
 
     class Meta:
@@ -259,9 +328,14 @@ class PickupPoint(models.Model):
     def __str__(self):
         return self.label
 
+    def clean(self):
+        super().clean()
+        if self.maps_url:
+            self.maps_url = normalize_maps_url(self.maps_url, default_label=self.label)
+
     def save(self, *args, **kwargs):
         if self.maps_url:
-            self.maps_url = normalize_maps_url(self.maps_url)
+            self.maps_url = normalize_maps_url(self.maps_url, default_label=self.label)
         super().save(*args, **kwargs)
 
     @property
