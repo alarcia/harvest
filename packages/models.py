@@ -136,41 +136,53 @@ class Config(models.Model):
 
 
 def normalize_maps_url(url: str) -> str:
-    """Extract destination coordinates or query from any Google Maps URL,
-    stripping any origin, so opening it triggers directions from the user's
-    current location directly.
+    """Extract coordinates or place query from any Google Maps URL,
+    normalizing it to a universal search URL so opening it displays the
+    place card (hours, share button, etc.) rather than launching direct navigation.
     """
     url = (url or "").strip()
     if not url:
         return ""
-    # If already a universal directions URL without origin:
-    if "google.com/maps/dir/" in url and "destination=" in url and "origin=" not in url:
+    # If already a universal search URL:
+    if "google.com/maps/search/" in url and "query=" in url:
         return url
 
-    # 1. Look for destination coordinates in data parameter !2m2!1d<lng>!2d<lat>
+    # If it is a directions URL with destination parameter, extract destination:
+    m = re.search(r'[?&]destination=([^&]+)', url)
+    if m:
+        dest = urllib.parse.unquote(m.group(1))
+        return f"https://www.google.com/maps/search/?api=1&query={dest}"
+
+    # 1. Look for coordinates in data parameter !2m2!1d<lng>!2d<lat>
     m = re.search(r'!2m2!1d(-?\d+(?:\.\d+)?)(?:!2d|-?\d+)?!2d(-?\d+(?:\.\d+)?)', url)
     if not m:
         m = re.search(r'!1d(-?\d+(?:\.\d+)?)[^!]*!2d(-?\d+(?:\.\d+)?)', url)
     if m:
         lng, lat = m.group(1), m.group(2)
-        return f"https://www.google.com/maps/dir/?api=1&destination={lat},{lng}"
+        return f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
 
     # 2. Look for @lat,lng in URL (e.g. /maps/place/.../@42.3551436,1.4561642,17z)
     m = re.search(r'@(-?\d+\.\d+),(-?\d+\.\d+)', url)
     if m:
         lat, lng = m.group(1), m.group(2)
-        return f"https://www.google.com/maps/dir/?api=1&destination={lat},{lng}"
+        return f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
 
     # 3. Look for /dir/<origin>/<destination>/
     m = re.search(r'/maps/dir/([^/]+)/([^/@?]+)', url)
     if m:
         dest = m.group(2)
-        return f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(urllib.parse.unquote(dest))}"
+        return f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(urllib.parse.unquote(dest))}"
 
     # 4. Raw coordinates "lat, lng"
     m = re.match(r'^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$', url)
     if m:
-        return f"https://www.google.com/maps/dir/?api=1&destination={m.group(1)},{m.group(2)}"
+        return f"https://www.google.com/maps/search/?api=1&query={m.group(1)},{m.group(2)}"
+
+    # 5. Legacy maps.google.com/?q=...
+    m = re.search(r'[?&]q=([^&]+)', url)
+    if m:
+        q = urllib.parse.unquote(m.group(1))
+        return f"https://www.google.com/maps/search/?api=1&query={q}"
 
     return url
 
@@ -236,9 +248,9 @@ class PickupPoint(models.Model):
     maps_url = models.URLField(
         max_length=500, blank=True,
         verbose_name="enlace de Google Maps",
-        help_text="Enlace de Google Maps para navegar al punto. Si se "
-                  "pega un enlace con origen o búsqueda, se limpiará "
-                  "automáticamente para iniciar la ruta hacia el destino.",
+        help_text="Enlace de Google Maps del punto. Si se pega un enlace "
+                  "con ruta o búsqueda, se limpiará automáticamente para "
+                  "abrir la ficha del lugar.",
     )
 
     class Meta:

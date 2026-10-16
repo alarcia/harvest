@@ -2647,9 +2647,16 @@ class MapsUrlNormalizationTests(SimpleTestCase):
         self.assertEqual(normalize_maps_url(None), "")
         self.assertEqual(normalize_maps_url("   "), "")
 
-    def test_already_clean_directions_url(self):
-        url = "https://www.google.com/maps/dir/?api=1&destination=42.3551436,1.4561642"
+    def test_already_clean_search_url(self):
+        url = "https://www.google.com/maps/search/?api=1&query=42.3551436,1.4561642"
         self.assertEqual(normalize_maps_url(url), url)
+
+    def test_directions_url_converts_to_search_url(self):
+        url = "https://www.google.com/maps/dir/?api=1&destination=42.3551436,1.4561642"
+        self.assertEqual(
+            normalize_maps_url(url),
+            "https://www.google.com/maps/search/?api=1&query=42.3551436,1.4561642",
+        )
 
     def test_dirty_directions_url_with_origin(self):
         url = (
@@ -2660,20 +2667,20 @@ class MapsUrlNormalizationTests(SimpleTestCase):
         )
         self.assertEqual(
             normalize_maps_url(url),
-            "https://www.google.com/maps/dir/?api=1&destination=42.3551436,1.4561642",
+            "https://www.google.com/maps/search/?api=1&query=42.3551436,1.4561642",
         )
 
     def test_place_url_with_at_coordinates(self):
         url = "https://www.google.com/maps/place/CARLIN/@42.3551436,1.4561642,17z/data=..."
         self.assertEqual(
             normalize_maps_url(url),
-            "https://www.google.com/maps/dir/?api=1&destination=42.3551436,1.4561642",
+            "https://www.google.com/maps/search/?api=1&query=42.3551436,1.4561642",
         )
 
     def test_raw_coordinates_string(self):
         self.assertEqual(
             normalize_maps_url("42.3551436, 1.4561642"),
-            "https://www.google.com/maps/dir/?api=1&destination=42.3551436,1.4561642",
+            "https://www.google.com/maps/search/?api=1&query=42.3551436,1.4561642",
         )
 
 
@@ -3489,13 +3496,14 @@ class CalendarViewTests(TestCase):
         counter = self._point("Amazon Counter - Les Mesures",
                               PickupPoint.Kind.AMAZON_COUNTER,
                               display_name="Les Mesures",
-                              maps_url="https://www.google.com/maps/dir/?api=1&destination=42.3551436,1.4561642")
+                              maps_url="https://www.google.com/maps/search/?api=1&query=42.3551436,1.4561642")
         self._awaiting(counter, "Filtro de agua", today)
         html = self.client.get(reverse("day_detail", args=[today.isoformat()])).content.decode()
         self.assertIn("Por recoger:", html)
-        self.assertIn('href="https://www.google.com/maps/dir/?api=1&amp;destination=42.3551436,1.4561642"', html)
+        self.assertIn('href="https://www.google.com/maps/search/?api=1&amp;query=42.3551436,1.4561642"', html)
         self.assertIn('target="_blank"', html)
         self.assertIn('class="pickup-point-link"', html)
+        self.assertIn('title="Ver en Google Maps"', html)
         self.assertIn("Les Mesures ↗</a>", html)
 
     def test_day_detail_shows_pickup_summary_with_grouped_packages(self):
@@ -3579,11 +3587,12 @@ class CalendarViewTests(TestCase):
         counter = self._point("Amazon Counter - Les Mesures",
                               PickupPoint.Kind.AMAZON_COUNTER,
                               display_name="Les Mesures",
-                              maps_url="https://www.google.com/maps/dir/?api=1&destination=42.3551436,1.4561642")
+                              maps_url="https://www.google.com/maps/search/?api=1&query=42.3551436,1.4561642")
         pkg = self._awaiting(counter, "Filtro de agua", today)
         html = self.client.get(reverse("package_detail", args=[pkg.pk])).content.decode()
         self.assertIn('class="point-maps-link"', html)
-        self.assertIn('href="https://www.google.com/maps/dir/?api=1&amp;destination=42.3551436,1.4561642"', html)
+        self.assertIn('href="https://www.google.com/maps/search/?api=1&amp;query=42.3551436,1.4561642"', html)
+        self.assertIn('title="Ver en Google Maps"', html)
         self.assertNotIn("Cómo llegar en Google Maps ↗", html)
 
     def test_pickuppoint_save_normalizes_maps_url(self):
@@ -3598,7 +3607,7 @@ class CalendarViewTests(TestCase):
         point.refresh_from_db()
         self.assertEqual(
             point.maps_url,
-            "https://www.google.com/maps/dir/?api=1&destination=42.3551436,1.4561642",
+            "https://www.google.com/maps/search/?api=1&query=42.3551436,1.4561642",
         )
 
     def test_package_detail_from_day_offers_the_way_back(self):

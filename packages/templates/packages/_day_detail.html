@@ -14,7 +14,7 @@ back.{% endcomment %}
         <span class="summary-label">Por recoger:</span>
         {% for item in pickup_summary %}
           <span class="summary-item src-{{ item.source }}">
-            <b>{{ item.count }}</b> {% if item.has_groups %}<span class="summary-prod-note">({{ item.product_count }} productos)</span> {% endif %}{% if item.maps_url %}<a href="{{ item.maps_url }}" target="_blank" rel="noopener" class="pickup-point-link" title="Abrir ruta en Google Maps">{{ item.name }} ↗</a>{% else %}{{ item.name }}{% endif %}
+            <b>{{ item.count }}</b> {% if item.has_groups %}<span class="summary-prod-note">({{ item.product_count }} productos)</span> {% endif %}{% if item.maps_url %}<a href="{{ item.maps_url }}" target="_blank" rel="noopener" class="pickup-point-link" title="Ver en Google Maps">{{ item.name }} ↗</a>{% else %}{{ item.name }}{% endif %}
           </span>{% if not forloop.last %}<span class="summary-sep">·</span>{% endif %}
         {% endfor %}
       </div>
