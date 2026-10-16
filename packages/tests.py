@@ -12,7 +12,7 @@ from decimal import Decimal
 from email.message import EmailMessage
 from pathlib import Path
 from unittest import SkipTest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.db import IntegrityError
 from django.test import SimpleTestCase, TestCase, override_settings
@@ -2708,6 +2708,22 @@ class MapsUrlNormalizationTests(SimpleTestCase):
         self.assertEqual(
             normalize_maps_url("42.3551436, 1.4561642"),
             "https://www.google.com/maps/search/?api=1&query=42.3551436,1.4561642",
+        )
+
+    @patch("urllib.request.urlopen")
+    def test_short_share_link_expansion(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.geturl.return_value = (
+            "https://www.google.com/maps/place/Descanso+Perfecto+-+C%2F+Orihuela/@37.9774514,-0.6877038,17z/"
+            "data=!3m1!4b1!4m6!3m5!1s0xd63a948cc430bf7:0xec6d3f780c759c24!8m2!3d37.9774472!4d-0.6851289"
+        )
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        short_url = "https://maps.app.goo.gl/BaS7v94ekvJqSncUA"
+        self.assertEqual(
+            normalize_maps_url(short_url),
+            "https://www.google.com/maps/search/?api=1&query=Descanso%20Perfecto%20-%20C/%20Orihuela&query_place_id=ChIJ9wtDzEipYw0RJJx1DHg_bew",
         )
 
 

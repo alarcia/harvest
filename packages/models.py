@@ -159,6 +159,15 @@ def normalize_maps_url(url: str, default_label: str = "") -> str:
     if not url:
         return ""
 
+    # Expand short share links (e.g. maps.app.goo.gl/... or goo.gl/maps/...)
+    if "maps.app.goo.gl/" in url or "goo.gl/maps" in url:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                url = resp.geturl()
+        except Exception:
+            pass
+
     # Direct Place ID: e.g. ChIJ...
     if re.match(r"^ChIJ[a-zA-Z0-9_-]{20,}$", url):
         query = default_label or url
