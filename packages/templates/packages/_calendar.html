@@ -132,6 +132,20 @@ chip behind the open card stops lying.{% endcomment %}
     .cal-stats-btn:active {
       transform: scale(.94);
     }
+    .cal-stats-btn[disabled] {
+      cursor: wait;
+      pointer-events: none;
+    }
+    .cal-stats-btn.htmx-request {
+      border-color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 15%, var(--card));
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+      animation: cal-stats-pulse .8s ease-in-out infinite;
+    }
+    @keyframes cal-stats-pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(.88); opacity: .55; }
+    }
 
     /* Legend for the package marks; goes away once the codes are second nature. */
     .cal-legend {
@@ -572,7 +586,8 @@ chip behind the open card stops lying.{% endcomment %}
     }
     @media (prefers-reduced-motion: reduce) {
       .cal .cal-grid, .cal .cal-title, .cal .day, .cal .pkg,
-      .day-list .pkg, .cal .pkg.is-last_mile, .view-month .day .pkg.is-last_mile { animation: none !important; }
+      .day-list .pkg, .cal .pkg.is-last_mile, .view-month .day .pkg.is-last_mile,
+      .cal-stats-btn.htmx-request { animation: none !important; }
     }
 
     /* ---- phone layout (below the 700px desktop breakpoint) ---- */
@@ -774,7 +789,7 @@ chip behind the open card stops lying.{% endcomment %}
           <button class="{% if v == view %}active{% endif %}" hx-get="{{ link.get }}" hx-push-url="{{ link.push }}">{{ label }}</button>
         {% endfor %}
       </nav>
-      <button type="button" class="cal-stats-btn" hx-get="{% url 'stats_modal' %}" hx-target="#modal" hx-swap="innerHTML" title="Estadísticas de envíos" aria-label="Estadísticas">📊</button>
+      <button type="button" class="cal-stats-btn" hx-get="{% url 'stats_modal' %}" hx-target="#modal" hx-swap="innerHTML" hx-disabled-elt="this" title="Estadísticas de envíos" aria-label="Estadísticas">📊</button>
     </div>
     <div class="cal-legend">
       <span class="lg"><i class="sw dot amazon"></i>Amazon</span>

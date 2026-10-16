@@ -3950,6 +3950,7 @@ class StatsTests(TestCase):
         response = self.client.get(reverse("home"), HTTP_HX_REQUEST="true")
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'class="cal-stats-btn"', response.content)
+        self.assertIn(b'hx-disabled-elt="this"', response.content)
         self.assertIn(reverse("stats_modal").encode(), response.content)
 
     def test_stats_modal_empty_database(self):

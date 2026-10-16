@@ -4,7 +4,7 @@ Computes transition velocities, order volumes, delivery punctuality,
 and weekday habits from Package records and RawEmail timestamps.
 """
 
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import timedelta
 import statistics
 
@@ -86,11 +86,24 @@ def get_delivery_stats():
     ord_to_shp, shp_to_arr, ofd_to_arr, arr_to_pck, cycle_days = [], [], [], [], []
     early_count, on_time_count, late_count = 0, 0, 0
 
-    packages = (
-        Package.objects.select_related("pickup_point")
-        .prefetch_related("emails")
-        .all()
+    packages = Package.objects.only(
+        "ordered_on",
+        "shipped_on",
+        "actual_arrival",
+        "estimated_arrival",
+        "picked_up_on",
+        "state",
     )
+
+    emails_qs = (
+        RawEmail.objects.filter(package_id__isnull=False, received_at__isnull=False)
+        .values_list("package_id", "kind", "received_at")
+    )
+    email_kinds = defaultdict(dict)
+    for pkg_id, kind, rec_at in emails_qs:
+        d = email_kinds[pkg_id]
+        if kind not in d or rec_at < d[kind]:
+            d[kind] = rec_at
 
     arrivals_by_day = Counter()
     pickups_by_day = Counter()
@@ -113,10 +126,7 @@ def get_delivery_stats():
             pickups_by_day[p.picked_up_on.weekday()] += 1
 
         # Timestamps from raw emails
-        kinds = {}
-        for e in p.emails.all():
-            if e.received_at and (e.kind not in kinds or e.received_at < kinds[e.kind]):
-                kinds[e.kind] = e.received_at
+        kinds = email_kinds.get(p.id, {})
 
         # (a) Ordered to Shipped
         if "ordered" in kinds and "shipped" in kinds and kinds["shipped"] >= kinds["ordered"]:
