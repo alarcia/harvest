@@ -63,6 +63,8 @@ STATE_TAGS = {
     "action_needed": "Recoger ya",
     "picked": "Recogido",
     "delivered": "Entregado",
+    "returned": "Devuelto",
+    "cancelled": "Cancelado",
 }
 
 # Within a day, red first, then actionable, then informational. The certain
@@ -84,6 +86,8 @@ URGENCY_RANK = {
     "leaves_estimated": 3,
     "picked": 4,
     "delivered": 4,
+    "returned": 4,
+    "cancelled": 4,
 }
 _URGENCY = URGENCY_RANK
 
@@ -119,6 +123,7 @@ STATE_LABELS = {
     Package.State.PICKED_UP: "Recogido",
     Package.State.DELIVERED: "Entregado",
     Package.State.RETURNED: "Devuelto",
+    Package.State.CANCELLED: "Cancelado",
 }
 _STATE_LABELS = STATE_LABELS
 
@@ -447,7 +452,15 @@ def package_marks(pkg, today):
         day = pkg.actual_arrival or pkg.estimated_arrival
         return [(day, "delivered", "")] if day else []
 
-    return []  # returned: gone from the board
+    if pkg.state == Package.State.RETURNED:
+        day = pkg.returned_on or pkg.deadline or (pkg.updated_at.date() if pkg.updated_at else None)
+        return [(day, "returned", "")] if day else []
+
+    if pkg.state == Package.State.CANCELLED:
+        day = pkg.cancelled_on or (pkg.updated_at.date() if pkg.updated_at else None) or pkg.ordered_on
+        return [(day, "cancelled", "")] if day else []
+
+    return []
 
 
 _marks = package_marks
@@ -457,7 +470,6 @@ def get_chips(start, end, today):
     """Query active packages and project them into chip dictionaries within [start, end]."""
     chips = []
     packages = (Package.objects
-                .exclude(state=Package.State.RETURNED)
                 .select_related("pickup_point"))
     for pkg in packages:
         source = source_family(pkg.pickup_point)

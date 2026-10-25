@@ -119,7 +119,7 @@ def _cycle_stats(cycle, today):
         is_vine=True,
         ordered_on__gte=cycle.starts_on,
         ordered_on__lte=cycle.ends_on,
-    ).count()
+    ).exclude(state__in=[Package.State.CANCELLED, Package.State.RETURNED]).count()
 
     package_less = Review.objects.filter(
         package__isnull=True,
@@ -191,7 +191,7 @@ def _cycle_stats(cycle, today):
         is_vine=True,
         ordered_on__gte=window_start,
         ordered_on__lte=today,
-    ).count()
+    ).exclude(state__in=[Package.State.CANCELLED, Package.State.RETURNED]).count()
     window_length = max(1, (today - window_start).days + 1)
     orders_per_day = recent_orders / window_length
     orders_per_week = round(orders_per_day * 7, 1)

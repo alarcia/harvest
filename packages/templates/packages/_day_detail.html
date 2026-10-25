@@ -33,7 +33,7 @@ back.{% endcomment %}
                         hx-get="{{ c.detail_url }}?from_day={{ day|date:'Y-m-d' }}"
                         hx-target="#modal" hx-swap="innerHTML">
                   <span class="pkg-meta">
-                    <span class="pkg-tag">{% if c.closed or c.kind == "action_needed" %}⚠ {% elif c.kind == "picked" %}✓ {% endif %}<b>{{ c.tag }}{% if c.note %} ({{ c.note }}){% endif %}</b></span>
+                    <span class="pkg-tag">{% if c.closed or c.kind == "action_needed" %}⚠ {% elif c.kind == "picked" %}✓ {% elif c.kind == "cancelled" %}✕ {% elif c.kind == "returned" %}↩ {% endif %}<b>{{ c.tag }}{% if c.note %} ({{ c.note }}){% endif %}</b></span>
                     {% if c.point_name %}
                       <span class="pkg-sep">·</span>
                       <span class="pkg-loc">{% if c.point_kind == "home" %}🏠 {% endif %}{{ c.point_name }}</span>
@@ -51,7 +51,7 @@ back.{% endcomment %}
                       hx-get="{{ c.detail_url }}?from_day={{ day|date:'Y-m-d' }}"
                       hx-target="#modal" hx-swap="innerHTML">
                 <span class="pkg-meta">
-                  <span class="pkg-tag">{% if c.closed or c.kind == "action_needed" %}⚠ {% elif c.kind == "picked" %}✓ {% endif %}<b>{{ c.tag }}{% if c.note %} ({{ c.note }}){% endif %}</b></span>
+                  <span class="pkg-tag">{% if c.closed or c.kind == "action_needed" %}⚠ {% elif c.kind == "picked" %}✓ {% elif c.kind == "cancelled" %}✕ {% elif c.kind == "returned" %}↩ {% endif %}<b>{{ c.tag }}{% if c.note %} ({{ c.note }}){% endif %}</b></span>
                   {% if c.point_name %}
                     <span class="pkg-sep">·</span>
                     <span class="pkg-loc">{% if c.point_kind == "home" %}🏠 {% endif %}{{ c.point_name }}</span>

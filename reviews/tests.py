@@ -116,7 +116,7 @@ class ReviewsListViewTests(TestCase):
         # to review, and no due date to close them by. Same for a package that
         # regressed out of `picked_up`.
         for state in (Package.State.IN_TRANSIT, Package.State.AWAITING_PICKUP,
-                       Package.State.RETURNED):
+                       Package.State.RETURNED, Package.State.CANCELLED):
             with self.subTest(state=state):
                 pkg = _package(ordered_on=self._in_current(), state=state,
                                 description=f"Todavía no lo tengo ({state})")
@@ -1505,6 +1505,15 @@ class CycleStatsTests(TestCase):
         self.assertEqual(stats["pct_class"], "neutral")
         self.assertFalse(stats["gold_achieved"])
         self.assertFalse(stats["is_risk_zone"])
+
+    def test_cycle_stats_excludes_cancelled_and_returned_packages(self):
+        pkg_active = _package(ordered_on=self.cycle.starts_on, is_vine=True, state=Package.State.IN_TRANSIT)
+        _package(ordered_on=self.cycle.starts_on + timedelta(days=1), is_vine=True, state=Package.State.CANCELLED)
+        _package(ordered_on=self.cycle.starts_on + timedelta(days=2), is_vine=True, state=Package.State.RETURNED)
+        Review.objects.create(package=pkg_active, product_title="Active", status=Review.Status.PENDING)
+
+        stats = _cycle_stats(self.cycle, self.today)
+        self.assertEqual(stats["orders_count"], 1)
 
     def test_cycle_stats_percentages_and_colors(self):
         # 10 orders, 2 reviews => 20% (<30% -> danger)

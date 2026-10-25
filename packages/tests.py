@@ -248,6 +248,19 @@ class ParseEmailTests(SimpleTestCase):
         self.assertEqual(parsed.order_id, "403-2373187-4267548")
         self.assertEqual(parsed.shipment_id, "TnVb0WV5H")
 
+    def test_cancelled_email(self):
+        eml = _amazon_email(
+            "Tu producto se ha cancelado",
+            "Amazon Counter - Les Mesures",
+            subject="Producto cancelado para tu Amazon.es pedido n.º 404-9182736-4501122",
+            order_id="404-9182736-4501122",
+            arrives=None,
+            total=None,
+        )
+        parsed = parse_email(eml)
+        self.assertEqual(parsed.kind, EmailKind.CANCELLED)
+        self.assertEqual(parsed.order_id, "404-9182736-4501122")
+
     def test_out_for_delivery(self):
         parsed = parse_email(
             fixture("012-fwd-llega-hoy-necesitas-una-contrasena-temporal-para-tu-entr.eml")
@@ -2060,6 +2073,82 @@ class IngestTests(TestCase):
         self.assertEqual(pkg2.pickup_code, "785720")
         self.assertEqual(pkg2.actual_arrival, date(2026, 10, 15))
         self.assertEqual(pkg2.deadline, date(2026, 10, 22))
+
+    def test_consolidated_out_for_delivery_does_not_duplicate_sibling_order(self):
+        # When two separate orders to the same destination are out for delivery
+        # together, Amazon sends an "En reparto" email naming only the first order
+        # while picturing items from both. The second item must NOT spawn a duplicate
+        # package under the first order's id.
+        home = PickupPoint.objects.create(name="Rosa - Can Salgot, Barcelona", kind=PickupPoint.Kind.HOME)
+        pkg1 = Package.objects.create(
+            pickup_point=home, order_id="408-1111111-1111111", shipment_id="BOX111",
+            description="Item One", asin="B000ITEM01", state=Package.State.IN_TRANSIT,
+            is_vine=True,
+        )
+        pkg2 = Package.objects.create(
+            pickup_point=home, order_id="408-2222222-2222222", shipment_id="BOX222",
+            description="Item Two", asin="B000ITEM02", state=Package.State.IN_TRANSIT,
+            is_vine=True,
+        )
+        _sync_review_for_package(pkg1)
+        _sync_review_for_package(pkg2)
+        self.assertEqual(Review.objects.count(), 2)
+
+        out_msg = EmailMessage()
+        out_msg["Subject"] = "En reparto: Item One y 1 producto más"
+        out_msg["Message-ID"] = "<out-multi-orders@example.com>"
+        out_msg["Date"] = "Wed, 22 Oct 2026 10:00:00 +0200"
+        out_msg.set_content(
+            "<h2>En reparto</h2>"
+            "<p>Llega hoy</p>"
+            "<p>El paquete está en reparto</p>"
+            "<p>Rosa - Can Salgot, Barcelona</p>"
+            "<p>Pedido n.º 408-1111111-1111111</p>"
+            '<a href="https://www.amazon.es/track?orderId=408-1111111-1111111&shipmentId=BOX111">Track</a>'
+            '<a href="https://www.amazon.es/dp/B000ITEM01/ref=fed_asin_title">'
+            '<img src="https://m.media-amazon.com/images/I/x.jpg" alt="Item One"></a>'
+            '<a href="https://www.amazon.es/dp/B000ITEM02/ref=fed_asin_title">'
+            '<img src="https://m.media-amazon.com/images/I/y.jpg" alt="Item Two"></a>',
+            subtype="html",
+        )
+        record, _ = process_message(out_msg.as_bytes())
+        self.assertTrue(record.processed)
+        self.assertEqual(Package.objects.count(), 2)
+        self.assertEqual(Review.objects.count(), 2)
+
+        pkg1.refresh_from_db()
+        pkg2.refresh_from_db()
+        self.assertEqual(pkg1.state, Package.State.LAST_MILE)
+        self.assertEqual(pkg2.state, Package.State.IN_TRANSIT)
+        self.assertEqual(pkg2.order_id, "408-2222222-2222222")
+        self.assertTrue(pkg2.is_vine)
+
+        deliv_msg = EmailMessage()
+        deliv_msg["Subject"] = "Entregado: Item One y 1 producto más"
+        deliv_msg["Message-ID"] = "<deliv-multi-orders@example.com>"
+        deliv_msg["Date"] = "Wed, 22 Oct 2026 12:00:00 +0200"
+        deliv_msg.set_content(
+            "<h2>¡Tu paquete se ha entregado!</h2>"
+            "<p>Rosa - Can Salgot, Barcelona</p>"
+            "<p>Pedido n.º 408-1111111-1111111</p>"
+            '<a href="https://www.amazon.es/track?orderId=408-1111111-1111111&shipmentId=BOX111">Track</a>'
+            '<a href="https://www.amazon.es/dp/B000ITEM01/ref=fed_asin_title">'
+            '<img src="https://m.media-amazon.com/images/I/x.jpg" alt="Item One"></a>'
+            '<a href="https://www.amazon.es/dp/B000ITEM02/ref=fed_asin_title">'
+            '<img src="https://m.media-amazon.com/images/I/y.jpg" alt="Item Two"></a>',
+            subtype="html",
+        )
+        record2, _ = process_message(deliv_msg.as_bytes())
+        self.assertTrue(record2.processed)
+        self.assertEqual(Package.objects.count(), 2)
+        self.assertEqual(Review.objects.count(), 2)
+
+        pkg1.refresh_from_db()
+        pkg2.refresh_from_db()
+        self.assertEqual(pkg1.state, Package.State.DELIVERED)
+        self.assertEqual(pkg2.state, Package.State.DELIVERED)
+        self.assertTrue(pkg1.is_vine)
+        self.assertTrue(pkg2.is_vine)
 
 
 
@@ -4107,4 +4196,60 @@ class StatsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Les Mesures".encode(), response.content)
         self.assertIn("4,0 h".encode(), response.content)
+
+
+class CancelledAndReturnedPackageTests(TestCase):
+    def test_cancelled_email_marks_package_cancelled_and_cleans_pending_review(self):
+        point = PickupPoint.objects.create(name="Counter", kind=PickupPoint.Kind.AMAZON_COUNTER)
+        pkg = Package.objects.create(
+            pickup_point=point,
+            order_id="404-9182736-4501122",
+            state=Package.State.IN_TRANSIT,
+            ordered_on=date(2026, 10, 13),
+            estimated_arrival=date(2026, 10, 23),
+            is_vine=True,
+            description="Bolso",
+        )
+        review = Review.objects.create(
+            package=pkg,
+            product_title="Bolso",
+            status=Review.Status.PENDING,
+        )
+        eml = _amazon_email(
+            "Tu producto se ha cancelado",
+            "Amazon Counter - Les Mesures",
+            subject="Producto cancelado para tu Amazon.es pedido n.º 404-9182736-4501122",
+            order_id="404-9182736-4501122",
+            arrives=None,
+            total=None,
+            sent="Fri, 23 Oct 2026 09:00:00 +0200",
+        )
+        record, outcome = process_message(eml)
+        self.assertEqual(outcome, Outcome.NEW)
+        pkg.refresh_from_db()
+        self.assertEqual(pkg.state, Package.State.CANCELLED)
+        self.assertEqual(pkg.cancelled_on, date(2026, 10, 23))
+        self.assertFalse(Review.objects.filter(pk=review.pk).exists())
+
+    def test_marks_for_cancelled_and_returned_packages(self):
+        point = PickupPoint.objects.create(name="Counter", kind=PickupPoint.Kind.AMAZON_COUNTER)
+        pkg_cancelled = Package.objects.create(
+            pickup_point=point,
+            order_id="404-1111111-1111111",
+            state=Package.State.CANCELLED,
+            ordered_on=date(2026, 10, 13),
+            cancelled_on=date(2026, 10, 23),
+        )
+        pkg_returned = Package.objects.create(
+            pickup_point=point,
+            order_id="404-2222222-2222222",
+            state=Package.State.RETURNED,
+            ordered_on=date(2026, 10, 10),
+            returned_on=date(2026, 10, 20),
+        )
+        self.assertEqual(_marks(pkg_cancelled, date(2026, 10, 25)),
+                         [(date(2026, 10, 23), "cancelled", "")])
+        self.assertEqual(_marks(pkg_returned, date(2026, 10, 25)),
+                         [(date(2026, 10, 20), "returned", "")])
+
 

@@ -341,6 +341,26 @@ chip behind the open card stops lying.{% endcomment %}
       background: color-mix(in srgb, var(--muted) 10%, transparent);
     }
     .pkg.is-delivered::before { content: '🏠 '; }
+    /* Cancelled: distinct from delivered/picked. Danger tone with line-through and cross. */
+    .pkg.is-cancelled {
+      color: var(--danger);
+      background: color-mix(in srgb, var(--danger) 10%, transparent);
+      text-decoration: line-through;
+    }
+    .pkg.is-cancelled::before {
+      content: '✕ ';
+      text-decoration: none;
+      display: inline-block;
+    }
+    /* Returned: distinct from delivered/picked. Accent tone with return arrow. */
+    .pkg.is-returned {
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+    }
+    .pkg.is-returned::before {
+      content: '↩ ';
+      display: inline-block;
+    }
 
     /* Overflow chips: hidden on desktop when there are more than fit in a cell */
     .day .pkg.pkg-extra { display: none; }
@@ -659,6 +679,8 @@ chip behind the open card stops lying.{% endcomment %}
       }
       .view-month .day .pkg.is-picked,
       .view-month .day .pkg.is-delivered { background: var(--muted); opacity: .45; }
+      .view-month .day .pkg.is-cancelled { background: var(--danger); opacity: .45; }
+      .view-month .day .pkg.is-returned { background: var(--accent); opacity: .45; }
 
       /* Fortnight = the reading view: days stack into an agenda,
          chips get the full width and a finger-sized hit area. */

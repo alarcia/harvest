@@ -374,6 +374,7 @@ class Package(models.Model):
         # email (or its estimated day) is the end of the line.
         DELIVERED = "delivered", "Delivered"
         RETURNED = "returned", "Returned"
+        CANCELLED = "cancelled", "Cancelled"
 
     class ItemKind(models.TextChoices):
         """What is actually waiting at the counter. Only Pepe y Dalda makes
@@ -421,6 +422,8 @@ class Package(models.Model):
     ordered_on = models.DateField(null=True, blank=True)
     shipped_on = models.DateField(null=True, blank=True)
     picked_up_on = models.DateField(null=True, blank=True)
+    returned_on = models.DateField(null=True, blank=True)
+    cancelled_on = models.DateField(null=True, blank=True)
 
     # Vine (free-in-exchange-for-a-review) items are flagged at ingestion from
     # the printed total (€0.00, or exactly the EU import surcharge — see

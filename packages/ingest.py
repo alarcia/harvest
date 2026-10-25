@@ -94,6 +94,7 @@ _RANK = {
     Package.State.PICKED_UP: 3,
     Package.State.DELIVERED: 3,
     Package.State.RETURNED: 3,
+    Package.State.CANCELLED: 3,
 }
 
 
@@ -575,6 +576,26 @@ def _apply(parsed):
             if pkg is None:
                 pkg = Package.objects.filter(order_id__in=order_ids, shipment_id="").exclude(pk__in=already_matched_pks).first()
             if pkg is None:
+                # If this item already belongs to another tracked package at this destination
+                # (e.g. an unlisted sibling in a consolidated delivery from another order),
+                # do not create a duplicate package with this email's order ID.
+                if point is not None:
+                    sibling_qs = Package.objects.filter(pickup_point=point).exclude(order_id__in=order_ids).exclude(pk__in=already_matched_pks)
+                    has_sibling = False
+                    if item_asin:
+                        has_sibling = any(
+                            _RANK[p.state] < _RANK[Package.State.PICKED_UP]
+                            or (p.actual_arrival and abs((p.actual_arrival - sent_on).days) <= 1)
+                            for p in sibling_qs.filter(asin=item_asin)
+                        )
+                    if not has_sibling and item_title:
+                        has_sibling = any(
+                            _RANK[p.state] < _RANK[Package.State.PICKED_UP]
+                            or (p.actual_arrival and abs((p.actual_arrival - sent_on).days) <= 1)
+                            for p in sibling_qs.filter(description=item_title)
+                        )
+                    if has_sibling:
+                        continue
                 if point is None:
                     continue
                 pkg = Package(
@@ -592,7 +613,7 @@ def _apply(parsed):
             else:
                 pkg.shipped_on = pkg.shipped_on or sent_on
 
-            if parsed.shipment_id:
+            if parsed.shipment_id and (not pkg.order_id or pkg.order_id in order_ids):
                 pkg.shipment_id = parsed.shipment_id
 
             if not pkg.description:
@@ -605,9 +626,10 @@ def _apply(parsed):
                 pkg.estimated_arrival = parsed.estimated_arrival
                 pkg.estimated_arrival_end = parsed.estimated_arrival_end
 
-            if pkg.is_vine:
-                was_any_vine = True
-            _apply_cost(pkg, parsed, authoritative=(kind == EmailKind.SHIPPED))
+            if not pkg.order_id or pkg.order_id in order_ids:
+                if pkg.is_vine:
+                    was_any_vine = True
+                _apply_cost(pkg, parsed, authoritative=(kind == EmailKind.SHIPPED))
             pkg.save()
             already_matched_pks.add(pkg.pk)
             _sync_review_for_package(pkg)
@@ -915,6 +937,34 @@ def _apply(parsed):
         matches = _find_packages(parsed)
         pkg = matches[0] if matches else None
         return pkg, "Recordatorio de recogida: sin cambios"
+
+    if kind == EmailKind.CANCELLED:
+        matches = _find_packages(parsed)
+        cancelled_day = sent_on or timezone.localdate()
+        if not matches:
+            if point is None:
+                point = PickupPoint.objects.filter(kind=PickupPoint.Kind.HOME).first()
+                if not point:
+                    point = PickupPoint.objects.create(name="Cancelado", kind=PickupPoint.Kind.HOME)
+            pkg = Package(
+                pickup_point=point,
+                order_id=parsed.order_id or "",
+                state=Package.State.CANCELLED,
+                cancelled_on=cancelled_day,
+            )
+            _fill(pkg, parsed)
+            pkg.save()
+            return pkg, "Pedido cancelado (nuevo registro)"
+
+        for pkg in matches:
+            pkg.state = Package.State.CANCELLED
+            pkg.cancelled_on = cancelled_day
+            _fill(pkg, parsed)
+            pkg.save()
+            review = getattr(pkg, "review", None)
+            if review is not None and review.status == Review.Status.PENDING:
+                review.delete()
+        return matches[0], "Pedido cancelado"
 
     if kind == EmailKind.REVIEW_PUBLISHED:
         return _apply_review_published(parsed, sent_on)

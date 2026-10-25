@@ -78,6 +78,7 @@ class EmailKind(Enum):
     PICKED_UP = "picked_up"
     DELIVERED = "delivered"  # home delivery completed (see _KIND_PATTERNS note)
     NO_LONGER_AVAILABLE = "no_longer_available"
+    CANCELLED = "cancelled"
     PICKUP_REMINDER = "pickup_reminder"  # "sigue en espera": a nag, no new info
     REVIEW_PUBLISHED = "review_published"
     # The only non-Amazon template: Pepe y Dalda's "Recepción paquete" /
@@ -170,6 +171,11 @@ class ParsedEmail:
 # Every pattern matches a full verb phrase, never the bare "Entregado"
 # step-tracker label that sits in every email as a progress dot.
 _KIND_PATTERNS = [
+    (EmailKind.CANCELLED,
+     r"producto cancelado para tu amazon\.es pedido"
+     r"|tu producto se ha cancelado"
+     r"|hemos cancelado el producto"
+     r"|pedido cancelado"),
     (EmailKind.NO_LONGER_AVAILABLE, r"ya no está disponible para (?:su|la) recogida"),
     # A reminder that a package is *still* waiting ("El paquete está a la espera
     # de ser recogido", subject "Recordatorio: Paquete en espera de recogida").
@@ -253,6 +259,7 @@ _REQUIRED = {
     EmailKind.PICKED_UP: ("order_id", "picked_up_on"),
     EmailKind.DELIVERED: ("order_id", "sent_at"),
     EmailKind.NO_LONGER_AVAILABLE: ("order_id",),
+    EmailKind.CANCELLED: ("order_id", "sent_at"),
     EmailKind.PICKUP_REMINDER: (),  # informational nag: recognize it, ignore it
     # item_title/review_id are the matching keys the reviews module needs
     # (audited against fixture 010: both are always present).

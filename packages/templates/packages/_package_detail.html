@@ -50,6 +50,12 @@
       {% if package.picked_up_on %}
         <span><b>Recogido</b> el {{ package.picked_up_on|date:"j" }} de {{ package.picked_up_on|date:"F" }}</span>
       {% endif %}
+      {% if package.cancelled_on %}
+        <span><b>Cancelado</b> el {{ package.cancelled_on|date:"j" }} de {{ package.cancelled_on|date:"F" }}</span>
+      {% endif %}
+      {% if package.returned_on %}
+        <span><b>Devuelto</b> el {{ package.returned_on|date:"j" }} de {{ package.returned_on|date:"F" }}</span>
+      {% endif %}
       {% if package.pickup_code %}
         <span><b>Código de recogida</b> <code class="modal-code">{{ package.pickup_code }}</code></span>
       {% endif %}
