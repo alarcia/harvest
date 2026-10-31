@@ -3210,7 +3210,7 @@ class CalendarViewTests(TestCase):
             description="Colchón", shipped_on=today,
             estimated_arrival=today + timedelta(days=3),
         )
-        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+        html = self.client.get(reverse("home") + "?view=fortnight", HTTP_HX_REQUEST="true").content
         self.assertEqual(html.count(b'is-shipped"'), 1)
         self.assertEqual(html.count(b'is-estimated"'), 1)
 

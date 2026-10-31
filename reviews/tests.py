@@ -233,6 +233,19 @@ class ReviewsListViewTests(TestCase):
         self.assertNotIn(rev_vine, res_non_vine.context["pendientes"])
         self.assertContains(res_non_vine, 'class="rev is-non-vine"')
 
+    def test_non_vine_multi_item_reviews_appear_when_picked_up(self):
+        # A multi-item non-Vine order has packages that each get ordered_on.
+        # Once picked up, each pending review must appear in the non-Vine view.
+        order_day = self._in_current(1)
+        pkg1 = _package(ordered_on=order_day, state=Package.State.PICKED_UP, is_vine=False)
+        pkg2 = _package(ordered_on=order_day, state=Package.State.PICKED_UP, is_vine=False)
+        r1 = Review.objects.create(package=pkg1, product_title="Tesla Alfombrillas", status=Review.Status.PENDING)
+        r2 = Review.objects.create(package=pkg2, product_title="Tesla Hub", status=Review.Status.PENDING)
+
+        response = self._get(non_vine="1")
+        self.assertIn(r1, response.context["pendientes"])
+        self.assertIn(r2, response.context["pendientes"])
+
     def test_the_badge_never_counts_a_package_he_does_not_have(self):
         # A due_on typed into the admin on an unreceived row would otherwise
         # nag from the top bar with nothing on the list to act on.
