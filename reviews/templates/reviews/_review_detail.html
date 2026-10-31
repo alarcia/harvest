@@ -149,6 +149,15 @@ For closed reviews (approved/published), it displays the read-only review with c
                 hx-get="{% url 'review_approve' review.pk %}"
                 hx-target="#modal" hx-swap="innerHTML">Ya la he publicado en Amazon</button>
       {% endif %}
+      {% if can_delete %}
+        <div class="rev-delete-row">
+          <button type="button" class="btn-delete-review"
+                  hx-get="{% url 'review_delete' review.pk %}"
+                  hx-target="#modal" hx-swap="innerHTML">
+            Eliminar reseña
+          </button>
+        </div>
+      {% endif %}
     </div>
 
     {% if can_edit %}

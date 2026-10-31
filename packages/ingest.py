@@ -341,6 +341,8 @@ def _sync_review_for_package(pkg):
     manual pickup confirmation.
     """
     existing = getattr(pkg, "review", None)
+    if pkg.state in (Package.State.CANCELLED, Package.State.RETURNED):
+        return ""
     is_shop_notice = (pkg.pickup_point.kind == PickupPoint.Kind.PEPE_Y_DALDA
                       and not pkg.order_id)
     if not is_shop_notice and existing is None:

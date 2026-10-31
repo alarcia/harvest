@@ -435,6 +435,7 @@ def _review_card(
         # Only a draft with written text can be closed by hand: there has to be something
         # written before "ya la he publicado" can mean anything.
         "can_approve": has_written_draft and is_draft,
+        "can_delete": not review.is_vine and can_edit,
         "active_tab": active_tab,
         "stars": STAR_VALUES,
         "rating": rating if rating is not None else review.rating,
@@ -589,6 +590,30 @@ def review_approve(request, pk):
         return response
 
     return render(request, "reviews/_review_approve.html", {"review": review})
+
+
+def review_delete(request, pk):
+    """Confirmation and deletion for non-Vine reviews that won't be written
+    (e.g. returned purchases). Removes the review row so it drops out of the
+    working lists entirely. Preserves the package row."""
+    review = get_object_or_404(
+        Review.objects.select_related("package", "package__pickup_point"), pk=pk
+    )
+    if review.is_vine or review.status not in Review.EDITABLE:
+        raise Http404("Only pending non-Vine reviews can be deleted")
+
+    if request.method == "POST":
+        review.delete()
+        response = HttpResponse(
+            '<script>'
+            'const b=document.querySelector(".modal-slot .modal-back");'
+            'if(b){closeModal(b)}'
+            '</script>'
+        )
+        response["HX-Trigger"] = "package-updated"
+        return response
+
+    return render(request, "reviews/_review_delete.html", {"review": review})
 
 
 def review_suggest(request, pk):

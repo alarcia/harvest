@@ -413,6 +413,30 @@ section in place, no URL change.{% endcomment %}
     /* A dot saying there are notes behind this button, without a count. */
     .rev-dot { color: var(--accent); font-size: .6em; align-self: center; }
 
+    .rev-delete-row {
+      display: flex;
+      justify-content: center;
+      margin-top: 1rem;
+      padding-top: .75rem;
+      border-top: 1px dashed var(--border);
+    }
+    .btn-delete-review {
+      padding: .32rem .75rem;
+      font-size: .75rem;
+      font-weight: 500;
+      color: var(--danger);
+      background: color-mix(in srgb, var(--danger) 8%, transparent);
+      border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background .15s ease, border-color .15s ease;
+    }
+    .btn-delete-review:hover, .btn-delete-review:active {
+      background: color-mix(in srgb, var(--danger) 16%, transparent);
+      border-color: var(--danger);
+    }
+
     /* ---- the suggested-draft door ----
        The one action in the app whose text isn't written by the user, so it
        gets a mark of its own: a spark, and a gradient the app's warm palette

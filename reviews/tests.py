@@ -976,6 +976,99 @@ class ReviewApproveTests(TestCase):
         self.assertEqual(self.client.post(self.url).status_code, 404)
 
 
+class ReviewDeleteTests(TestCase):
+    def setUp(self):
+        self.non_vine_pkg = _package(ordered_on=timezone.localdate(), is_vine=False, description="Cables Tesla")
+        self.non_vine_review = Review.objects.create(
+            package=self.non_vine_pkg,
+            product_title="Cables Tesla",
+            status=Review.Status.PENDING,
+        )
+        self.url = reverse("review_delete", args=[self.non_vine_review.pk])
+
+    def test_button_shown_on_pending_non_vine_modal(self):
+        detail_url = reverse("review_detail", args=[self.non_vine_review.pk])
+        response = self.client.get(detail_url)
+        self.assertTrue(response.context["can_delete"])
+        self.assertContains(response, "Eliminar reseña")
+        self.assertContains(response, self.url)
+
+    def test_button_shown_on_draft_non_vine_modal(self):
+        self.non_vine_review.status = Review.Status.DRAFT
+        self.non_vine_review.title = "Buen cable"
+        self.non_vine_review.rating = 5
+        self.non_vine_review.text = "Carga rápido"
+        self.non_vine_review.save()
+        detail_url = reverse("review_detail", args=[self.non_vine_review.pk])
+        response = self.client.get(detail_url)
+        self.assertTrue(response.context["can_delete"])
+        self.assertContains(response, "Eliminar reseña")
+
+    def test_button_not_shown_on_vine_modal(self):
+        vine_pkg = _package(ordered_on=timezone.localdate(), is_vine=True, description="Vine item")
+        vine_review = Review.objects.create(
+            package=vine_pkg,
+            product_title="Vine item",
+            status=Review.Status.PENDING,
+        )
+        detail_url = reverse("review_detail", args=[vine_review.pk])
+        response = self.client.get(detail_url)
+        self.assertFalse(response.context["can_delete"])
+        self.assertNotContains(response, reverse("review_delete", args=[vine_review.pk]))
+
+    def test_button_not_shown_on_approved_or_published_non_vine_modal(self):
+        for status in [Review.Status.APPROVED, Review.Status.PUBLISHED]:
+            with self.subTest(status=status):
+                self.non_vine_review.status = status
+                self.non_vine_review.save()
+                detail_url = reverse("review_detail", args=[self.non_vine_review.pk])
+                response = self.client.get(detail_url)
+                self.assertFalse(response.context["can_delete"])
+                self.assertNotContains(response, self.url)
+
+    def test_get_asks_before_deleting(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "¿Eliminar reseña?")
+        self.assertContains(response, "Cables Tesla")
+        self.assertContains(response, "Cancelar")
+        self.assertContains(response, "Sí, eliminar reseña")
+        # Review still exists in DB
+        self.assertTrue(Review.objects.filter(pk=self.non_vine_review.pk).exists())
+
+    def test_post_deletes_review_and_triggers_refresh(self):
+        pkg_pk = self.non_vine_pkg.pk
+        response = self.client.post(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["HX-Trigger"], "package-updated")
+        self.assertIn(b"closeModal", response.content)
+        # Review is deleted from DB
+        self.assertFalse(Review.objects.filter(pk=self.non_vine_review.pk).exists())
+        # Package is preserved intact
+        self.assertTrue(Package.objects.filter(pk=pkg_pk).exists())
+
+    def test_vine_reviews_cannot_be_deleted(self):
+        vine_pkg = _package(ordered_on=timezone.localdate(), is_vine=True)
+        vine_review = Review.objects.create(
+            package=vine_pkg,
+            product_title="Vine item",
+            status=Review.Status.PENDING,
+        )
+        url = reverse("review_delete", args=[vine_review.pk])
+        self.assertEqual(self.client.get(url).status_code, 404)
+        self.assertEqual(self.client.post(url).status_code, 404)
+        self.assertTrue(Review.objects.filter(pk=vine_review.pk).exists())
+
+    def test_approved_or_published_reviews_cannot_be_deleted(self):
+        for status in [Review.Status.APPROVED, Review.Status.PUBLISHED]:
+            with self.subTest(status=status):
+                self.non_vine_review.status = status
+                self.non_vine_review.save()
+                self.assertEqual(self.client.get(self.url).status_code, 404)
+                self.assertEqual(self.client.post(self.url).status_code, 404)
+                self.assertTrue(Review.objects.filter(pk=self.non_vine_review.pk).exists())
+
+
 class StuckApprovedReviewTests(TestCase):
     def setUp(self):
         self.today = timezone.localdate()

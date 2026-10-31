@@ -8,4 +8,5 @@ urlpatterns = [
     path("<int:pk>/borrador/", views.review_edit, name="review_edit"),
     path("<int:pk>/propuesta/", views.review_suggest, name="review_suggest"),
     path("<int:pk>/publicada/", views.review_approve, name="review_approve"),
+    path("<int:pk>/eliminar/", views.review_delete, name="review_delete"),
 ]

@@ -1,0 +1,34 @@
+{% comment %}Confirmation step for "eliminar reseña", in the same #modal slot the
+review card lives in. Only available for non-Vine pending/draft reviews (e.g. returned
+items). Deleting the review row leaves the package row intact.{% endcomment %}
+<div class="modal-back" onclick="if (event.target === this) closeModal(this)">
+  <div class="modal-card">
+    <button type="button" class="modal-prev" aria-label="Volver a la reseña"
+            hx-get="{% url 'review_detail' review.pk %}"
+            hx-target="#modal" hx-swap="innerHTML">‹</button>
+    <button type="button" class="modal-x" aria-label="Cerrar"
+            onclick="closeModal(this)">×</button>
+    <div class="modal-head">
+      {% if review.package.image_url %}
+        <img class="modal-thumb" src="{{ review.package.image_url }}" alt="" onclick="this.classList.toggle('expanded')">
+      {% endif %}
+      <h2>¿Eliminar reseña?</h2>
+    </div>
+    <p class="confirm-item">{{ review.product_title|default:"Producto desconocido" }}</p>
+    {% if review.title %}<p class="rev-headline">«{{ review.title }}»</p>{% endif %}
+    <p class="modal-note">
+      Esta reseña no-Vine se eliminará y dejará de aparecer en la lista de pendientes (pensado para productos que has devuelto). Esta acción no se puede deshacer.
+    </p>
+    <form hx-post="{% url 'review_delete' review.pk %}"
+          hx-target="#modal" hx-swap="innerHTML">
+      {% csrf_token %}
+      <div class="confirm-actions">
+        <button type="button" class="btn-ghost"
+                hx-get="{% url 'review_detail' review.pk %}"
+                hx-target="#modal" hx-swap="innerHTML">Cancelar</button>
+        <button type="submit" class="btn-danger">Sí, eliminar reseña</button>
+      </div>
+    </form>
+  </div>
+</div>
+
