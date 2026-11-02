@@ -37,18 +37,20 @@
       {% if preview_leaves_day %}
         <span><b>Recoger antes del (previsión)</b> {{ preview_leaves_day|date:"j" }} de {{ preview_leaves_day|date:"F" }}</span>
       {% endif %}
-      {% if package.actual_arrival %}
+      {% if package.actual_arrival and package.state != "picked_up" %}
         {% if package.state == "delivered" %}
           <span><b>Entregado</b> el {{ package.actual_arrival|date:"j" }} de {{ package.actual_arrival|date:"F" }}</span>
         {% else %}
           <span><b>En el punto desde</b> el {{ package.actual_arrival|date:"j" }} de {{ package.actual_arrival|date:"F" }}</span>
         {% endif %}
       {% endif %}
-      {% if package.deadline %}
+      {% if package.deadline and package.state != "picked_up" and package.state != "delivered" %}
         <span><b>Recoger antes del</b> {{ package.deadline|date:"j" }} de {{ package.deadline|date:"F" }}</span>
       {% endif %}
       {% if package.picked_up_on %}
         <span><b>Recogido</b> el {{ package.picked_up_on|date:"j" }} de {{ package.picked_up_on|date:"F" }}</span>
+      {% elif package.state == "picked_up" and package.actual_arrival %}
+        <span><b>Recogido</b> el {{ package.actual_arrival|date:"j" }} de {{ package.actual_arrival|date:"F" }}</span>
       {% endif %}
       {% if package.cancelled_on %}
         <span><b>Cancelado</b> el {{ package.cancelled_on|date:"j" }} de {{ package.cancelled_on|date:"F" }}</span>
@@ -92,7 +94,7 @@
         <p class="modal-note">Pepe y Dalda cierra {{ closed_days }}.</p>
       {% endif %}
     {% endif %}
-    {% if package.barcode_url %}
+    {% if package.barcode_url and package.state != "picked_up" and package.state != "delivered" %}
       <a class="modal-barcode" href="{{ package.barcode_url }}" target="_blank" rel="noopener">
         Ver código de barras de recogida ↗
       </a>

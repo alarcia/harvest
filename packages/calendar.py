@@ -498,32 +498,38 @@ _chips = get_chips
 
 
 def day_chips(chips, day):
-    """One day's chips, sorted by urgency, with same-day pickups and same-day,
-    same-address deliveries each collapsed into a recap chip. A pickup trip
-    empties several points at once, so *every* pickup that day folds into one
-    "N productos" chip (see picked_detail). Deliveries instead fold per
-    address: two homes getting packages the same day is rare, and each is a
-    different person to tell "this is what arrived (or should arrive)", so
-    they stay separate chips — only deliveries to the *same* home collapse
-    (see delivered_detail)."""
+    """One day's chips, sorted by urgency, with same-day, same-point pickups
+    and same-day, same-address deliveries each collapsed into a recap chip.
+    Pickups and deliveries fold per pickup point / address: different points
+    or homes stay separate chips pointing to package_detail — only multiple
+    pickups at the *same* point or deliveries to the *same* home collapse
+    into a recap chip (see picked_detail and delivered_detail)."""
     todays = [c for c in chips if c["date"] == day]
-    picked = [c for c in todays if c["kind"] == "picked"]
-    if len(picked) > 1:
+    picked_by_point = defaultdict(list)
+    for c in todays:
+        if c["kind"] == "picked":
+            picked_by_point[c["point_id"]].append(c)
+    if any(len(group) > 1 for group in picked_by_point.values()):
         rest = [c for c in todays if c["kind"] != "picked"]
-        todays = rest + [{
-            "date": day,
-            "kind": "picked",
-            "tag": STATE_TAGS["picked"],
-            "note": "",
-            "label": f"{len(picked)} productos",
-            # Amazon wins a mixed trip (it's the bulk of any haul); a day of
-            # pickups from one other source keeps that source's own colour
-            # rather than falling back to the "Otros" grape.
-            "source": ("amazon" if any(c["source"] == "amazon" for c in picked)
-                       else picked[0]["source"]),
-            "detail_url": reverse("picked_detail", args=[day.isoformat()]),
-            "closed": False,  # a pickup already made: nothing to warn about
-        }]
+        collapsed = []
+        for point_id, group in picked_by_point.items():
+            if len(group) > 1:
+                collapsed.append({
+                    "date": day,
+                    "kind": "picked",
+                    "tag": STATE_TAGS["picked"],
+                    "note": "",
+                    "label": f"{len(group)} productos",
+                    "source": group[0]["source"],
+                    "point_id": point_id,
+                    "point_kind": group[0].get("point_kind"),
+                    "point_name": group[0].get("point_name"),
+                    "detail_url": reverse("picked_detail", args=[day.isoformat(), point_id]),
+                    "closed": False,
+                })
+            else:
+                collapsed.extend(group)
+        todays = rest + collapsed
 
     delivered_by_point = defaultdict(list)
     for c in todays:

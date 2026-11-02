@@ -21,12 +21,16 @@
     <ul class="picked-list">
       {% for it in items %}
         <li class="picked-item">
-          {% if it.package.image_url %}
-            <img class="picked-thumb" src="{{ it.package.image_url }}" alt="">
-          {% endif %}
-          <div class="picked-body">
-            <span class="picked-name">{{ it.label }}{% if it.package.is_vine %} <i class="vine-badge">Vine</i>{% endif %}</span>
-          </div>
+          <button type="button" class="picked-item-btn"
+                  hx-get="{% url 'package_detail' it.package.pk %}?from_day={{ day|date:'Y-m-d' }}"
+                  hx-target="#modal" hx-swap="innerHTML">
+            {% if it.package.image_url %}
+              <img class="picked-thumb" src="{{ it.package.image_url }}" alt="">
+            {% endif %}
+            <div class="picked-body">
+              <span class="picked-name">{{ it.label }}{% if it.package.is_vine %} <i class="vine-badge">Vine</i>{% endif %}</span>
+            </div>
+          </button>
         </li>
       {% empty %}
         <li class="picked-item"><span class="picked-name">Nada que mostrar</span></li>

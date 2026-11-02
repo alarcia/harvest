@@ -11,22 +11,31 @@
     <div class="modal-head">
       <h2>Recogido el {{ day|date:"j" }} de {{ day|date:"F" }}</h2>
     </div>
+    {% if point_label %}
+      <p class="modal-point">
+        {% if point_maps_url %}
+          <a href="{{ point_maps_url }}" target="_blank" rel="noopener" class="point-maps-link" title="Ver en Google Maps">{{ point_label }} ↗</a>
+        {% else %}
+          {{ point_label }}
+        {% endif %}
+      </p>
+    {% endif %}
     <ul class="picked-list">
       {% for it in items %}
         <li class="picked-item">
-          {% if it.package.image_url %}
-            <img class="picked-thumb" src="{{ it.package.image_url }}" alt="">
-          {% endif %}
-          <div class="picked-body">
-            <span class="picked-name">{{ it.label }}{% if it.package.is_vine %} <i class="vine-badge">Vine</i>{% endif %}</span>
-            <span class="picked-point {{ it.source }}">
-              {% if it.point_maps_url %}
-                <a href="{{ it.point_maps_url }}" target="_blank" rel="noopener" class="point-maps-link" title="Ver en Google Maps">{{ it.point_label }} ↗</a>
-              {% else %}
-                {{ it.point_label }}
+          <button type="button" class="picked-item-btn"
+                  hx-get="{% url 'package_detail' it.package.pk %}?from_day={{ day|date:'Y-m-d' }}"
+                  hx-target="#modal" hx-swap="innerHTML">
+            {% if it.package.image_url %}
+              <img class="picked-thumb" src="{{ it.package.image_url }}" alt="">
+            {% endif %}
+            <div class="picked-body">
+              <span class="picked-name">{{ it.label }}{% if it.package.is_vine %} <i class="vine-badge">Vine</i>{% endif %}</span>
+              {% if not point_label %}
+                <span class="picked-point {{ it.source }}">{{ it.point_label }}</span>
               {% endif %}
-            </span>
-          </div>
+            </div>
+          </button>
         </li>
       {% empty %}
         <li class="picked-item"><span class="picked-name">Nada que mostrar</span></li>

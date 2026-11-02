@@ -10,6 +10,7 @@ urlpatterns = [
     path("packages/<int:pk>/recogido/", views.confirm_pickup, name="confirm_pickup"),
     path("packages/<int:pk>/llegado/", views.confirm_arrival, name="confirm_arrival"),
     path("picked/<str:day>/", views.picked_detail, name="picked_detail"),
+    path("picked/<str:day>/<int:point_id>/", views.picked_detail, name="picked_detail"),
     path("delivered/<str:day>/<int:point_id>/", views.delivered_detail, name="delivered_detail"),
     path("day/<str:day>/", views.day_detail, name="day_detail"),
     path("stats/", views.stats_modal, name="stats_modal"),

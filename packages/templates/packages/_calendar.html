@@ -417,6 +417,24 @@ chip behind the open card stops lying.{% endcomment %}
     /* Consolidated-pickup card: everything that came home on one day. */
     .picked-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .75rem; }
     .picked-item { display: flex; align-items: center; gap: .7rem; }
+    .picked-item-btn {
+      all: unset;
+      display: flex;
+      align-items: center;
+      gap: .7rem;
+      width: 100%;
+      text-align: left;
+      cursor: pointer;
+      box-sizing: border-box;
+      border-radius: 8px;
+      padding: .25rem;
+      margin: -.25rem;
+      transition: background .12s ease;
+    }
+    .picked-item-btn:hover,
+    .picked-item-btn:focus-visible {
+      background: color-mix(in srgb, var(--fg) 6%, transparent);
+    }
     .picked-thumb {
       flex: none;
       width: 2.6rem;

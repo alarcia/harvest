@@ -349,17 +349,17 @@ def confirm_arrival(request, pk):
     })
 
 
-def picked_detail(request, day):
-    """The consolidated pickup chip's card: every item picked up on one day.
-
-    A single trip can empty several counters and lockers, so this lists them
-    all — whatever point each sat in — the way tapping one chip should reveal
-    the whole day's haul."""
+def picked_detail(request, day, point_id=None):
+    """The consolidated pickup chip's card: every item picked up on one day
+    at the given point (or across all points if point_id is None)."""
     picked_day = calendar.parse_anchor(day, None)
-    packages = (Package.objects
-                .filter(state=Package.State.PICKED_UP, picked_up_on=picked_day)
-                .select_related("pickup_point")
-                .order_by("pickup_point__name", "pk")) if picked_day else []
+    qs = Package.objects.filter(state=Package.State.PICKED_UP).select_related("pickup_point")
+    if point_id is not None:
+        qs = qs.filter(pickup_point_id=point_id)
+    packages = [
+        pkg for pkg in qs.order_by("pickup_point__name", "pk")
+        if picked_day and (pkg.picked_up_on or pkg.actual_arrival) == picked_day
+    ] if picked_day else []
     items = [{
         "package": pkg,
         "label": calendar.package_label(pkg),
@@ -367,8 +367,12 @@ def picked_detail(request, day):
         "point_maps_url": pkg.pickup_point.maps_url,
         "source": calendar.source_family(pkg.pickup_point),
     } for pkg in packages]
+    point_label = calendar.point_label(packages[0].pickup_point) if packages and point_id is not None else ""
+    point_maps_url = packages[0].pickup_point.maps_url if packages and point_id is not None else ""
     return render(request, "packages/_picked_detail.html", {
         "day": picked_day,
+        "point_label": point_label,
+        "point_maps_url": point_maps_url,
         "items": items,
         "back_day": calendar.parse_anchor(request.GET.get("from_day"), None),
     })

@@ -3078,22 +3078,36 @@ class CalendarViewTests(TestCase):
         self.assertIn("Entrega a domicilio · Casa de Rosa".encode(), html)
         self.assertNotIn("lliça D".encode(), html)
 
-    def test_same_day_pickups_collapse_into_one_chip(self):
-        # Two things picked up the same day, at different points: the month view
-        # has no room for a chip each, so they become one "N productos" recap
-        # chip that opens the day's consolidated card.
+    def test_same_day_same_point_pickups_collapse_into_one_chip(self):
+        # Two things picked up the same day, at the same point: they become
+        # one "N productos" recap chip that opens the consolidated card.
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER)
+        self._picked(counter, "Mantel de flores", today)
+        self._picked(counter, "Funda de móvil", today)
+
+        html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
+        self.assertEqual(html.count(b'is-picked"'), 1)  # one chip, not two
+        self.assertIn(b"2 productos", html)
+        self.assertIn(reverse("picked_detail", args=[today.isoformat(), counter.pk]).encode(), html)
+
+    def test_same_day_different_point_pickups_stay_separate(self):
+        # Two different pickup points on the same day stay separate chips,
+        # exactly like deliveries to different homes.
         today = timezone.localdate()
         counter = self._point("Amazon Counter - Les Mesures",
                               PickupPoint.Kind.AMAZON_COUNTER)
         locker = self._point("Amazon Locker - cebolla",
                              PickupPoint.Kind.AMAZON_LOCKER)
-        self._picked(counter, "Mantel de flores", today)
-        self._picked(locker, "Funda de móvil", today)
+        pkg1 = self._picked(counter, "Mantel de flores", today)
+        pkg2 = self._picked(locker, "Funda de móvil", today)
 
         html = self.client.get(reverse("home"), HTTP_HX_REQUEST="true").content
-        self.assertEqual(html.count(b'is-picked"'), 1)  # one chip, not two
-        self.assertIn(b"2 productos", html)
-        self.assertIn(reverse("picked_detail", args=[today.isoformat()]).encode(), html)
+        self.assertEqual(html.count(b'is-picked"'), 2)
+        self.assertIn(reverse("package_detail", args=[pkg1.pk]).encode(), html)
+        self.assertIn(reverse("package_detail", args=[pkg2.pk]).encode(), html)
+        self.assertNotIn(b"productos", html)
 
     def test_single_pickup_keeps_its_own_chip(self):
         today = timezone.localdate()
@@ -3114,13 +3128,23 @@ class CalendarViewTests(TestCase):
                               PickupPoint.Kind.AMAZON_COUNTER)
         locker = self._point("Amazon Locker - cebolla",
                              PickupPoint.Kind.AMAZON_LOCKER)
-        self._picked(counter, "Mantel de flores", today)
-        self._picked(locker, "Funda de móvil", today)
+        pkg1 = self._picked(counter, "Mantel de flores", today)
+        pkg2 = self._picked(locker, "Funda de móvil", today)
 
+        # 1-arg URL returns all items of that day across points
         html = self.client.get(
             reverse("picked_detail", args=[today.isoformat()])).content
         self.assertIn(b"Mantel de flores", html)
         self.assertIn("Funda de móvil".encode(), html)
+        self.assertIn(reverse("package_detail", args=[pkg1.pk]).encode(), html)
+        self.assertIn(reverse("package_detail", args=[pkg2.pk]).encode(), html)
+
+        # 2-arg URL returns only items for that pickup point
+        html_counter = self.client.get(
+            reverse("picked_detail", args=[today.isoformat(), counter.pk])).content
+        self.assertIn(b"Mantel de flores", html_counter)
+        self.assertNotIn("Funda de móvil".encode(), html_counter)
+        self.assertIn(b"Les Mesures", html_counter)
 
     def _delivered(self, point, description, day):
         return Package.objects.create(
@@ -3161,14 +3185,63 @@ class CalendarViewTests(TestCase):
     def test_delivered_detail_lists_every_item_of_the_address(self):
         today = timezone.localdate()
         home = self._point("Rosa - Can Salgot", PickupPoint.Kind.HOME)
-        self._delivered(home, "Mantel de flores", today)
-        self._delivered(home, "Funda de móvil", today)
+        pkg1 = self._delivered(home, "Mantel de flores", today)
+        pkg2 = self._delivered(home, "Funda de móvil", today)
 
         html = self.client.get(
             reverse("delivered_detail", args=[today.isoformat(), home.pk])).content
         self.assertIn(b"Mantel de flores", html)
         self.assertIn("Funda de móvil".encode(), html)
         self.assertIn(b"Can Salgot", html)
+        self.assertIn(reverse("package_detail", args=[pkg1.pk]).encode(), html)
+        self.assertIn(reverse("package_detail", args=[pkg2.pk]).encode(), html)
+
+    def test_picked_up_package_detail_card_content(self):
+        # A picked-up package modal must display its status as Recogido,
+        # its Vine badge (if applicable), full description, expandable image,
+        # tracking/order/product links, and must NOT show active prompts like
+        # 'En el punto desde', 'Recoger antes del', or 'Ver código de barras'.
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER)
+        pkg = Package.objects.create(
+            pickup_point=counter,
+            state=Package.State.PICKED_UP,
+            picked_up_on=today,
+            actual_arrival=today,
+            deadline=today + timedelta(days=7),
+            barcode_url="https://amazon.es/barcode/test",
+            description="Altavoces Bluetooth Portátiles",
+            is_vine=True,
+            image_url="https://images-amazon.com/images/speaker.jpg",
+            order_id="404-1234567-8901234",
+            shipment_id="D01-9876543-2109876",
+            asin="B08XYZ1234",
+        )
+
+        response = self.client.get(reverse("package_detail", args=[pkg.pk]))
+        self.assertEqual(response.status_code, 200)
+        html = response.content
+
+        # Product details & status
+        self.assertIn("Altavoces Bluetooth Portátiles".encode(), html)
+        self.assertIn(b"Estado", html)
+        self.assertIn(b"Recogido", html)
+        self.assertIn(b"vine-badge", html)
+        self.assertIn(b"Vine", html)
+        self.assertIn(b"speaker.jpg", html)
+        self.assertIn(b"modal-thumb", html)
+
+        # Amazon links
+        self.assertIn(b"404-1234567-8901234", html)
+        self.assertIn(b"B08XYZ1234", html)
+        self.assertIn(b"ship-track", html)
+        self.assertIn(b"D01-9876543-2109876", html)
+
+        # No active pickup prompts
+        self.assertNotIn("En el punto desde".encode(), html)
+        self.assertNotIn("Recoger antes del".encode(), html)
+        self.assertNotIn("Ver código de barras de recogida".encode(), html)
 
     def test_unknown_item_shows_placeholder_not_boilerplate(self):
         # A delivered package whose only name is the "N productos | N.º de
