@@ -250,8 +250,11 @@ _REQUIRED = {
     EmailKind.ESTIMATE_UPDATED: ("order_id", "sent_at", "item_title",
                                  "estimated_arrival", "pickup_location"),
     EmailKind.OUT_FOR_DELIVERY: ("order_id", "sent_at", "estimated_arrival"),
+    # pickup_code is optional (2026-11-05): Amazon Counter emails sometimes
+    # omit both the 6-digit code and barcode image, directing the customer
+    # to present the code/barcode from the Amazon app.
     EmailKind.READY_FOR_PICKUP: ("order_id", "sent_at", "pickup_before",
-                                 "pickup_code", "pickup_location"),
+                                 "pickup_location"),
     # No pickup_before/pickup_code: the email genuinely doesn't carry them —
     # UPS gives neither a deadline nor the office in it, only the tracking
     # link the user has to open by hand (see Package.carrier_tracking_url).

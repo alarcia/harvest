@@ -716,8 +716,8 @@ class ParseEmailTests(SimpleTestCase):
             parse_email(msg.as_bytes())
 
     def test_recognized_template_missing_fields_fails_loudly(self):
-        # A ready-for-pickup where Amazon moved the deadline and code out of
-        # reach: the parse must fail naming the gaps, not half-succeed.
+        # A ready-for-pickup where Amazon omitted required fields like deadline
+        # and location: the parse must fail naming the gaps, not half-succeed.
         msg = EmailMessage()
         msg["Subject"] = "Paquete listo para recogida"
         msg["Message-ID"] = "<incomplete@example.com>"
@@ -728,7 +728,29 @@ class ParseEmailTests(SimpleTestCase):
         with self.assertRaisesMessage(ParseError, "missing") as ctx:
             parse_email(msg.as_bytes())
         self.assertIn("pickup_before", str(ctx.exception))
-        self.assertIn("pickup_code", str(ctx.exception))
+        self.assertIn("pickup_location", str(ctx.exception))
+
+    def test_ready_for_pickup_without_pickup_code(self):
+        # Amazon Counter notification omitting both the text code and barcode
+        msg = EmailMessage()
+        msg["Subject"] = "Paquete listo para recogida: recoger en Amazon Counter - Les Mesures antes del 12 de noviembre"
+        msg["Message-ID"] = "<no-code@example.com>"
+        msg["Date"] = "Thu, 5 Nov 2026 11:42:14 +0000"
+        msg.set_content(
+            "<html><body>"
+            "<p>El paquete está listo para su recogida</p>"
+            "<p>Recoge antes del 12 de noviembre</p>"
+            "<p>Amazon Counter - Les Mesures AVDA SALORIA, 30 BAJO LLEIDA , 25700</p>"
+            "<p>Pedido n.º 402-8238811-4873113</p>"
+            "</body></html>",
+            subtype="html",
+        )
+        parsed = parse_email(msg.as_bytes())
+        self.assertEqual(parsed.kind, EmailKind.READY_FOR_PICKUP)
+        self.assertEqual(parsed.order_id, "402-8238811-4873113")
+        self.assertEqual(parsed.pickup_before, date(2026, 11, 12))
+        self.assertIsNone(parsed.pickup_code)
+        self.assertIsNone(parsed.barcode_url)
 
 
 class IngestTests(TestCase):
