@@ -152,14 +152,13 @@ AWAITING_PICKUP_KINDS = frozenset({"waiting", "deadline", "leaves", "action_need
 _AWAITING_PICKUP_KINDS = AWAITING_PICKUP_KINDS
 
 # Points whose pickups no email will ever confirm, so the user closes them
-# by hand from the card: a carrier's office (Amazon abandons that lifecycle
-# the moment the delivery fails) and Pepe y Dalda — whether the shop's own
-# notice put the package there (that email is the whole correspondence) or an
-# Amazon order was addressed to its counter, which Amazon signs off as
-# "entregado" and then goes quiet. The alt store stays out — it has no emails
-# at all, so it's manual end to end and lives in the admin.
+# by hand from the card: any non-Amazon pickup point (a carrier's office,
+# Pepe y Dalda, or an alternative store). Amazon locker/counter pickups close
+# themselves from the "Se ha recogido" email.
 MANUAL_PICKUP_KINDS = frozenset({
-    PickupPoint.Kind.CARRIER, PickupPoint.Kind.PEPE_Y_DALDA,
+    PickupPoint.Kind.ALT_STORE,
+    PickupPoint.Kind.CARRIER,
+    PickupPoint.Kind.PEPE_Y_DALDA,
 })
 _MANUAL_PICKUP_KINDS = MANUAL_PICKUP_KINDS
 
@@ -658,9 +657,10 @@ _group_day_chips = group_day_chips
 
 def can_confirm_pickup(pkg):
     """Whether the card offers the manual "ya lo he recogido" (see
-    confirm_pickup). Only for the points in MANUAL_PICKUP_KINDS: everything
-    else keeps closing itself from email, and a manual button there would only
-    invite closing a package the email would have closed correctly anyway."""
+    confirm_pickup). Only for non-Amazon pickups in MANUAL_PICKUP_KINDS:
+    everything else keeps closing itself from email, and a manual button
+    there would only invite closing a package the email would have closed
+    correctly anyway."""
     return (pkg.state == Package.State.AWAITING_PICKUP
             and pkg.pickup_point.kind in MANUAL_PICKUP_KINDS)
 

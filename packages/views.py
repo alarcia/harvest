@@ -227,13 +227,9 @@ def confirm_pickup(request, pk):
     """Manual "ya lo he recogido", for the pickups no email ever confirms.
 
     Amazon pickups close themselves — the "Se ha recogido" email is final
-    truth (see CLAUDE.md). Two cases never get that email (see
-    _MANUAL_PICKUP_KINDS): a package diverted to a carrier's office after a
-    failed home delivery, which leaves Amazon's lifecycle for good (their
-    status reads "Entregado" and nothing else ever arrives), and anything at
-    Pepe y Dalda, whose single "Recepción…" notice is the whole
-    correspondence. Without this both would sit `awaiting_pickup` on the
-    board forever.
+    truth (see CLAUDE.md). Non-Amazon pickups (carrier office, Pepe y Dalda,
+    alternative stores) never get that email (see _MANUAL_PICKUP_KINDS).
+    Without this they would sit `awaiting_pickup` on the board forever.
 
     GET renders a confirmation step rather than acting on the tap: the day is
     the whole point of the dialog. Marking it "today" when the trip was
@@ -248,7 +244,7 @@ def confirm_pickup(request, pk):
     """
     pkg = get_object_or_404(Package.objects.select_related("pickup_point"), pk=pk)
     if not calendar.can_confirm_pickup(pkg):
-        raise Http404("Not a carrier pickup awaiting confirmation")
+        raise Http404("Not a pickup awaiting confirmation")
 
     today = timezone.localdate()
     back_day = calendar.parse_anchor(request.GET.get("from_day")

@@ -3964,14 +3964,48 @@ class ManualPickupTests(TestCase):
         self.assertEqual(pkg.state, Package.State.PICKED_UP)
         self.assertEqual(pkg.picked_up_on, self.today - timedelta(days=1))
 
+    def test_alt_store_pickup_offers_the_button(self):
+        # Alternative stores generate no pickup emails, so they can also be
+        # confirmed manually from the card.
+        store = PickupPoint.objects.create(
+            name="Fnac", kind=PickupPoint.Kind.ALT_STORE)
+        pkg = Package.objects.create(
+            pickup_point=store, state=Package.State.AWAITING_PICKUP,
+            description="Libro",
+            actual_arrival=self.today - timedelta(days=2))
+        html = self.client.get(reverse("package_detail", args=[pkg.pk])).content
+        self.assertIn(reverse("confirm_pickup", args=[pkg.pk]).encode(), html)
+
+        response = self.client.post(
+            reverse("confirm_pickup", args=[pkg.pk]),
+            {"picked_up_on": (self.today - timedelta(days=1)).isoformat()})
+        pkg.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(pkg.state, Package.State.PICKED_UP)
+        self.assertEqual(pkg.picked_up_on, self.today - timedelta(days=1))
+
+    def test_alt_store_pickup_without_arrival_date_can_be_confirmed(self):
+        store = PickupPoint.objects.create(
+            name="Fnac", kind=PickupPoint.Kind.ALT_STORE)
+        pkg = Package.objects.create(
+            pickup_point=store, state=Package.State.AWAITING_PICKUP,
+            description="Libro")
+        html = self.client.get(reverse("confirm_pickup", args=[pkg.pk])).content
+        self.assertNotIn(b'min="', html)
+        response = self.client.post(
+            reverse("confirm_pickup", args=[pkg.pk]),
+            {"picked_up_on": self.today.isoformat()})
+        self.assertEqual(response.status_code, 200)
+        pkg.refresh_from_db()
+        self.assertEqual(pkg.state, Package.State.PICKED_UP)
+        self.assertEqual(pkg.picked_up_on, self.today)
+
     def test_every_other_pickup_stays_email_driven(self):
-        # Scoped to the two no-email cases on purpose (user, 2026-07-25 —
-        # the carrier's office, and Pepe y Dalda above): an Amazon
-        # locker/counter closes itself from the "Se ha recogido" email, and
-        # the alt store stays admin-only.
+        # Amazon locker/counter closes itself from the "Se ha recogido" email,
+        # and home delivery is not a pickup trip: none offer the manual button.
         for kind in (PickupPoint.Kind.AMAZON_LOCKER,
                      PickupPoint.Kind.AMAZON_COUNTER,
-                     PickupPoint.Kind.ALT_STORE):
+                     PickupPoint.Kind.HOME):
             other = self._elsewhere(kind)
             url = reverse("confirm_pickup", args=[other.pk])
             html = self.client.get(
