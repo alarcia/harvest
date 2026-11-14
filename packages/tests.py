@@ -946,7 +946,7 @@ class IngestTests(TestCase):
         # is the only way left to check status, so it's always offered here.
         self.assertEqual(
             pkg.amazon_tracking_url,
-            "https://www.amazon.es/gp/your-account/ship-track"
+            "https://www.amazon.es/progress-tracker/package"
             "?_encoding=UTF8&orderId=404-2171566-7826720"
             "&packageIndex=0&shipmentId=TCl8Nkz09&nodl=1",
         )
@@ -976,15 +976,15 @@ class IngestTests(TestCase):
         )
         self.assertEqual(
             pkg.amazon_tracking_url,
-            "https://www.amazon.es/gp/your-account/ship-track"
+            "https://www.amazon.es/progress-tracker/package"
             "?_encoding=UTF8&orderId=404-1111111-1111111"
             "&packageIndex=0&shipmentId=AAAA111111&nodl=1",
         )
 
-    def test_amazon_tracking_url_falls_back_to_the_order_page(self):
+    def test_amazon_tracking_url_without_shipment_id(self):
         # Emails that carry only an order number (a consolidated pickup, a
-        # Pedido not yet shipped) leave no shipment id to pin the box, so the
-        # link degrades to the order page instead of disappearing.
+        # Pedido not yet shipped) leave no shipment id, so the link tracks
+        # the order directly via orderId without needing a shipment id.
         point = PickupPoint.objects.create(
             name="Amazon Locker - Test", kind=PickupPoint.Kind.AMAZON_LOCKER,
         )
@@ -994,8 +994,8 @@ class IngestTests(TestCase):
         )
         self.assertEqual(
             pkg.amazon_tracking_url,
-            "https://www.amazon.es/gp/your-account/order-details"
-            "?_encoding=UTF8&orderID=407-2753653-0825928&nodl=1",
+            "https://www.amazon.es/progress-tracker/package"
+            "?_encoding=UTF8&orderId=407-2753653-0825928&nodl=1",
         )
 
     def test_alt_store_package_has_no_amazon_link(self):
@@ -2308,8 +2308,8 @@ class AmazonToPepeYDaldaTests(TestCase):
         pkg = Package.objects.get()
         self.assertEqual(
             pkg.amazon_tracking_url,
-            "https://www.amazon.es/gp/your-account/order-details"
-            "?_encoding=UTF8&orderID=404-9182736-4501122&nodl=1",
+            "https://www.amazon.es/progress-tracker/package"
+            "?_encoding=UTF8&orderId=404-9182736-4501122&nodl=1",
         )
 
     def test_the_vine_review_waits_for_the_actual_pickup(self):
@@ -3257,13 +3257,44 @@ class CalendarViewTests(TestCase):
         # Amazon links
         self.assertIn(b"404-1234567-8901234", html)
         self.assertIn(b"B08XYZ1234", html)
-        self.assertIn(b"ship-track", html)
+        self.assertIn(b"progress-tracker/package", html)
         self.assertIn(b"D01-9876543-2109876", html)
 
         # No active pickup prompts
         self.assertNotIn("En el punto desde".encode(), html)
         self.assertNotIn("Recoger antes del".encode(), html)
         self.assertNotIn("Ver código de barras de recogida".encode(), html)
+
+    def test_package_detail_tracking_and_order_links_differ_without_shipment_id(self):
+        # When an order hasn't shipped yet or has no shipment_id, "Ver seguimiento"
+        # and "Ver pedido" must point to different destinations: progress-tracker
+        # and order-details, never duplicating the same page.
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER)
+        pkg = Package.objects.create(
+            pickup_point=counter,
+            state=Package.State.IN_TRANSIT,
+            description="FUTEI Fundas de Cojín",
+            order_id="402-3956676-2679555",
+            shipment_id="",
+            estimated_arrival=today,
+        )
+
+        response = self.client.get(reverse("package_detail", args=[pkg.pk]))
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+
+        tracking_url_html = f"https://www.amazon.es/progress-tracker/package?_encoding=UTF8&amp;orderId={pkg.order_id}&amp;nodl=1"
+        order_url_html = f"https://www.amazon.es/gp/your-account/order-details?orderID={pkg.order_id}&amp;nodl=1"
+
+        self.assertIn(tracking_url_html, html)
+        self.assertIn(order_url_html, html)
+        self.assertNotEqual(tracking_url_html, order_url_html)
+        self.assertEqual(
+            pkg.amazon_tracking_url,
+            f"https://www.amazon.es/progress-tracker/package?_encoding=UTF8&orderId={pkg.order_id}&nodl=1",
+        )
 
     def test_unknown_item_shows_placeholder_not_boilerplate(self):
         # A delivered package whose only name is the "N productos | N.º de

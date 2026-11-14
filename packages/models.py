@@ -500,36 +500,28 @@ class Package(models.Model):
 
     @property
     def amazon_tracking_url(self):
-        """Direct link to Amazon's own page for this package — simplified from
-        the "Seguimiento del envío" button in the email, which wraps this
-        same destination in a one-time click-tracking redirect
-        (gp/r.html?...&U=<this, url-encoded>&...) that isn't worth storing.
+        """Direct link to Amazon's own package tracking page.
 
-        Offered on every Amazon package whatever its state (2026-07-25): it
-        started life as the carrier pickup's only way to check status, but the
-        link is just as useful anywhere — it opens the Amazon app on the phone.
-        Built from ids we already store, so nothing new has to be collected.
-        The tracker needs the shipment id to pin the box; the emails that only
-        carry an order number (a consolidated "Se ha recogido", a Pedido not
-        yet shipped) fall back to the order page, which is one tap away from
-        the same tracking.
+        Simplified from the "Seguimiento del envío" button in the email, which
+        wraps this destination in a one-time click-tracking redirect.
 
-        The order id is what makes a package Amazon's, not where it lands
-        (2026-07-31): an Amazon order delivered to Pepe y Dalda's counter is
-        still an Amazon order and still worth tracking. The two ways a row is
-        born without one — the shop's own "Recepción…" notice and manual
-        alt-store entry — are exactly the ones with nothing to link to."""
+        Offered on every Amazon package whatever its state (2026-07-25): it opens
+        the tracker directly. When the shipment id is known, it pins the specific
+        box; otherwise, it opens the tracker for the order via orderId directly
+        (avoiding duplicating the order details link).
+
+        Alt-store rows have no order id and return an empty string."""
         if not self.order_id:
             return ""
         if self.shipment_id:
             return (
-                "https://www.amazon.es/gp/your-account/ship-track"
+                "https://www.amazon.es/progress-tracker/package"
                 f"?_encoding=UTF8&orderId={self.order_id}"
                 f"&packageIndex=0&shipmentId={self.shipment_id}&nodl=1"
             )
         return (
-            "https://www.amazon.es/gp/your-account/order-details"
-            f"?_encoding=UTF8&orderID={self.order_id}&nodl=1"
+            "https://www.amazon.es/progress-tracker/package"
+            f"?_encoding=UTF8&orderId={self.order_id}&nodl=1"
         )
 
 
