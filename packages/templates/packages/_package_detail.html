@@ -31,6 +31,9 @@
       {% if package.recipient %}
         <span><b>Destinatario</b> {{ package.recipient }}</span>
       {% endif %}
+      {% if package.ordered_on %}
+        <span><b>Pedido</b> {{ package.ordered_on|date:"l j \d\e F" }}</span>
+      {% endif %}
       {% if estimate_line %}
         <span><b>Llegada estimada</b> {{ estimate_line }}</span>
       {% endif %}

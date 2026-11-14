@@ -33,7 +33,8 @@ day before; deriving it is the calendar's job, not the parser's.
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from contextlib import suppress
+from datetime import date, datetime, time, timedelta
 from datetime import timezone as dt_timezone
 from decimal import Decimal
 from email import message_from_bytes, policy
@@ -86,6 +87,18 @@ class EmailKind(Enum):
     # the counter — there is no order/shipped/estimated half of the story —
     # so it lands straight on `awaiting_pickup` with no deadline.
     STORE_RECEPTION = "store_reception"
+    # Amazon's "Intento de entrega realizado" when the carrier (so far only
+    # Correos Express) will simply try again: the parcel is still on the van,
+    # nothing moves. Distinct from DELIVERY_ATTEMPT, whose UPS wording means
+    # "we left it at our office".
+    DELIVERY_RETRY = "delivery_retry"
+    # Correos Express's own four templates. They carry no Amazon order id —
+    # only the carrier's tracking number — so ingestion links them to a
+    # package by that number (see `packages.ingest._apply_carrier`).
+    CARRIER_OUT_FOR_DELIVERY = "carrier_out_for_delivery"
+    CARRIER_MISSED = "carrier_missed"  # "Aviso de paso": nobody answered
+    CARRIER_AT_POINT = "carrier_at_point"  # "Comunicación Envío": pickup shop
+    CARRIER_PICKED_UP = "carrier_picked_up"
 
 
 class ParseError(ValueError):
@@ -150,6 +163,9 @@ class ParsedEmail:
     review_id: str | None = None
     review_headline: str | None = None  # the review's own title
     review_rating: int | None = None  # 1-5, decoded from the star image name
+    carrier: str | None = None  # DELIVERY_RETRY: who failed to deliver
+    tracking_number: str | None = None  # carrier kinds: the carrier's own id
+    pickup_address: str | None = None  # CARRIER_AT_POINT: street of the shop
     review_excerpt: str | None = None  # truncated body preview only — see
     # Review.text_is_complete: the email never carries the full text
 
@@ -189,6 +205,13 @@ _KIND_PATTERNS = [
     # Only UPS is handled for now — a different carrier's equivalent notice
     # must keep tripping the unrecognized-email banner until it's added here.
     (EmailKind.DELIVERY_ATTEMPT, r"ups no ha podido realizar la entrega"),
+    # Correos Express reads "Lamentablemente, Correos Express ha tenido un
+    # problema al intentar realizar la entrega. Lo intentarán de nuevo."
+    (EmailKind.DELIVERY_RETRY, r"ha tenido un problema al intentar realizar la entrega"),
+    (EmailKind.CARRIER_MISSED, r"correos express: destinatario no contesta"),
+    (EmailKind.CARRIER_AT_POINT, r"ya est[aá] disponible en el punto"),
+    (EmailKind.CARRIER_PICKED_UP, r"ha sido recogido en el punto"),
+    (EmailKind.CARRIER_OUT_FOR_DELIVERY, r"tu paquete ya est[aá] en camino"),
     (EmailKind.PICKED_UP, r"paquete ha sido recogido"),
     (EmailKind.DELIVERED, r"paquete se ha entregado|paquete ha sido entregado"),
     (EmailKind.REVIEW_PUBLISHED, r"tu reseña está en directo|gracias por su reseña"),
@@ -274,6 +297,12 @@ _REQUIRED = {
     # parcel or letter. `recipient` is deliberately optional: the wording
     # ("para ti") doesn't always name anyone.
     EmailKind.STORE_RECEPTION: ("sent_at", "pickup_location", "item_kind"),
+    EmailKind.DELIVERY_RETRY: ("order_id", "sent_at", "carrier"),
+    EmailKind.CARRIER_OUT_FOR_DELIVERY: ("tracking_number", "sent_at"),
+    EmailKind.CARRIER_MISSED: ("tracking_number", "sent_at"),
+    EmailKind.CARRIER_AT_POINT: ("tracking_number", "sent_at", "pickup_location",
+                                 "pickup_before"),
+    EmailKind.CARRIER_PICKED_UP: ("tracking_number", "sent_at"),
 }
 
 # Bidi embeddings (Amazon wraps order numbers in RTL marks), zero-widths,
@@ -314,6 +343,11 @@ _PICKED = re.compile(r"^Recogido (.+)$")
 _PICKUP_CODE = re.compile(r"código de recogida es\s+(\w+)")
 _TEMP_PASSWORD = re.compile(r"contraseña temporal es\s+(\w+)")
 _ORDER_LINE = re.compile(r"^Pedido n")
+_TRACKING = re.compile(r"\b(\d{14,20})\b")
+_CARRIER_NAME = re.compile(r"Lamentablemente, (.+?) ha tenido un problema", re.IGNORECASE)
+_CARRIER_ETA = re.compile(r"entregado el d[ií]a (\d{1,2})/(\d{1,2})", re.IGNORECASE)
+_CARRIER_POINT = re.compile(r"disponible en el punto", re.IGNORECASE)
+_CARRIER_DAYS = re.compile(r"(\d+) d[ií]as para su retirada", re.IGNORECASE)
 # The head of an Amazon venue line. Used to rejoin a destination Amazon broke
 # across several lines (see _pickup_location); ingestion classifies points by
 # this same prefix, but the parser must stay database-free, so it keeps its own.
@@ -718,6 +752,29 @@ def parse_email(raw):
         if not recipient:
             recipient = _addressee(msg, lines)
 
+    carrier = tracking = pickup_address = None
+    if kind is EmailKind.DELIVERY_RETRY and (m := _CARRIER_NAME.search(haystack)):
+        carrier = m.group(1)
+    if kind.value.startswith("carrier_") and (m := _TRACKING.search(haystack)):
+        tracking = m.group(1)
+    if kind is EmailKind.CARRIER_OUT_FOR_DELIVERY and sent_at and (
+            m := _CARRIER_ETA.search(haystack)):
+        # "14/11" has no year: it is the email's own. ponytail: wrong only for
+        # a December email promising January, add a year roll if it ever bites.
+        with suppress(ValueError):
+            estimated_arrival = date(sent_at.year, int(m.group(2)), int(m.group(1)))
+    pickup_before = _resolve_date(before, sent_at) if before else None
+    if kind is EmailKind.CARRIER_AT_POINT:
+        # The shop's name and its street sit on the two lines after the
+        # sentence, and that's all this email says about where it is. The name
+        # alone is what the calendar prints (user, 2026-11-14); the street
+        # only feeds the Maps link.
+        idx = next((i for i, line in enumerate(lines) if _CARRIER_POINT.search(line)), None)
+        if idx is not None and idx + 2 < len(lines):
+            pickup_location, pickup_address = lines[idx + 1], lines[idx + 2]
+        if sent_at and (m := _CARRIER_DAYS.search(haystack)):
+            pickup_before = sent_at.date() + timedelta(days=int(m.group(1)))
+
     parsed = ParsedEmail(
         kind=kind,
         message_id=message_id,
@@ -733,7 +790,10 @@ def parse_email(raw):
         estimated_arrival=estimated_arrival,
         estimated_arrival_end=estimated_arrival_end,
         payment_review=bool(_PAYMENT_REVIEW.search(haystack)),
-        pickup_before=_resolve_date(before, sent_at) if before else None,
+        pickup_before=pickup_before,
+        carrier=carrier,
+        tracking_number=tracking,
+        pickup_address=pickup_address,
         pickup_code=match.group(1) if (match := _PICKUP_CODE.search(haystack)) else None,
         barcode_url=_barcode_url(soup),
         temp_password=match.group(1) if (match := _TEMP_PASSWORD.search(haystack)) else None,

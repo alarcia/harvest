@@ -59,6 +59,7 @@ from datetime import timedelta
 from decimal import Decimal
 from email import message_from_bytes, policy
 from email.utils import parsedate_to_datetime
+from urllib.parse import quote_plus
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
@@ -449,6 +450,88 @@ def _apply_review_published(parsed, sent_on):
     return None, "Reseña publicada" + (" (nueva)" if created else "")
 
 
+_CARRIER_KINDS = frozenset({
+    EmailKind.CARRIER_OUT_FOR_DELIVERY, EmailKind.CARRIER_MISSED,
+    EmailKind.CARRIER_AT_POINT, EmailKind.CARRIER_PICKED_UP,
+})
+
+
+def _carrier_package(parsed):
+    """The package a Correos Express email is about.
+
+    None of its templates carries an Amazon order id, only the carrier's
+    tracking number, so the link is made once and then kept: the first email
+    ("Tu paquete de AMAZON llegará…") claims the one open home delivery it can
+    be, and every later email finds it by the stored number. Claiming needs
+    exactly one candidate — if Amazon's own "Intento de entrega" already named
+    the carrier on one of several, that narrows it. Anything else raises
+    ParseError, so a wrong guess can't happen silently: the red banner shows,
+    the tracking number is typed into the admin, and the next sweep re-parses.
+    """
+    number = parsed.tracking_number
+    pkg = Package.objects.filter(carrier_tracking_number=number).first()
+    if pkg is not None:
+        return pkg
+    if (parsed.kind != EmailKind.CARRIER_OUT_FOR_DELIVERY
+            or "amazon" not in parsed.subject.lower()):
+        raise ParseError(f"Correos Express {number}: sin paquete asociado "
+                         "(rellena carrier_tracking_number en el admin)")
+    candidates = list(Package.objects.filter(
+        state__in=(Package.State.IN_TRANSIT, Package.State.LAST_MILE),
+        pickup_point__kind=PickupPoint.Kind.HOME, carrier_tracking_number="",
+    ))
+    if len(candidates) > 1:
+        candidates = [p for p in candidates if p.carrier == "Correos Express"]
+    if len(candidates) != 1:
+        raise ParseError(f"Correos Express {number}: no hay un único pedido "
+                         "a domicilio al que asociarlo")
+    return candidates[0]
+
+
+def _apply_carrier(parsed, sent_on):
+    pkg = _carrier_package(parsed)
+    kind = parsed.kind
+    pkg.carrier = "Correos Express"
+    pkg.carrier_tracking_number = parsed.tracking_number
+    if kind == EmailKind.CARRIER_OUT_FOR_DELIVERY:
+        pkg.shipped_on = pkg.shipped_on or sent_on
+        if _RANK[pkg.state] < _RANK[Package.State.LAST_MILE]:
+            pkg.state = Package.State.LAST_MILE
+        if parsed.estimated_arrival:
+            pkg.estimated_arrival = parsed.estimated_arrival
+            pkg.estimated_arrival_end = None
+        note = "Correos Express: en reparto"
+    elif kind == EmailKind.CARRIER_MISSED:
+        # Nobody home. The package stays on the van: Correos Express sends the
+        # next email (a shop to collect from) by itself, and an own state for
+        # this hour would be noise (user, 2026-11-14).
+        note = "Aviso de paso: sin cambios"
+    elif kind == EmailKind.CARRIER_AT_POINT:
+        name = parsed.pickup_location[:120]
+        query = quote_plus(f"{name}, {parsed.pickup_address or ''}".strip(", "))
+        point, _ = PickupPoint.objects.get_or_create(
+            kind=PickupPoint.Kind.ALT_STORE, name=name,
+            defaults={"display_name": name[:60],
+                      "maps_url": f"https://www.google.com/maps/search/?api=1&query={query}"},
+        )
+        if _RANK[pkg.state] < _RANK[Package.State.PICKED_UP]:
+            pkg.state = Package.State.AWAITING_PICKUP
+            pkg.pickup_point = point
+            pkg.actual_arrival = sent_on
+            pkg.deadline = parsed.pickup_before
+        note = f"Correos Express: a recoger en {name}"
+    else:  # CARRIER_PICKED_UP
+        if _RANK[pkg.state] < _RANK[Package.State.PICKED_UP]:
+            pkg.state = Package.State.PICKED_UP
+            pkg.picked_up_on = sent_on
+        note = "Correos Express: recogido"
+    pkg.save()
+    if kind == EmailKind.CARRIER_PICKED_UP:
+        _sync_review_for_package(pkg)
+        set_review_due(pkg, pkg.picked_up_on)
+    return pkg, note
+
+
 def _apply(parsed):
     """Map one parsed email onto the packages table.
 
@@ -478,7 +561,22 @@ def _apply(parsed):
         pkg.save()
         return pkg, f"Recepción en Pepe y Dalda: {pkg.description}"
 
+    if kind in _CARRIER_KINDS:
+        # Before _pickup_point: the shop's name would be filed as a home.
+        return _apply_carrier(parsed, sent_on)
+
     point = _pickup_point(parsed.pickup_location)
+
+    if kind == EmailKind.DELIVERY_RETRY:
+        # "Lo intentarán de nuevo": the parcel is still out. All it adds is
+        # who is carrying it, which lets a Correos Express email that arrives
+        # without an order id find its package (see _carrier_package).
+        matches = [p for p in _find_packages(parsed)
+                   if _RANK[p.state] < _RANK[Package.State.PICKED_UP]]
+        for pkg in matches:
+            pkg.carrier = parsed.carrier
+            pkg.save()
+        return (matches[0] if matches else None), f"Intento de entrega fallido ({parsed.carrier}): se reintenta"
 
     if kind in (EmailKind.ORDERED, EmailKind.ESTIMATE_UPDATED) and parsed.items:
         saved_packages = []
