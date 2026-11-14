@@ -133,6 +133,8 @@ class ParsedEmail:
     # consolidated notification (e.g. two home-delivery orders dropped off in
     # the same visit) can carry more than one, unlike shipment_id's single
     # "the box this specific Enviado is about"
+    item_id: str | None = None
+    item_ids: frozenset = frozenset()
     items: tuple = ()
     pickup_location: str | None = None
     total: Decimal | None = None  # order total exactly as printed. Whether it
@@ -315,6 +317,7 @@ _FWD_PREFIX = re.compile(r"^(?:fwd?|rv|re)\s*:\s*", re.IGNORECASE)
 _SENT_TOKEN = re.compile(r"urn:rtn:msg:(\d{14})")
 _ORDER_ID = re.compile(r"\d{3}-\d{7}-\d{7}")
 _SHIPMENT_ID = re.compile(r"shipmentId=([A-Za-z0-9]+)")
+_ITEM_ID = re.compile(r"itemId=([A-Za-z0-9]+)")
 _ASIN_ANY = re.compile(r"/dp/([A-Z0-9]{10})")
 _REVIEW_ID = re.compile(r"/review/(R[A-Z0-9]+)")
 _TOTAL = re.compile(r"Total\s+(\d+[.,]\d{2})\s*€")
@@ -709,6 +712,8 @@ def parse_email(raw):
     order_id = text_ids[0] if text_ids else (url_ids[0] if url_ids else None)
     shipment_id = match.group(1) if (match := _SHIPMENT_ID.search(urls)) else None
     shipment_ids = frozenset(_SHIPMENT_ID.findall(urls))
+    item_id = match.group(1) if (match := _ITEM_ID.search(urls)) else None
+    item_ids = frozenset(_ITEM_ID.findall(urls))
     total_raw = _TOTAL.search(haystack)
 
     arrives = _first_line_match(_ARRIVES, lines)
@@ -784,6 +789,8 @@ def parse_email(raw):
         order_ids=frozenset(text_ids + url_ids),
         shipment_id=shipment_id,
         shipment_ids=shipment_ids,
+        item_id=item_id,
+        item_ids=item_ids,
         items=_items(soup, sent_at),
         pickup_location=pickup_location,
         total=Decimal(total_raw.group(1).replace(",", ".")) if total_raw else None,

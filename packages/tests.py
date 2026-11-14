@@ -94,7 +94,7 @@ def _pepe_email(subject, body_line, *, forwarded=True,
 def _amazon_email(headline, destination, *, subject=None,
                   order_id="404-9182736-4501122", arrives="Llega el lunes",
                   total="0.00", item="ONES Funda Magnética para Galaxy S26",
-                  asin="B0F1PEPE01", extra_items=(),
+                  asin="B0F1PEPE01", extra_items=(), shipment_id=None,
                   sent="Mon, 27 Jul 2026 09:00:00 +0200"):
     """One Amazon lifecycle email, shaped like the real ones (fixtures
     006/007/021): the headline that names the template, the arrival line, the
@@ -125,6 +125,10 @@ def _amazon_email(headline, destination, *, subject=None,
         body.append(
             f'<a href="https://www.amazon.es/dp/{item_asin}/ref=fed_asin_title">'
             f'<img src="https://m.media-amazon.com/images/I/x.jpg" alt="{title}"></a>'
+        )
+    if shipment_id:
+        body.append(
+            f'<a href="https://www.amazon.es/progress-tracker/package?_encoding=UTF8&amp;orderId={order_id}&amp;packageIndex=0&amp;shipmentId={shipment_id}">Seguimiento</a>'
         )
     if total is not None:
         body.append(f"<div>Total {total} €</div>")
@@ -948,7 +952,7 @@ class IngestTests(TestCase):
             pkg.amazon_tracking_url,
             "https://www.amazon.es/progress-tracker/package"
             "?_encoding=UTF8&orderId=404-2171566-7826720"
-            "&packageIndex=0&shipmentId=TCl8Nkz09&nodl=1",
+            "&packageIndex=0&shipmentId=TCl8Nkz09&noPtRedirect=1&nodl=1",
         )
 
     def test_delivery_attempt_alone_creates_awaiting_package(self):
@@ -978,13 +982,27 @@ class IngestTests(TestCase):
             pkg.amazon_tracking_url,
             "https://www.amazon.es/progress-tracker/package"
             "?_encoding=UTF8&orderId=404-1111111-1111111"
-            "&packageIndex=0&shipmentId=AAAA111111&nodl=1",
+            "&packageIndex=0&shipmentId=AAAA111111&noPtRedirect=1&nodl=1",
         )
 
-    def test_amazon_tracking_url_without_shipment_id(self):
-        # Emails that carry only an order number (a consolidated pickup, a
-        # Pedido not yet shipped) leave no shipment id, so the link tracks
-        # the order directly via orderId without needing a shipment id.
+    def test_amazon_tracking_url_with_item_id(self):
+        point = PickupPoint.objects.create(
+            name="Amazon Locker - Test", kind=PickupPoint.Kind.AMAZON_LOCKER,
+        )
+        pkg = Package.objects.create(
+            pickup_point=point, order_id="407-2753653-0825928",
+            item_id="pgpgnqkstnkpwo",
+            state=Package.State.PICKED_UP,
+        )
+        self.assertEqual(
+            pkg.amazon_tracking_url,
+            "https://www.amazon.es/progress-tracker/package"
+            "?itemId=pgpgnqkstnkpwo&orderId=407-2753653-0825928&_encoding=UTF8&noPtRedirect=1&nodl=1",
+        )
+
+    def test_amazon_tracking_url_without_shipment_or_item_id_is_empty(self):
+        # Without shipment_id or item_id, Amazon progress-tracker returns an error banner;
+        # amazon_tracking_url returns "" so the card shows "Ver pedido en Amazon" instead.
         point = PickupPoint.objects.create(
             name="Amazon Locker - Test", kind=PickupPoint.Kind.AMAZON_LOCKER,
         )
@@ -992,11 +1010,7 @@ class IngestTests(TestCase):
             pickup_point=point, order_id="407-2753653-0825928",
             state=Package.State.PICKED_UP,
         )
-        self.assertEqual(
-            pkg.amazon_tracking_url,
-            "https://www.amazon.es/progress-tracker/package"
-            "?_encoding=UTF8&orderId=407-2753653-0825928&nodl=1",
-        )
+        self.assertEqual(pkg.amazon_tracking_url, "")
 
     def test_alt_store_package_has_no_amazon_link(self):
         # Manual, non-Amazon rows: no order number, nothing to link to.
@@ -2227,9 +2241,9 @@ class AmazonToPepeYDaldaTests(TestCase):
     SHIPPED = "Tu paquete se ha enviado"
     DELIVERED = "¡Tu paquete se ha entregado!"
 
-    def _delivered(self, destination=_PEPE_DESTINATION, **kwargs):
+    def _delivered(self, destination=_PEPE_DESTINATION, shipment_id="TcRdZ1MrY", **kwargs):
         return _amazon_email(self.DELIVERED, destination, arrives=None,
-                             total=None, **kwargs)
+                             total=None, shipment_id=shipment_id, **kwargs)
 
     def test_an_order_to_the_shop_is_a_pepe_package_from_the_first_email(self):
         record, _ = process_message(_amazon_email(self.ORDERED, _PEPE_DESTINATION))
@@ -2306,10 +2320,12 @@ class AmazonToPepeYDaldaTests(TestCase):
         # the shop's own notices carry none, so they still get no link.
         process_message(_amazon_email(self.ORDERED, _PEPE_DESTINATION))
         pkg = Package.objects.get()
+        self.assertEqual(pkg.order_id, "404-9182736-4501122")
+        pkg.item_id = "pgpgnqkstnkpwo"
         self.assertEqual(
             pkg.amazon_tracking_url,
             "https://www.amazon.es/progress-tracker/package"
-            "?_encoding=UTF8&orderId=404-9182736-4501122&nodl=1",
+            "?itemId=pgpgnqkstnkpwo&orderId=404-9182736-4501122&_encoding=UTF8&noPtRedirect=1&nodl=1",
         )
 
     def test_the_vine_review_waits_for_the_actual_pickup(self):
@@ -3265,10 +3281,40 @@ class CalendarViewTests(TestCase):
         self.assertNotIn("Recoger antes del".encode(), html)
         self.assertNotIn("Ver código de barras de recogida".encode(), html)
 
-    def test_package_detail_tracking_and_order_links_differ_without_shipment_id(self):
-        # When an order hasn't shipped yet or has no shipment_id, "Ver seguimiento"
-        # and "Ver pedido" must point to different destinations: progress-tracker
-        # and order-details, never duplicating the same page.
+    def test_package_detail_tracking_and_order_links_differ_with_item_id(self):
+        # When an order has item_id, "Ver seguimiento" points to the item tracker
+        # and "Ver pedido" points to order-details.
+        today = timezone.localdate()
+        counter = self._point("Amazon Counter - Les Mesures",
+                              PickupPoint.Kind.AMAZON_COUNTER)
+        pkg = Package.objects.create(
+            pickup_point=counter,
+            state=Package.State.IN_TRANSIT,
+            description="FUTEI Fundas de Cojín",
+            order_id="402-3956676-2679555",
+            item_id="pgpgnqkstnkpwo",
+            shipment_id="",
+            estimated_arrival=today,
+        )
+
+        response = self.client.get(reverse("package_detail", args=[pkg.pk]))
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+
+        tracking_url_html = f"https://www.amazon.es/progress-tracker/package?itemId={pkg.item_id}&amp;orderId={pkg.order_id}&amp;_encoding=UTF8&amp;noPtRedirect=1&amp;nodl=1"
+        order_url_html = f"https://www.amazon.es/gp/your-account/order-details?orderID={pkg.order_id}&amp;nodl=1"
+
+        self.assertIn(tracking_url_html, html)
+        self.assertIn(order_url_html, html)
+        self.assertNotEqual(tracking_url_html, order_url_html)
+        self.assertEqual(
+            pkg.amazon_tracking_url,
+            f"https://www.amazon.es/progress-tracker/package?itemId={pkg.item_id}&orderId={pkg.order_id}&_encoding=UTF8&noPtRedirect=1&nodl=1",
+        )
+
+    def test_package_detail_without_shipment_or_item_id_omits_tracking_link(self):
+        # When neither shipment_id nor item_id exists, tracking is unavailable on Amazon
+        # and would throw an error banner; the modal only renders "Ver pedido en Amazon".
         today = timezone.localdate()
         counter = self._point("Amazon Counter - Les Mesures",
                               PickupPoint.Kind.AMAZON_COUNTER)
@@ -3278,6 +3324,7 @@ class CalendarViewTests(TestCase):
             description="FUTEI Fundas de Cojín",
             order_id="402-3956676-2679555",
             shipment_id="",
+            item_id="",
             estimated_arrival=today,
         )
 
@@ -3285,16 +3332,8 @@ class CalendarViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
 
-        tracking_url_html = f"https://www.amazon.es/progress-tracker/package?_encoding=UTF8&amp;orderId={pkg.order_id}&amp;nodl=1"
-        order_url_html = f"https://www.amazon.es/gp/your-account/order-details?orderID={pkg.order_id}&amp;nodl=1"
-
-        self.assertIn(tracking_url_html, html)
-        self.assertIn(order_url_html, html)
-        self.assertNotEqual(tracking_url_html, order_url_html)
-        self.assertEqual(
-            pkg.amazon_tracking_url,
-            f"https://www.amazon.es/progress-tracker/package?_encoding=UTF8&orderId={pkg.order_id}&nodl=1",
-        )
+        self.assertNotIn("Ver seguimiento en Amazon", html)
+        self.assertIn("Ver pedido en Amazon", html)
 
     def test_unknown_item_shows_placeholder_not_boilerplate(self):
         # A delivered package whose only name is the "N productos | N.º de

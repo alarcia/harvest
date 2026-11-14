@@ -276,6 +276,10 @@ def _fill(pkg, parsed):
         pkg.asin = (item.asin if item else parsed.asin) or ""
     if not pkg.image_url:
         pkg.image_url = (item.image_url if item else parsed.image_url) or ""
+    if parsed.shipment_id and not pkg.shipment_id:
+        pkg.shipment_id = parsed.shipment_id
+    if parsed.item_id and not pkg.item_id:
+        pkg.item_id = parsed.item_id
     if parsed.estimated_arrival:
         pkg.estimated_arrival = parsed.estimated_arrival
         # A delivery window only lives between "Pedido" and "Enviado" — the
@@ -715,6 +719,8 @@ def _apply(parsed):
 
             if parsed.shipment_id and (not pkg.order_id or pkg.order_id in order_ids):
                 pkg.shipment_id = parsed.shipment_id
+            if parsed.item_id and (not pkg.order_id or pkg.order_id in order_ids) and not pkg.item_id:
+                pkg.item_id = parsed.item_id
 
             if not pkg.description:
                 pkg.description = item_title
@@ -794,6 +800,8 @@ def _apply(parsed):
             pkg.shipped_on = pkg.shipped_on or sent_on
         if parsed.shipment_id:
             pkg.shipment_id = parsed.shipment_id
+        if parsed.item_id and not pkg.item_id:
+            pkg.item_id = parsed.item_id
         _fill(pkg, parsed)
         was_vine = pkg.is_vine
         _apply_cost(pkg, parsed, authoritative=(kind == EmailKind.SHIPPED))

@@ -411,6 +411,7 @@ class Package(models.Model):
     # splits into several packages. Blank for alt-store (manual) packages.
     order_id = models.CharField(max_length=32, blank=True, db_index=True)
     shipment_id = models.CharField(max_length=32, blank=True, db_index=True)
+    item_id = models.CharField(max_length=64, blank=True, db_index=True)
 
     # Detail-view extras read from the emails. image_url is the product
     # thumbnail; barcode_url is the static image scanned at the counter.
@@ -456,6 +457,10 @@ class Package(models.Model):
         ordering = ["-actual_arrival", "-estimated_arrival"]
 
     def save(self, *args, **kwargs):
+        if self.item_id and "itemId=" in self.item_id:
+            m = re.search(r"itemId=([A-Za-z0-9]+)", self.item_id)
+            if m:
+                self.item_id = m.group(1)
         super().save(*args, **kwargs)
         if self.is_received and self.received_on:
             review = getattr(self, "review", None)
@@ -505,24 +510,29 @@ class Package(models.Model):
         Simplified from the "Seguimiento del envío" button in the email, which
         wraps this destination in a one-time click-tracking redirect.
 
-        Offered on every Amazon package whatever its state (2026-07-25): it opens
-        the tracker directly. When the shipment id is known, it pins the specific
-        box; otherwise, it opens the tracker for the order via orderId directly
-        (avoiding duplicating the order details link).
+        Amazon's progress tracker requires an item id (itemId) or shipment id
+        (shipmentId) to identify which package to track. Without either, Amazon
+        displays an error banner ("No podemos obtener la información de
+        seguimiento") and redirects to order details. When neither is available,
+        this returns "" so the UI offers "Ver pedido en Amazon" directly instead
+        of a broken or duplicate tracking link.
 
         Alt-store rows have no order id and return an empty string."""
         if not self.order_id:
             return ""
+        if self.item_id:
+            return (
+                "https://www.amazon.es/progress-tracker/package"
+                f"?itemId={self.item_id}&orderId={self.order_id}"
+                "&_encoding=UTF8&noPtRedirect=1&nodl=1"
+            )
         if self.shipment_id:
             return (
                 "https://www.amazon.es/progress-tracker/package"
                 f"?_encoding=UTF8&orderId={self.order_id}"
-                f"&packageIndex=0&shipmentId={self.shipment_id}&nodl=1"
+                f"&packageIndex=0&shipmentId={self.shipment_id}&noPtRedirect=1&nodl=1"
             )
-        return (
-            "https://www.amazon.es/progress-tracker/package"
-            f"?_encoding=UTF8&orderId={self.order_id}&nodl=1"
-        )
+        return ""
 
 
 class RawEmail(models.Model):
